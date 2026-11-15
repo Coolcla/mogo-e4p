@@ -197,6 +197,7 @@ static bool book_progress_load(const char* p,uint32_t n,book_progress_t* out){
     for(int i=0;i<test_progress_count;i++)if(!strcmp(p,test_progress[i].path)&&n==test_progress[i].value.file_size){*out=test_progress[i].value;return true;}
     *out=(book_progress_t){0};return false;
 }
+static bool book_progress_load_handle(uintptr_t h,const char* p,uint32_t n,book_progress_t* out){assert(h==1);return book_progress_load(p,n,out);}
 static bool book_progress_last_path(char* out,size_t cap){if(!test_recent_path[0])return false;snprintf(out,cap,"%s",test_recent_path);return true;}
 static bool book_metadata_supported(const char *path){const char *ext=strrchr(path,'.');return ext&&(!strcasecmp(ext,".epub")||!strcasecmp(ext,".mobi"));}
 static int book_metadata_read(const char* path,char* title,size_t tcap,char* author,size_t acap){(void)path;snprintf(title,tcap,"原书名");snprintf(author,acap,"作者");return ESP_OK;}
@@ -433,6 +434,10 @@ static void book_progress_bump(void){++s_progress_bumps;}
 static uint32_t book_progress_revision(void){return s_progress_bumps;}
 static void book_lock_collage_invalidate(void){}
 SHELF_CONTEXT_DECLARATIONS
+book_shelf_cache_t *book_shelf_cache_open(const char *identity){(void)identity;return NULL;}
+bool book_shelf_cache_lookup(const book_shelf_cache_t *cache,const char *path,uint32_t size,int64_t modified,char *name,size_t name_cap,char *author,size_t author_cap){(void)cache;(void)path;(void)size;(void)modified;(void)name;(void)name_cap;(void)author;(void)author_cap;return false;}
+bool book_shelf_cache_save(book_shelf_cache_t *cache,const book_shelf_entry_t *entries,int count){(void)cache;(void)entries;(void)count;return true;}
+void book_shelf_cache_close(book_shelf_cache_t *cache){(void)cache;}
 static void free_book(void){s_text=NULL;s_path[0]=0;}
 static void refresh_cached_progress(app_ctx_t* ctx);
 static void return_to_cached_shelf(app_ctx_t* ctx){(void)ctx;}

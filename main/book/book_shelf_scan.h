@@ -20,7 +20,28 @@ typedef struct {
     int (*category_add)(const char *path); ///< 登记卡上书根的一级目录 / Register first-level card book-root folders
     bool (*favorite_read)(nvs_handle_t handle, const char *path); ///< 借用已打开的收藏句柄 / Borrow an open favorites handle
     bool (*hidden_read)(nvs_handle_t handle, const char *path); ///< 借用已打开的隐藏记录句柄 / Borrow an open hidden-record handle
+    nvs_handle_t progress; ///< 已尝试打开的只读进度句柄，扫描借用 / Borrowed read-only progress handle for this scan
+    bool progress_checked; ///< 已完成一次进度命名空间打开尝试 / Progress namespace open was attempted once
+    struct book_shelf_cache *cache; ///< 稳定条目缓存；按路径、大小和修改时间校验 / Static-entry cache, validated by path, size and mtime
+    bool metadata; ///< 列表/首页需要时才读取作者元数据 / Read author metadata only for list/Home views
 } book_shelf_scan_t;
+
+typedef struct book_shelf_cache book_shelf_cache_t;
+
+/// 打开按 TF 卡身份隔离的稳定条目缓存；缓存损坏时返回空缓存并继续扫描。
+/// Open the cache isolated by TF identity; corrupt data becomes an empty cache and scanning continues.
+book_shelf_cache_t *book_shelf_cache_open(const char *identity);
+/// 用路径、大小和修改时间查找稳定标题/作者；不匹配时返回 false。
+/// Find stable title/author by path, size and mtime; return false on a mismatch.
+bool book_shelf_cache_lookup(const book_shelf_cache_t *cache, const char *path, uint32_t size,
+                             int64_t modified, char *name, size_t name_cap,
+                             char *author, size_t author_cap);
+/// 完整扫描成功后原子保存当前条目的稳定字段；失败不影响本次书架结果。
+/// Atomically save stable fields after a complete scan; failures do not affect this shelf result.
+bool book_shelf_cache_save(book_shelf_cache_t *cache, const book_shelf_entry_t *entries, int count);
+/// 释放缓存句柄与其外部内存。
+/// Release the cache handle and external memory.
+void book_shelf_cache_close(book_shelf_cache_t *cache);
 
 struct book_shelf_retry;
 /// 路径匹配才视为移出书架；首页组件与书架共用隐藏规则。/ Hide only exact path matches; shared by Home components and the shelf.

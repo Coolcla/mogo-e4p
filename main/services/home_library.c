@@ -106,13 +106,22 @@ static uint32_t random_value(void *ctx) { (void)ctx; return esp_random(); }
 static bool scan(bool (*cancel)(void *ctx), void *ctx) {
     book_shelf_entry_t *entries = NULL; int count = 0; size_t capacity = 0;
     book_shelf_scan_t request = {.catalog={&entries,&count,&capacity}, .query="", .cancel=cancel, .cancel_ctx=ctx,
-        .category_add=ignore_category, .favorite_read=ignore_favorite, .hidden_read=book_shelf_hidden_read};
+        .category_add=ignore_category, .favorite_read=ignore_favorite, .hidden_read=book_shelf_hidden_read,
+        .metadata=true};
     nvs_handle_t hidden = 0;
     esp_err_t error = nvs_open("rp_shelf", NVS_READONLY, &hidden);
     if (error != ESP_OK && error != ESP_ERR_NVS_NOT_FOUND) {
         snprintf(s_notice, sizeof(s_notice), "书架状态读取失败，请稍后重试"); return true;
     }
+    nvs_handle_t progress = 0;
+    esp_err_t progress_error = nvs_open("rp_books", NVS_READONLY, &progress);
+    bool progress_open = progress_error == ESP_OK;
+    bool progress_checked = progress_error == ESP_OK || progress_error == ESP_ERR_NVS_NOT_FOUND;
+    request.progress = progress;
+    request.progress_checked = progress_checked;
     board_sd_info_t sd = {0}; board_sd_get_info(&sd);
+    book_shelf_cache_t *shelf_cache = book_shelf_cache_open(sd.mounted && sd.identity[0] ? sd.identity : "builtin");
+    request.cache = shelf_cache;
     bool truncated = false, unreadable = false, skipped = false;
     if (sd.mounted) {
         struct stat legacy;
@@ -122,16 +131,19 @@ static bool scan(bool (*cancel)(void *ctx), void *ctx) {
     }
     if (book_store_flash_ready()) book_shelf_scan_dir(&request, "/flash/books", true, 0, hidden, &truncated, &unreadable, &skipped);
     if (hidden) nvs_close(hidden);
-    if (cancel && cancel(ctx)) { free(entries); return false; }
+    if (progress_open) nvs_close(progress);
+    if (cancel && cancel(ctx)) { book_shelf_cache_close(shelf_cache); free(entries); return false; }
     // 历史补入复用书架的路径与尺寸校验，随后排除已卸载来源。/ Backfill with shelf path/size checks, then exclude unmounted sources.
     (void)book_shelf_scan_backfill(&request, &truncated);
     for (int i = 0; i < count; ++i)
         if ((!sd.mounted && !strncmp(entries[i].path, "/sdcard/", 8)) ||
             (!book_store_flash_ready() && !strncmp(entries[i].path, "/flash/", 7))) entries[i].removed = true;
-    if (cancel && cancel(ctx)) { free(entries); return false; }
-    if (truncated) { free(entries); snprintf(s_notice, sizeof(s_notice), "书目较多，暂不能完整读取"); return true; }
-    if (unreadable) { free(entries); snprintf(s_notice, sizeof(s_notice), "书库暂不可用，请稍后重试"); return true; }
+    if (cancel && cancel(ctx)) { book_shelf_cache_close(shelf_cache); free(entries); return false; }
+    if (truncated) { book_shelf_cache_close(shelf_cache); free(entries); snprintf(s_notice, sizeof(s_notice), "书目较多，暂不能完整读取"); return true; }
+    if (unreadable) { book_shelf_cache_close(shelf_cache); free(entries); snprintf(s_notice, sizeof(s_notice), "书库暂不可用，请稍后重试"); return true; }
     book_mini_library_update(&s_model, entries, (size_t)count, s_shuffle, random_value, NULL);
+    if (!skipped) (void)book_shelf_cache_save(shelf_cache, entries, count);
+    book_shelf_cache_close(shelf_cache);
     free(entries); reconcile_covers(true);
     s_valid = !skipped; s_notice[0] = 0;
     if (skipped) snprintf(s_notice, sizeof(s_notice), "部分书目无法读取");

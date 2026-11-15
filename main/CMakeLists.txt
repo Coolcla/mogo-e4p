@@ -178,6 +178,7 @@ idf_component_register(
         "book/book_shelf_model.c"
         "book/book_shelf_category_state.c"
         "book/book_collection.c"
+        "book/book_shelf_cache.c"
         "book/book_shelf_scan.c"
         "book/book_mini_library.c"
         "book/book_shelf_manage.c"
