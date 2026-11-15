@@ -140,11 +140,11 @@ static void test_shelf_services(void){
     test_read_fault_depth=1;test_scan_flags(&scan,root,false,true,0);
     test_scan_flags(&scan,"/nonexistent-shelf-service-root",false,true,0);
     assert(unlink(path)==0);for(int i=3;i>0;--i)assert(rmdir(chain[i])==0);
-    for(int i=0;i<65;++i){snprintf(path,sizeof(path),"%s/%03d.txt",root,i);test_file(path);}
+    for(int i=0;i<300;++i){snprintf(path,sizeof(path),"%s/%03d.txt",root,i);test_file(path);}
     snprintf(path,sizeof(path),"%s/unsupported.pdf",root);test_file(path);
     free(s_shelf);s_shelf=NULL;s_shelf_capacity=0;s_count=0;
-    test_grow_budget=1;test_scan_flags(&scan,root,true,false,32);test_grow_budget=-1;
-    test_scan_flags(&scan,root,false,false,65);
+    test_grow_budget=1;test_scan_flags(&scan,root,true,false,64);test_grow_budget=-1;
+    test_scan_flags(&scan,root,false,false,300);
     // 历史与旧删除记录增长失败保留已有前缀；同路径重新出现仍保留清理标记。
     // Failed backfill/retry growth retains the prefix; a reappearing path retains its cleanup marker.
     snprintf(path,sizeof(path),"%s/000.txt",root);
@@ -153,7 +153,7 @@ static void test_shelf_services(void){
     assert(!book_shelf_scan_backfill(&scan,&truncated) && truncated && !s_count && !test_nvs_handles);
     book_shelf_retry_t retry={.entry={.removed=true,.selected=true}};strcpy(retry.entry.path,path);
     truncated=false;book_shelf_scan_retries(&scan,&retry,&truncated);assert(truncated && !s_count);
-    test_grow_budget=-1;test_scan_flags(&scan,root,false,false,65);
+    test_grow_budget=-1;test_scan_flags(&scan,root,false,false,300);
     int before=s_count;book_shelf_scan_retries(&scan,&retry,&truncated);assert(s_count==before);
     const book_shelf_retry_t *found=NULL;
     for(int i=0;i<s_count;++i)if(!strcmp(s_shelf[i].path,path)){
@@ -186,7 +186,7 @@ static void test_shelf_services(void){
     assert(!test_service_live);test_trace=false;test_trace_retries=NULL;
     test_delete_calls=0;test_delete_error=0;test_removed=false;test_notify_count=0;s_store_revision=0;
     free(s_shelf);s_shelf=NULL;s_count=0;s_shelf_capacity=0;
-    for(int i=0;i<65;++i){snprintf(path,sizeof(path),"%s/%03d.txt",root,i);assert(unlink(path)==0);}
+    for(int i=0;i<300;++i){snprintf(path,sizeof(path),"%s/%03d.txt",root,i);assert(unlink(path)==0);}
     snprintf(path,sizeof(path),"%s/unsupported.pdf",root);assert(unlink(path)==0);assert(rmdir(root)==0);
     s_query[0]=0;s_scan_pending=false;
     puts("book_shelf_services: PASS (cancel, handles, IO, OOM, retries, order)");

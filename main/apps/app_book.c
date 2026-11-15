@@ -4620,12 +4620,16 @@ static book_shelf_scan_t shelf_scan_context(app_ctx_t *ctx) {
         .catalog = {&s_shelf, &s_count, &s_shelf_capacity}, .query = s_query,
         .cancel = shelf_scan_cancel, .cancel_ctx = ctx, .category_add = shelf_category_add,
         .favorite_read = favorite_read_handle, .hidden_read = shelf_hidden_read_handle,
+        .metadata = app_settings_shelf_style() == 5,
     };
 }
 // 缓存返回也补入书根以外读过的书，保留原调用时机。
 // Backfill outside-root reads on cached returns too, retaining the original call timing.
 static bool shelf_backfill_read_books(bool *truncated) {
     book_shelf_scan_t scan = shelf_scan_context(NULL);
+    // 书根之外的历史书可能直接成为首页/列表候选，补入时保留作者字段。
+    // History books outside the roots can become Home/list candidates, so keep their author field on backfill.
+    scan.metadata = true;
     return book_shelf_scan_backfill(&scan, truncated);
 }
 
@@ -4656,10 +4660,20 @@ static void scan_shelf(app_ctx_t* ctx) {
     bool truncated = false, unreadable = root_err != ESP_OK || book_store_roots_degraded(), skipped = false;
     nvs_handle_t favorites = 0;
     nvs_handle_t hidden = 0;
+    nvs_handle_t progress = 0;
     (void)nvs_open("rp_favs", NVS_READONLY, &favorites);
     (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &hidden);
+    esp_err_t progress_error = nvs_open("rp_books", NVS_READONLY, &progress);
+    bool progress_open = progress_error == ESP_OK;
+    bool progress_checked = progress_error == ESP_OK || progress_error == ESP_ERR_NVS_NOT_FOUND;
     s_storage[0] = 0;
     book_shelf_scan_t scan = shelf_scan_context(ctx);
+    board_sd_info_t cache_sd = {0};
+    board_sd_get_info(&cache_sd);
+    book_shelf_cache_t *shelf_cache = book_shelf_cache_open(cache_sd.mounted ? cache_sd.identity : "builtin");
+    scan.cache = shelf_cache;
+    scan.progress = progress;
+    scan.progress_checked = progress_checked;
     for (int i = 0; i < n; ++i) {
         if (i == 0 || roots[i].is_flash || roots[i - 1].is_flash) {
             char capacity[64];
@@ -4674,6 +4688,8 @@ static void scan_shelf(app_ctx_t* ctx) {
     if (ctx->request_app) {
         if (favorites) nvs_close(favorites);
         if (hidden) nvs_close(hidden);
+        if (progress_open) nvs_close(progress);
+        book_shelf_cache_close(shelf_cache);
         s_shelf_cache_valid = false; s_scan_pending = true;
         return;
     }
@@ -4682,9 +4698,14 @@ static void scan_shelf(app_ctx_t* ctx) {
     book_shelf_scan_retries(&scan, s_delete_retries, &truncated);
     if (favorites) nvs_close(favorites);
     if (hidden) nvs_close(hidden);
+    if (progress_open) nvs_close(progress);
     // 补齐书根目录之外读过的书；显式移出书架的除外。
     // Backfill books read outside the roots, minus the ones removed from the shelf.
+    // 回填使用独立上下文；稳定字段缓存只覆盖目录遍历结果，回填仍按实时文件信息生成。
+    // Backfill uses its own context; the stable cache covers directory entries only, so live files build these rows.
     (void)shelf_backfill_read_books(&truncated);
+    if (!unreadable && !truncated && !skipped) (void)book_shelf_cache_save(shelf_cache, s_shelf, s_count);
+    book_shelf_cache_close(shelf_cache);
     if (recovered_legacy) (void)shelf_collection_sync(!unreadable && !truncated && !skipped);
     shelf_categories_recount();
     sort_shelf(ctx);
@@ -4706,8 +4727,6 @@ static void scan_shelf(app_ctx_t* ctx) {
     else if (s_pending_invalidated) copy_text(s_shelf_warning, sizeof(s_shelf_warning), "图书已更新，旧待保存进度已作废");
     if (!recovered_legacy) copy_text(s_shelf_warning,sizeof(s_shelf_warning),"旧分类整理未完成，请在管理分类中重试恢复");
     if (!s_count && !unreadable && !truncated) copy_text(s_message, sizeof(s_message), "暂无图书，请传入 TXT、EPUB 或 MOBI");
-    board_sd_info_t cache_sd = {0};
-    board_sd_get_info(&cache_sd);
     copy_text(s_cache_library,sizeof(s_cache_library),cache_sd.mounted?cache_sd.identity:"builtin");
     s_cache_sd_present = cache_sd.present;
     s_cache_sd_mounted = cache_sd.mounted;

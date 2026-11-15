@@ -94,6 +94,7 @@ SUITES = {
     "media": [sys.executable, "tools/test_sd_media_guard.py"],
     "shelf_covers": ["bash", "tools/run_shelf_cover_host_tests.sh"],
     "shelf": [sys.executable, "tools/shelf_categories_host_test.py"],
+    "shelf_cache": [sys.executable, "tools/book_shelf_cache_host_test.py"],
     "categories": ["bash", "tools/run_category_management_tests.sh"],
     "categories_ui": [sys.executable, "tools/category_ui_host_test.py"],
     "management": [sys.executable, "tools/book_ui_host_test.py"],

@@ -50,6 +50,9 @@ typedef struct {
 
 /// 校验版本、完整路径与文件大小后恢复；失败不改 out。/ Restore after version, full-path and size validation; leave out unchanged on failure.
 bool book_progress_load(const char* path, uint32_t size, book_progress_t* out);
+/// 使用调用方借用的只读 NVS 句柄恢复；不打开、不关闭句柄，句柄为 0 时失败。
+/// Load through a caller-owned read-only NVS handle; never open or close it, and fail for handle 0.
+bool book_progress_load_handle(uintptr_t handle, const char* path, uint32_t size, book_progress_t* out);
 
 /// 遍历回调：progress 只在回调期间有效，返回 false 提前结束。
 /// Visit callback: progress is valid only for the duration of the call; return false to stop early.

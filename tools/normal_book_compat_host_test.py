@@ -49,6 +49,7 @@ static bool book_progress_last_path(char *out,size_t cap){snprintf(out,cap,"%s",
 static bool book_progress_load(const char *p,uint32_t size,book_progress_t *out){
  for(int i=0;i<5;++i)if(!strcmp(p,records[i].path)&&records[i].progress.file_size==size){*out=records[i].progress;return true;}return false;
 }
+static bool book_progress_load_handle(uintptr_t h,const char *p,uint32_t size,book_progress_t *out){assert(h==1);return book_progress_load(p,size,out);}
 static unsigned book_progress_revision(void){return revision;}
 static void copy_text(char *out,size_t cap,const char *s){snprintf(out,cap,"%s",s);}
 static bool book_title_from_path(const char *p,char *out,size_t cap){const char *base=strrchr(p,'/');copy_text(out,cap,base?base+1:p);return true;}
@@ -67,7 +68,9 @@ enum {SHELF};
 static char s_query[65],s_latest_path[288],s_requested_open[288];
 static bool s_recent_sort=true,s_requested_open_home;
 typedef struct {shelf_entry_t **entries;int *count;size_t *capacity;} book_shelf_catalog_t;
-typedef struct {book_shelf_catalog_t catalog;const char *query;bool (*cancel)(void*);void *cancel_ctx;int (*category_add)(const char*);bool (*favorite_read)(nvs_handle_t,const char*);bool (*hidden_read)(nvs_handle_t,const char*);} book_shelf_scan_t;
+typedef struct book_shelf_cache book_shelf_cache_t;
+typedef struct {book_shelf_catalog_t catalog;const char *query;bool (*cancel)(void*);void *cancel_ctx;int (*category_add)(const char*);bool (*favorite_read)(nvs_handle_t,const char*);bool (*hidden_read)(nvs_handle_t,const char*);nvs_handle_t progress;bool progress_checked;book_shelf_cache_t *cache;bool metadata;} book_shelf_scan_t;
+static bool book_shelf_cache_lookup(const book_shelf_cache_t *cache,const char *path,uint32_t size,int64_t modified,char *name,size_t name_cap,char *author,size_t author_cap){(void)cache;(void)path;(void)size;(void)modified;(void)name;(void)name_cap;(void)author;(void)author_cap;return false;}
 typedef struct {const book_shelf_scan_t *scan;nvs_handle_t favorites,hidden;bool truncated;} shelf_backfill_t;
 static bool shelf_reserve(void){++reserves;return s_count<8;}
 static bool book_shelf_catalog_reserve(const book_shelf_catalog_t *catalog){assert(catalog->count==&s_count);return shelf_reserve();}

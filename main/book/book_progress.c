@@ -95,16 +95,13 @@ static esp_err_t warn_error(esp_err_t err) {
     return err;
 }
 
-bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
-    if (!path_valid(path) || out == NULL) return false;
-    nvs_handle_t h;
-    if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return false;
+static bool load_from_handle(nvs_handle_t h, const char* path, uint32_t size, book_progress_t* out) {
+    if (!h || !path_valid(path) || out == NULL) return false;
     char key[11];
     make_key(path, key);
     uint8_t data[RECORD_CAP];
     size_t len = sizeof(data);
     esp_err_t err = nvs_get_blob(h, key, data, &len);
-    nvs_close(h);
     if (err != ESP_OK || !record_valid(data, len) ||
         strcmp((const char*)data + HEADER_SIZE, path) != 0 || get32(data + 4) != size ||
         data[14] < BOOK_READER_PX_MIN || data[14] > BOOK_READER_PX_MAX || data[15] > 100) return false;
@@ -114,6 +111,19 @@ bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
         .last_open_s = data[3] == 2 ? get32(data + 16) : 0,
     };
     return true;
+}
+
+bool book_progress_load_handle(uintptr_t handle, const char* path, uint32_t size, book_progress_t* out) {
+    return load_from_handle((nvs_handle_t)handle, path, size, out);
+}
+
+bool book_progress_load(const char* path, uint32_t size, book_progress_t* out) {
+    if (!path_valid(path) || out == NULL) return false;
+    nvs_handle_t h;
+    if (nvs_open(NS, NVS_READONLY, &h) != ESP_OK) return false;
+    bool loaded = load_from_handle(h, path, size, out);
+    nvs_close(h);
+    return loaded;
 }
 
 esp_err_t book_progress_list(book_progress_visit_fn visit, void* ctx) {

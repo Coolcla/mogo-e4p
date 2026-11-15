@@ -17,8 +17,8 @@ PRE=r'''
 #include "book_cover_jobs.h"
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
-typedef struct {bool present,mounted;} board_sd_info_t;
-static board_sd_info_t sd={true,true};
+typedef struct {bool present,mounted;char identity[40];} board_sd_info_t;
+static board_sd_info_t sd={.present=true,.mounted=true};
 static unsigned store_revision=1,progress_revision=1,scans,submits,takes;
 static bool recent_mode,save_ok=true,flash_ready=true,fast_mode,asset_allowed=true;
 static bool fail_alloc,fail_catalog,fail_read,fail_open,probe_pending,cancelled,queue_pending;
@@ -38,7 +38,7 @@ static bool pico_boot_asset_allowed(const char *path){(void)path;return asset_al
 static size_t heap_caps_get_largest_free_block(int caps){assert(caps==1);return largest;}
 static void *heap_caps_calloc(size_t n,size_t size,int caps){assert(caps==3);return fail_alloc?NULL:calloc(n,size);}
 static uint32_t esp_random(void){static uint32_t state=1026;state^=state<<13;state^=state>>17;state^=state<<5;return state;}
-esp_err_t nvs_open(const char *name,int mode,nvs_handle_t *h){assert(!strcmp(name,"rp_shelf")&&mode==NVS_READONLY);*h=fail_open?0:42;return fail_open?99:ESP_OK;}
+esp_err_t nvs_open(const char *name,int mode,nvs_handle_t *h){assert((!strcmp(name,"rp_shelf")||!strcmp(name,"rp_books"))&&mode==NVS_READONLY);*h=fail_open?0:42;return fail_open?99:ESP_OK;}
 void nvs_close(nvs_handle_t h){assert(h==42);}
 bool book_shelf_hidden_read(nvs_handle_t h,const char *path){assert(h==42);(void)path;return false;}
 static book_shelf_entry_t catalog[12];
@@ -138,7 +138,8 @@ with tempfile.TemporaryDirectory(prefix='home-library-service-') as d:
  w=Path(d);env,cc=toolchain(w)
  (w/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_ERR_NOT_FINISHED 7\n#define ESP_ERR_NVS_NOT_FOUND 8\n')
  (w/'nvs.h').write_text('#pragma once\n#include "esp_err.h"\ntypedef int nvs_handle_t;\n#define NVS_READONLY 0\nesp_err_t nvs_open(const char *,int,nvs_handle_t *);\nvoid nvs_close(nvs_handle_t);\n')
+ (w/'esp_heap_caps.h').write_text('#pragma once\n#include <stddef.h>\n#include <stdlib.h>\n#define MALLOC_CAP_SPIRAM 1\n#define MALLOC_CAP_8BIT 2\nstatic inline void *heap_caps_calloc(size_t n,size_t size,int caps){(void)caps;return calloc(n,size);}\n')
  src=re.sub(r'^#include[^\n]*\n','',(ROOT/'main/services/home_library.c').read_text(),flags=re.M)
  (w/'test.c').write_text(PRE+src+BODY)
- subprocess.run(cc+['-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(w),'-Imain/book','-Imain/services',str(w/'test.c'),'main/book/book_mini_library.c','-o',str(w/'test')],cwd=ROOT,env=env,check=True)
+ subprocess.run(cc+['-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I'+str(w),'-Imain/book','-Imain/services',str(w/'test.c'),'main/book/book_mini_library.c','main/book/book_shelf_cache.c','-o',str(w/'test')],cwd=ROOT,env=env,check=True)
  subprocess.run([str(w/'test')],env=env,check=True)

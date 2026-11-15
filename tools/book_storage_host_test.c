@@ -96,6 +96,11 @@ int main(void){
     assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==1);
     assert(q.chapter==p.chapter&&q.byte_off==p.byte_off&&q.px==48&&q.pct==83);
     assert(!book_progress_load(sd,p.file_size+1,&q)&&q.file_size==p.file_size);
+    nvs_handle_t progress_handle;
+    assert(nvs_open("rp_books", NVS_READONLY, &progress_handle) == ESP_OK);
+    assert(book_progress_load_handle((uintptr_t)progress_handle, sd, p.file_size, &q) && q.last_open_s == 1);
+    nvs_close(progress_handle);
+    assert(!book_progress_load_handle(0, sd, p.file_size, &q));
     p.last_open_s=0;assert(book_progress_save(sd,&p)==ESP_OK);
     assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==2);
     latest->data[3]=1;assert(book_progress_load(sd,p.file_size,&q)&&q.last_open_s==0&&q.byte_off==p.byte_off);

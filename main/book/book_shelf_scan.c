@@ -57,7 +57,9 @@ static void clean_filename(char *dst, size_t cap, const char *filename) {
 bool book_shelf_catalog_reserve(const book_shelf_catalog_t *catalog) {
     if ((size_t)*catalog->count < *catalog->capacity) return true;
     if (*catalog->count == INT_MAX) return false;
-    size_t cap = *catalog->capacity ? *catalog->capacity * 2 : 32;
+    // 300 本约需 512 个槽位；64 起步可减少冷扫描中的拷贝，同时只多占一页条目空间。
+    // Three hundred books need about 512 slots; starting at 64 removes cold-scan copies while keeping small shelves bounded.
+    size_t cap = *catalog->capacity ? *catalog->capacity * 2 : 64;
     if (cap > INT_MAX || cap > SIZE_MAX / sizeof(**catalog->entries)) return false;
     book_shelf_entry_t *entries = heap_caps_realloc(*catalog->entries, cap * sizeof(*entries),
                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -126,9 +128,12 @@ void book_shelf_scan_dir(const book_shelf_scan_t *scan, const char *root, bool i
         book_shelf_entry_t candidate = {0};
         book_shelf_entry_t *item = &candidate;
         copy_text(item->path, sizeof(item->path), path);
-        if (!book_title_from_path(item->path, item->name, sizeof(item->name)))
+        bool cached = scan->cache && book_shelf_cache_lookup(scan->cache, item->path,
+            (uint32_t)st.st_size, (int64_t)st.st_mtime, item->name, sizeof(item->name),
+            item->author, sizeof(item->author));
+        if (!cached && !book_title_from_path(item->path, item->name, sizeof(item->name)))
             clean_filename(item->name, sizeof(item->name), ent->d_name);
-        if (book_metadata_supported(item->path)) {
+        if (scan->metadata && book_metadata_supported(item->path) && (!cached || !item->author[0])) {
             char title[sizeof(item->name)] = {0};
             char author[sizeof(item->author)] = {0};
             // 首屏只读已有元数据缓存，不逐本解析正文。
@@ -140,7 +145,9 @@ void book_shelf_scan_dir(const book_shelf_scan_t *scan, const char *root, bool i
         item->size = st.st_size;
         item->is_flash = is_flash;
         book_progress_t p;
-        item->has_progress = book_progress_load(item->path, item->size, &p);
+        item->has_progress = scan->progress_checked
+            ? book_progress_load_handle((uintptr_t)scan->progress, item->path, item->size, &p)
+            : book_progress_load(item->path, item->size, &p);
         item->pct = item->has_progress ? p.pct : 0;
         item->chapter = item->has_progress ? p.chapter : 0;
         item->recent = item->has_progress ? p.last_open_s : 0;
@@ -181,7 +188,11 @@ static bool shelf_backfill_visit(const char *path, const book_progress_t *progre
     if (!book_title_from_path(item->path, item->name, sizeof(item->name)))
         clean_filename(item->name, sizeof(item->name), base);
     if (!item->name[0]) return true;
-    if (book_metadata_supported(item->path) && pico_boot_asset_allowed(item->path)) {
+    bool cached = scan->cache && book_shelf_cache_lookup(scan->cache, item->path,
+        (uint32_t)st.st_size, (int64_t)st.st_mtime, item->name, sizeof(item->name),
+        item->author, sizeof(item->author));
+    if (scan->metadata && book_metadata_supported(item->path) && pico_boot_asset_allowed(item->path) &&
+        (!cached || !item->author[0])) {
         char title[sizeof(item->name)] = {0};
         char author[sizeof(item->author)] = {0};
         if (book_metadata_cached(item->path, title, sizeof(title), author, sizeof(author)) == ESP_OK)
