@@ -62,6 +62,8 @@
 #include "vcom_setup.h"
 #include "cellular_service.h"
 #include "network_service.h"
+#include "memory_manager.h"
+#include "app_lifecycle.h"
 
 static const char* TAG = "read_pico";
 extern const app_desc_t app_boot_recovery;
@@ -168,6 +170,8 @@ void app_main(void) {
 #endif
     ESP_LOGI(TAG, "startup reset=%d stack=%u", (int)reset, (unsigned)uxTaskGetStackHighWaterMark(NULL));
     app_settings_init();
+    mm_init();
+    mm_set_clean_callback(app_lifecycle_memory_clean);
     // 在大缓冲和字体之前读取小型锁屏设置；读取失败不阻塞，之后的检查仍可重试。
     // Read the tiny lock setting before large buffers/fonts; keep failures nonblocking and let subsequent checks retry.
     (void)lock_pin_enabled();

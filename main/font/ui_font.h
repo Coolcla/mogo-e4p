@@ -9,9 +9,16 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stddef.h>
 #include "epdiy.h"
 
 bool ui_font_has_text(const char *text);
+/// UI 主任务在没有字形借用时清空可重建位图，保留内置字体信息。
+/// The UI task may clear rebuildable bitmaps when no glyph is borrowed, retaining built-in font metadata.
+size_t ui_font_cache_clear(void);
+/// UI 任务盘点仍持有的字形分配；不初始化或生成字形，回调不得修改或分配。
+/// Visit live glyph allocations on the UI task without initializing/rasterizing; callbacks must not mutate or allocate.
+void ui_font_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);
 int ui_font_ascender_px(int px);
 int ui_font_text_width_px(int px, const char *text);
 /// 标题里是否有字只存在于补充位图：有则整行走补充基准字号，没有则按轮廓字号生成。

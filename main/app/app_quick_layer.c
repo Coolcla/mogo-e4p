@@ -24,6 +24,7 @@
 #include "ui_kit.h"
 #include "ui_quick_menu.h"
 #include "usb_storage.h"
+#include "memory_manager.h"
 
 extern const app_desc_t app_transfer;
 extern const app_desc_t app_device_settings;
@@ -72,9 +73,11 @@ static unsigned quick_status(void) {
     s_quick.cellular_enabled = status.cellular_enabled;
     s_quick.cellular_ready = status.cellular_ready;
     s_quick.haptics_enabled = s_quick.haptics_available && app_settings_touch_haptics();
+    s_quick.memory_busy = mm_clean_active();
     return (status.wifi_enabled ? 1u : 0u) | (app_settings_ble_turner() ? 2u : 0u) |
         (status.wifi_ready ? 4u : 0u) | (s_quick.haptics_enabled ? 8u : 0u) |
-        (status.cellular_enabled ? 16u : 0u) | (status.cellular_ready ? 32u : 0u);
+        (status.cellular_enabled ? 16u : 0u) | (status.cellular_ready ? 32u : 0u) |
+        (s_quick.memory_busy ? 64u : 0u);
 }
 
 static void quick_rotation_sync(app_ctx_t *ctx, const app_desc_t *current) {
@@ -101,11 +104,13 @@ void app_quick_layer_present(app_ctx_t *ctx, const app_desc_t *current, bool ful
                 :i==1?(status&2u)!=0
                 :i==ui_quick_menu_cellular_button(&s_quick)?(status&16u)!=0
                 :i==ui_quick_menu_haptics_button(&s_quick)?(status&8u)!=0
+                :i==ui_quick_menu_memory_button(&s_quick)?(status&64u)!=0
                 :i==3&&s_quick.frontlight&&s_quick.fl_on;
             bool was_active=i==0?(s_quick_status&1u)!=0
                 :i==1?(s_quick_status&2u)!=0
                 :i==ui_quick_menu_cellular_button(&s_quick)?(s_quick_status&16u)!=0
                 :i==ui_quick_menu_haptics_button(&s_quick)?(s_quick_status&8u)!=0
+                :i==ui_quick_menu_memory_button(&s_quick)?(s_quick_status&64u)!=0
                 :i==3&&s_quick.frontlight&&s_fl_shown_on;
             if(i==s_quick_pressed||active!=was_active){
                 EpdRect dirty;(void)ui_quick_menu_draw_button(ctx->fb,&s_quick,i,active,false,&dirty);
@@ -158,11 +163,13 @@ void app_quick_layer_present_buttons(app_ctx_t *ctx,const app_desc_t *current) {
             :i==1?(status&2u)!=0
             :i==ui_quick_menu_cellular_button(&s_quick)?(status&16u)!=0
             :i==ui_quick_menu_haptics_button(&s_quick)?(status&8u)!=0
+            :i==ui_quick_menu_memory_button(&s_quick)?(status&64u)!=0
             :i==3&&s_quick.frontlight&&s_quick.fl_on;
         bool was_active=i==0?(s_quick_status&1u)!=0
             :i==1?(s_quick_status&2u)!=0
             :i==ui_quick_menu_cellular_button(&s_quick)?(s_quick_status&16u)!=0
             :i==ui_quick_menu_haptics_button(&s_quick)?(s_quick_status&8u)!=0
+            :i==ui_quick_menu_memory_button(&s_quick)?(s_quick_status&64u)!=0
             :i==3&&s_quick.frontlight&&s_fl_shown_on;
         if(active==was_active&&(pressed==i)==(s_quick_pressed==i))continue;
         EpdRect dirty;
@@ -366,6 +373,26 @@ bool app_quick_layer_feed_frame(app_ctx_t *ctx, const app_desc_t *current, bool 
         } else {
             app_navigation_capture_reader_return(current);
             app_device_settings_request_haptics(true);
+            ctx->request_app = &app_device_settings;
+        }
+    } else if (event.action == UI_QUICK_MEMORY_CLEAN) {
+        if (s_quick.open) {
+            quick_frontlight_persist();
+            app_quick_layer_reset();
+            app_quick_layer_present(ctx, current, false);
+        }
+        // 把请求放在快捷层收起并恢复底页之后，避免清理回调与覆盖层绘制交错。
+        // Submit after the layer is closed and the underlay restored, so cleanup cannot interleave with overlay painting.
+        // broker 忙时拒绝重复请求；本次点击仍已消费并收起快捷层。
+        // A busy broker rejects duplicates; the consumed tap still closes the layer.
+        (void)mm_request_clean(MM_CLEAN_USER_SHORTCUT, NULL);
+    } else if (event.action == UI_QUICK_MEMORY_SETTINGS) {
+        if (current == &app_device_settings) {
+            app_device_settings_request_memory(false);
+            quick_reenter_page(ctx, current);
+        } else {
+            app_navigation_capture_reader_return(current);
+            app_device_settings_request_memory(true);
             ctx->request_app = &app_device_settings;
         }
     } else if (event.action == UI_QUICK_FULL) {

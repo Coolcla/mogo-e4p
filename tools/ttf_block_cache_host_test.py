@@ -9,7 +9,7 @@ with tempfile.TemporaryDirectory(prefix="ttf-block-cache-") as directory:
     work = Path(directory)
     (work / "esp_heap_caps.h").write_text(
         "#pragma once\n#include <stddef.h>\n#define MALLOC_CAP_SPIRAM 1\n"
-        "#define MALLOC_CAP_8BIT 2\nvoid *heap_caps_malloc(size_t bytes, int caps);\n")
+        "#define MALLOC_CAP_8BIT 2\nvoid *heap_caps_malloc(size_t bytes, int caps);\nvoid heap_caps_free(void *);\n")
     (work / "esp_timer.h").write_text(
         "#pragma once\n#include <stdint.h>\nint64_t esp_timer_get_time(void);\n")
     binary = work / "cache"

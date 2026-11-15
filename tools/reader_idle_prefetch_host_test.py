@@ -16,6 +16,7 @@ unit=r'''
 #include <stdatomic.h>
 #include <pthread.h>
 #include <time.h>
+#include "memory_manager.h"
 typedef struct{int x,y,width,height;}EpdRect;
 typedef struct{bool touched;}touch_t;
 typedef struct{bool consumed,request_app,request_menu,request_return;touch_t *touch;}app_ctx_t;
@@ -56,8 +57,9 @@ static unsigned book_layout_page_image_count(size_t page){(void)page;return imag
 static uint32_t book_layout_generation(void){return generation;}
 static const char *app_settings_book_background_path(void){return wallpaper?"wallpaper":"";}
 static EpdRect body_rect(void){return(EpdRect){1,2,3,4};}
-static size_t heap_caps_get_free_size(int caps){assert(caps==3);return free_space;}
 static void *heap_caps_aligned_alloc(size_t align,size_t n,int caps){assert(align==16&&caps==3);++allocs;return fail_alloc?NULL:malloc(n);}
+void *mm_alloc(mm_owner_t owner,mm_pool_t pool,size_t bytes,size_t alignment,size_t reserve){assert(owner==MM_OWNER_READER&&pool==MM_POOL_PSRAM);return free_space>=bytes&&free_space-bytes>=reserve?heap_caps_aligned_alloc(alignment,bytes,3):NULL;}
+bool mm_free(void *p){free(p);return true;}
 static atomic_llong fake_us;
 static int64_t esp_timer_get_time(void){return atomic_fetch_add(&fake_us,1000);}
 static pthread_mutex_t row_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -96,6 +98,7 @@ int main(void){touch_t touch={0};app_ctx_t ctx={.touch=&touch};
  // Gate the second row: output completion hands back that row, never the rest of the page.
  pthread_mutex_lock(&row_lock);gate_rows=true;row_permits=1;pthread_mutex_unlock(&row_lock);
  assert(kick_prep());wait_row(2);assert(work==1&&s_next_page==-1);
+ assert(!reader_prefetch_trim()&&s_next_fb);
  pthread_t end;assert(!pthread_create(&end,NULL,end_presentation,NULL));
  while(!atomic_load(&s_prep_stop)){}
  pthread_mutex_lock(&row_lock);row_permits=1;pthread_cond_broadcast(&row_cond);pthread_mutex_unlock(&row_lock);
@@ -125,6 +128,8 @@ int main(void){touch_t touch={0};app_ctx_t ctx={.touch=&touch};
  wallpaper=true;assert(app_settings_book_background_path()[0]&&kick_prep());reader_prefetch_end(true);wallpaper=false;
  s_toolbar=true;assert(!kick_prep());s_toolbar=false;s_reader_panel=READER_PANEL_FONT;assert(!kick_prep());s_reader_panel=READER_PANEL_NONE;
  s_page=499;assert(!kick_prep());
+ assert(reader_prefetch_trim()&&!s_next_fb);
+ assert(reader_prefetch_trim());
  reader_prefetch_release();reader_prefetch_release();
  assert(!s_next_fb&&!s_prep_task&&!s_prep_done&&!s_draw_lock&&!reader_prefetch_frame(s_page));
  s_page=0;assert(kick_prep());reader_prefetch_end(true);reader_prefetch_release();
@@ -134,11 +139,12 @@ int main(void){touch_t touch={0};app_ctx_t ctx={.touch=&touch};
 '''
 from reader_session_test_state import position_state
 unit = position_state(page=0) + unit
-with tempfile.TemporaryDirectory(dir='/private/tmp') as d:
+with tempfile.TemporaryDirectory() as d:
  folder=Path(d)
+ (folder/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\n')
  for header in ['epdiy.h','book_layout.h','reader_perf.h','esp_heap_caps.h','esp_timer.h',
                 'freertos/FreeRTOS.h','freertos/semphr.h','freertos/task.h']:
   path=folder/header;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('#pragma once\n')
  c=folder/'test.c';exe=folder/'test';c.write_text(unit)
- subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-pthread','-I'+str(folder),'-I'+str(root/'main/book'),str(c),'-o',str(exe)],check=True)
+ subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-pthread','-I'+str(folder),'-I'+str(root/'main/book'),'-I'+str(root/'main/services'),str(c),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True,timeout=30)

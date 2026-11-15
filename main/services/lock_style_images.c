@@ -45,6 +45,13 @@ static bool s_running, s_paused = true, s_scan, s_scanned;
 static lock_image_item_t *s_catalogue;
 static int s_catalogue_count;
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
+void lock_images_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit) return;
+    portENTER_CRITICAL(&s_lock);
+    visit(context, s_catalogue);
+    for (unsigned i = 0; i < RAM_SLOTS; ++i) visit(context, s_slots[i].pixels);
+    portEXIT_CRITICAL(&s_lock);
+}
 static bool cancelled(void *context) {
     unsigned generation = *(unsigned *)context;
     portENTER_CRITICAL(&s_lock);

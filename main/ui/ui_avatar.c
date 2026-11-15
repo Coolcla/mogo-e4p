@@ -19,6 +19,12 @@ static uint8_t *s_pixels[2];
 static unsigned s_generation,s_revision;
 static ui_avatar_state_t s_states[2];
 static bool s_running,s_paused;
+void ui_avatar_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit) return;
+    portENTER_CRITICAL(&s_avatar_lock);
+    for (unsigned i = 0; i < 2; ++i) visit(context, s_pixels[i]);
+    portEXIT_CRITICAL(&s_avatar_lock);
+}
 static int slot_for(int side) { return side==60?0:side==82?1:-1; }
 static void avatar_worker(void *arg) {
     (void)arg;

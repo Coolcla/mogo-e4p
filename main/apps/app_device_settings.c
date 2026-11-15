@@ -104,6 +104,8 @@
 #include "time_service.h"
 #include "network_service.h"
 #include "cellular_service.h"
+#include "memory_manager.h"
+#include "memory_inventory.h"
 
 static void fit_value(char *value, int width);
 static void settings_card(uint8_t *fb, EpdRect rect, int radius, uint8_t fill, uint8_t edge);
@@ -123,6 +125,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_NETWORK, SETTINGS_TIME,
                SETTINGS_POWER_LOG,
                SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH,
+               SETTINGS_MEMORY,
                SETTINGS_LOCK_PIN, SETTINGS_PIN_ENTRY, SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
 // 快捷栏长按蓝牙或震动圆键的待定子页；on_enter 消费一次后回到主列表。
@@ -139,7 +142,15 @@ static bool s_enter_haptics_from_quick;
 static bool s_haptics_shortcut_back;
 static bool s_enter_network_from_quick;
 static bool s_network_shortcut_back;
+static bool s_enter_memory_from_quick;
+static bool s_memory_shortcut_back;
 static network_status_t s_network_snapshot;
+static mm_snapshot_t s_memory_snapshot;
+static mm_clean_report_t s_memory_report;
+static int64_t s_memory_next_sample_ms;
+static int64_t s_memory_last_present_ms;
+static bool s_memory_present_pending;
+static bool s_memory_dirty;
 enum {
     NETWORK_TOGGLE_Y = 272,
     NETWORK_TOGGLE_H = 126,
@@ -871,6 +882,97 @@ static void draw_settings_version(uint8_t *fb, int center_y) {
     while (px > 14 && ui_text_fixed_width_px(px, text) > 600) --px;
     ui_text_fixed_vc(fb, 342, center_y, px, text, EPD_DRAW_ALIGN_CENTER, false);
 }
+
+static void memory_size_text(char *out, size_t cap, size_t bytes) {
+    if (bytes >= 1024u * 1024u)
+        snprintf(out, cap, "%u.%u MB", (unsigned)(bytes / (1024u * 1024u)),
+                 (unsigned)((bytes % (1024u * 1024u)) * 10u / (1024u * 1024u)));
+    else
+        snprintf(out, cap, "%u KB", (unsigned)((bytes + 512u) / 1024u));
+}
+
+static const char *memory_clean_state_text(mm_clean_state_t state) {
+    switch (state) {
+        case MM_CLEAN_REQUESTED: return "等待主循环执行";
+        case MM_CLEAN_RUNNING: return "正在回收可重建缓存";
+        case MM_CLEAN_DONE: return "上次清理已完成";
+        case MM_CLEAN_PARTIAL: return "部分资源仍在使用";
+        default: return "尚未清理";
+    }
+}
+
+static bool memory_snapshot_changed(const mm_snapshot_t *left, const mm_snapshot_t *right) {
+    mm_snapshot_t a = *left;
+    mm_snapshot_t b = *right;
+    // updated_ms 是采样时间戳，不应单独触发屏幕刷新。
+    // updated_ms is a sampling timestamp, not a visible state change.
+    a.updated_ms = 0;
+    b.updated_ms = 0;
+    return memcmp(&a, &b, sizeof(a)) != 0;
+}
+
+static void memory_pool_card(uint8_t *fb, int y, const char *title, const mm_pool_snapshot_t *pool) {
+    char free_text[24], largest_text[24], minimum_text[24], used_text[24], total_text[24], summary[64];
+    memory_size_text(free_text, sizeof(free_text), pool->free_bytes);
+    memory_size_text(largest_text, sizeof(largest_text), pool->largest_free);
+    memory_size_text(minimum_text, sizeof(minimum_text), pool->minimum_free);
+    memory_size_text(used_text, sizeof(used_text), pool->used_bytes);
+    memory_size_text(total_text, sizeof(total_text), pool->total);
+    snprintf(summary, sizeof(summary), "%s · 已用 %u%%", total_text,
+             pool->total ? (unsigned)((uint64_t)pool->used_bytes * 100u / pool->total) : 0);
+    settings_card(fb, (EpdRect){36, y, 612, 136}, 22, UI_GRAY_WHITE, 0x70);
+    ui_text_fixed_vc(fb, 60, y + 26, 25, title, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 616, y + 26, 17, summary, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text_fixed_vc(fb, 60, y + 76, 19, "可用", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 224, y + 76, 19, free_text, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 350, y + 76, 19, "最大连续", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 610, y + 76, 19, largest_text, EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text_fixed_vc(fb, 60, y + 112, 17, "历史最低", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 224, y + 112, 17, minimum_text, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 350, y + 112, 17, "已用", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 610, y + 112, 17, used_text, EPD_DRAW_ALIGN_RIGHT, false);
+}
+
+static display_rect_t memory_area_hint(app_ctx_t *ctx) {
+    (void)ctx;
+    return display_rect_from_epd((EpdRect){0, 218, UI_LOCK_WIDTH, UI_NAV_REFRESH_END - 218});
+}
+
+static void memory_render_content(uint8_t *fb) {
+    ui_fill_rect_fast((EpdRect){0, 218, UI_LOCK_WIDTH, UI_NAV_REFRESH_END - 218}, UI_GRAY_WHITE, fb);
+    ui_text_fixed_vc(fb, 36, 232, 19, "实时采样 500ms · 屏幕按变化更新", EPD_DRAW_ALIGN_LEFT, false);
+    memory_pool_card(fb, 260, "内部 RAM", &s_memory_snapshot.pool[MM_POOL_INTERNAL]);
+    memory_pool_card(fb, 404, "PSRAM", &s_memory_snapshot.pool[MM_POOL_PSRAM]);
+    ui_text_fixed_vc(fb, 36, 578, 19, s_memory_snapshot.inventory_partial
+        ? "可归属资源 · 繁忙项稍后重试" : "可归属资源 · 含常驻内存与缓存", EPD_DRAW_ALIGN_LEFT, false);
+    settings_card(fb, (EpdRect){36, 600, 612, 252}, 22, UI_GRAY_WHITE, 0x70);
+    for (int i = 0; i < MM_OWNER_COUNT; ++i) {
+        const int y = 630 + i * 40;
+        char value[24];
+        const size_t bytes = s_memory_snapshot.owner[i].internal_bytes + s_memory_snapshot.owner[i].psram_bytes;
+        memory_size_text(value, sizeof(value), bytes);
+        ui_text_fixed_vc(fb, 64, y, 20, mm_owner_name((mm_owner_t)i), EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_fixed_vc(fb, 594, y, 20, value, EPD_DRAW_ALIGN_RIGHT, false);
+        if (i + 1 < MM_OWNER_COUNT) settings_divider(fb, y + 20, 64, 530);
+    }
+    ui_draw_button(fb, (EpdRect){36, 882, 612, 76}, "一键清理可重建内存",
+        s_memory_snapshot.clean_state == MM_CLEAN_RUNNING || s_memory_snapshot.clean_state == MM_CLEAN_REQUESTED);
+    char status[96];
+    snprintf(status, sizeof(status), "%s · 第 %u 次", memory_clean_state_text(s_memory_snapshot.clean_state),
+             (unsigned)s_memory_snapshot.clean_request_id);
+    ui_text_fixed_vc(fb, 342, 990, 20, status, EPD_DRAW_ALIGN_CENTER, false);
+    char released[24], released_status[96];
+    memory_size_text(released, sizeof(released), s_memory_report.released_internal + s_memory_report.released_psram);
+    snprintf(released_status, sizeof(released_status), "可用净增 %s（内部 %u KB · PSRAM %u KB）",
+             released, (unsigned)(s_memory_report.released_internal / 1024u),
+             (unsigned)(s_memory_report.released_psram / 1024u));
+    ui_text_fixed_vc(fb, 342, 1027, 17, released_status, EPD_DRAW_ALIGN_CENTER, false);
+    snprintf(status, sizeof(status), "%s · 分配未通过 %u 次",
+             s_memory_snapshot.pressure ? "内存紧张，自动清理已启用" : "内存正常，自动监测中",
+             (unsigned)s_memory_snapshot.allocation_failures);
+    ui_text_fixed_vc(fb, 342, 1070, 17, status, EPD_DRAW_ALIGN_CENTER, false);
+}
+
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
@@ -879,6 +981,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     // 保留 ui_clear_page 的白底，灰阶只由头像、卡片与字形生成。
     // Keep ui_clear_page's white background; avatars, cards and glyphs alone generate grays.
     ui_nav_status(fb);
+    if (s_page == SETTINGS_MEMORY) {
+        back_header(fb, "内存管理");
+        memory_render_content(fb);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     if (s_page == SETTINGS_LOCK_PIN) {
         back_header(fb, "锁屏密码");
         row(fb, 266, "四位数字密码", !lock_pin_available() ? "暂不可用" : lock_pin_enabled() ? "已开启" : "已关闭");
@@ -1469,6 +1577,13 @@ void app_device_settings_request_network(bool return_to_origin) {
     s_enter_ble_from_quick = false;
     s_enter_haptics_from_quick = false;
 }
+void app_device_settings_request_memory(bool return_to_origin) {
+    s_enter_page = SETTINGS_MEMORY;
+    s_enter_memory_from_quick = return_to_origin;
+    s_enter_ble_from_quick = false;
+    s_enter_haptics_from_quick = false;
+    s_enter_network_from_quick = false;
+}
 static void on_enter(app_ctx_t *ctx) {
     ui_lock_style_close();
     (void)ctx;
@@ -1494,6 +1609,11 @@ static void on_enter(app_ctx_t *ctx) {
     s_ble_shortcut_back = false;
     s_haptics_shortcut_back = false;
     s_network_shortcut_back = false;
+    s_memory_shortcut_back = false;
+    s_memory_present_pending = false;
+    s_memory_dirty = false;
+    s_memory_last_present_ms = 0;
+    s_memory_next_sample_ms = 0;
     network_service_get_status(&s_network_snapshot);
     // 快捷栏长按直达蓝牙子页：初始状态与主列表「蓝牙」行一致，消费后回到主列表。
     // Quick-bar shortcut straight to the Bluetooth sub-page: same initial state as
@@ -1514,6 +1634,14 @@ static void on_enter(app_ctx_t *ctx) {
         s_page = SETTINGS_NETWORK;
         s_network_shortcut_back = s_enter_network_from_quick;
     }
+    if (s_enter_page == SETTINGS_MEMORY) {
+        s_page = SETTINGS_MEMORY;
+        s_memory_shortcut_back = s_enter_memory_from_quick;
+        memory_inventory_snapshot(ctx ? ctx->hl : NULL, &s_memory_snapshot);
+        mm_get_clean_report(&s_memory_report);
+        s_memory_next_sample_ms = ctx ? ctx->now_ms : 0;
+        s_memory_last_present_ms = ctx ? ctx->now_ms : 0;
+    }
     if (s_enter_page == SETTINGS_UPGRADE) {
         upgrade_open();
         s_upgrade_confirm = s_upgrade_online = s_update.state == PICO_UPDATE_AVAILABLE && !s_update.busy;
@@ -1523,10 +1651,37 @@ static void on_enter(app_ctx_t *ctx) {
     s_enter_ble_from_quick = false;
     s_enter_haptics_from_quick = false;
     s_enter_network_from_quick = false;
+    s_enter_memory_from_quick = false;
 }
 
 static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_MEMORY) {
+        if (ctx->now_ms >= s_memory_next_sample_ms) {
+            mm_snapshot_t next;
+            mm_clean_report_t report;
+            memory_inventory_snapshot(ctx->hl, &next);
+            mm_get_clean_report(&report);
+            const bool state_changed = next.clean_state != s_memory_snapshot.clean_state ||
+                next.clean_request_id != s_memory_snapshot.clean_request_id ||
+                report.state != s_memory_report.state || report.request_id != s_memory_report.request_id;
+            const bool changed = memory_snapshot_changed(&next, &s_memory_snapshot) ||
+                memcmp(&report, &s_memory_report, sizeof(report)) != 0;
+            s_memory_snapshot = next;
+            s_memory_report = report;
+            s_memory_next_sample_ms = ctx->now_ms + 500;
+            if (changed) s_memory_dirty = true;
+            const bool present_due = s_memory_last_present_ms == 0 ||
+                ctx->now_ms - s_memory_last_present_ms >= 1000;
+            if (s_memory_dirty && (state_changed || present_due)) {
+                s_memory_present_pending = true;
+                s_memory_dirty = false;
+                s_memory_last_present_ms = ctx->now_ms;
+                return APP_REDRAW_AREA;
+            }
+        }
+        return APP_REDRAW_NONE;
+    }
     // 屏幕修复：先画最终结果，再在 tick 中整屏恢复；成功后不重复推页。
     // Paint the final notice before the tick's full restoration; do not push the page twice on success.
     if (s_panel_repair_pending) {
@@ -1888,6 +2043,32 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         if (ev->y0 >= 767 && ev->y0 < 845) { (void)time_save(); return APP_REDRAW_PAGE; }
         if (ev->y0 >= 874 && ev->y0 < 952) { s_page = SETTINGS_TIME; return APP_REDRAW_PAGE; }
+        return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_MEMORY) {
+        const int tab = ui_nav_hit(ev->x0, ev->y0);
+        if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+        const int y = ev->y0;
+        if (y < 190) {
+            if (s_memory_shortcut_back) {
+                s_memory_shortcut_back = false;
+                ctx->request_return = true;
+                return APP_REDRAW_NONE;
+            }
+            s_page = SETTINGS_MAIN;
+            (void)wifi_transfer_get_saved_wifi(s_main_wifi, &s_main_wifi_saved);
+            settings_prepare_profile();
+            return APP_REDRAW_PAGE;
+        }
+        if (y >= 882 && y < 958 && ev->x0 >= 36 && ev->x0 < 648) {
+            if (mm_request_clean(MM_CLEAN_MEMORY_PAGE, NULL) == ESP_OK) {
+                memory_inventory_snapshot(ctx->hl, &s_memory_snapshot);
+                s_memory_present_pending = false;
+                s_memory_dirty = false;
+                s_memory_last_present_ms = ctx->now_ms;
+            }
+            return APP_REDRAW_PAGE;
+        }
         return APP_REDRAW_NONE;
     }
     int tab = ui_nav_hit(ev->x0, ev->y0);
@@ -2274,6 +2455,17 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
         ctx->request_return = true;
         return APP_REDRAW_NONE;
     }
+    if (s_page == SETTINGS_MEMORY && s_memory_shortcut_back) {
+        s_memory_shortcut_back = false;
+        ctx->request_return = true;
+        return APP_REDRAW_NONE;
+    }
+    if (s_page == SETTINGS_MEMORY) {
+        s_page = SETTINGS_MAIN;
+        (void)wifi_transfer_get_saved_wifi(s_main_wifi, &s_main_wifi_saved);
+        settings_prepare_profile();
+        return APP_REDRAW_PAGE;
+    }
 
     if (s_page == SETTINGS_READING_BG_PREVIEW) { s_reading_bg_confirm = false; s_page = SETTINGS_READING_BG; return APP_REDRAW_PAGE; }
     if (s_page == SETTINGS_READING_BG) { s_page = SETTINGS_MAIN; return APP_REDRAW_PAGE; }
@@ -2344,6 +2536,13 @@ static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
         guard_draw_result(ctx->hl, display_refresh_area(ctx->hl, s_input_layout ? DISPLAY_REFRESH_DETAIL : DISPLAY_REFRESH_FEEDBACK, s_input_area, DISPLAY_REFRESH_DEFAULT));
         return true;
     }
+    if (redraw == APP_REDRAW_AREA && s_page == SETTINGS_MEMORY && s_memory_present_pending) {
+        s_memory_present_pending = false;
+        memory_render_content(ctx->fb);
+        guard_draw_result(ctx->hl, display_refresh_area(ctx->hl, DISPLAY_REFRESH_DETAIL,
+            display_rect_to_epd(memory_area_hint(ctx)), DISPLAY_REFRESH_DEFAULT));
+        return true;
+    }
     if (redraw == APP_REDRAW_AREA && s_scroll_present_pending &&
         (s_page == SETTINGS_MAIN ||
          s_page == SETTINGS_SHELF_STYLE || s_page == SETTINGS_SYSTEM_FONT ||
@@ -2380,5 +2579,6 @@ const app_desc_t app_device_settings = {
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
     .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_exit = settings_exit, .on_before_lock = on_before_lock, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
-    .present = settings_present, .on_media_lost=settings_media_lost, .on_media_ready=settings_media_ready,
+    .present = settings_present,
+    .on_media_lost=settings_media_lost, .on_media_ready=settings_media_ready,
 };

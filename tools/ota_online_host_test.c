@@ -43,6 +43,7 @@ void *heap_caps_calloc(size_t n,size_t s,int c){(void)c;return calloc(n,s);}
 void heap_caps_free(void *p){free(p);}
 size_t heap_caps_get_free_size(unsigned c){return c&MALLOC_CAP_INTERNAL?internal_free:external_free;}
 size_t heap_caps_get_largest_free_block(unsigned c){return c&MALLOC_CAP_INTERNAL?internal_block:external_block;}
+bool mm_check_capacity(mm_pool_t pool,size_t minimum,size_t block){unsigned caps=(pool==MM_POOL_INTERNAL?MALLOC_CAP_INTERNAL:MALLOC_CAP_SPIRAM)|MALLOC_CAP_8BIT;return heap_caps_get_free_size(caps)>=minimum&&heap_caps_get_largest_free_block(caps)>=block;}
 SemaphoreHandle_t xSemaphoreCreateRecursiveMutex(void){
  pthread_mutexattr_t attr;assert(!pthread_mutexattr_init(&attr));
  assert(!pthread_mutexattr_settype(&attr,PTHREAD_MUTEX_RECURSIVE));

@@ -44,6 +44,10 @@ typedef struct {
 #define TTF_FONT_SLOTS 4
 #define TTF_FONT_SLOT_SYSTEM 0
 
+/// 持有阅读绘制锁时盘点所有槽位、工作区和字形的唯一堆分配；回调不得修改或分配。
+/// With the reader draw lock held, visit unique slot/work/glyph allocations; callbacks must not mutate or allocate.
+void ttf_font_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);
+
 /// 初始化全部槽位；可重复调用。/ Initialise every slot; idempotent.
 void ttf_font_slots_init(void);
 /// 把一块 TTF 内存装进空闲槽，返回槽号；槽满或字体无效返回 -1。

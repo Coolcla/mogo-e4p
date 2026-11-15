@@ -82,6 +82,9 @@ static void reader_perf_memory_test(const char *event,const reader_memory_stats_
 '''
 UNIT=UNIT.replace('SHELF_CONTEXT_DECLARATIONS',declarations())+implementation()
 for path, name in [
+    ('main/font/ttf_font.c', 'ttf_font_visit_allocations'),
+    ('main/book/book_layout.c', 'book_layout_visit_allocations'),
+    ('main/ui/ui_reader_background.c', 'ui_reader_background_visit_allocations'),
     ('main/font/ttf_font.c', 'ttf_font_memory_stats'),
     ('main/book/book_layout.c', 'book_layout_memory_stats'),
     ('main/book/reader_prefetch.c', 'reader_prefetch_memory_stats'),
@@ -94,6 +97,21 @@ static size_t listed(void){
  return captured.font_source+captured.font_tables+captured.font_blocks+captured.font_glyphs+
  captured.font_work+captured.font_catalog+captured.layout+captured.chapter+captured.prefetch+
  captured.background+captured.page_images+captured.shelf_ui;
+}
+static const void *inventory_seen[64];
+static unsigned inventory_count;
+static void count_owned(void *context,const void *p){
+ if(!p)return;
+ for(unsigned i=0;i<inventory_count;++i)assert(inventory_seen[i]!=p);
+ assert(inventory_count<64);inventory_seen[inventory_count++]=p;
+ *(size_t *)context+=reader_memory_owned(p);
+}
+static void check_inventory(void){
+ size_t font=0,layout=0,background=0;inventory_count=0;
+ ttf_font_visit_allocations(count_owned,&font);book_layout_visit_allocations(count_owned,&layout);
+ ui_reader_background_visit_allocations(count_owned,&background);
+ assert(font==captured.font_source+captured.font_tables+captured.font_blocks+captured.font_glyphs+captured.font_work+captured.font_catalog);
+ assert(layout==captured.layout&&background==captured.background);
 }
 int main(void){
  reader_memory_snapshot("test");assert(!listed()&&!queries&&!captured.prefetch_worker&&!captured.prefetch_stack_free);
@@ -126,12 +144,14 @@ int main(void){
  assert(captured.layout==462+2*32768&&captured.prefetch==118&&captured.background==119);
  assert(captured.prefetch_worker==1&&captured.prefetch_stack_free==1234);
  reader_memory_stats_t old=captured;reader_memory_snapshot("test");assert(!memcmp(&old,&captured,sizeof(old)));
+ check_inventory();
  // 部分失败和关闭后的NULL指针不受旧长度影响；保留块工作区单独可见。
  // NULL pointers after partial failure or close ignore stale lengths; retained blocks remain visible separately.
  release((void**)&s_slots[0].f_source.f_mem);s_slots[0].f_font_data=NULL;
  release(&s_next_fb);release(&s_gray);s_prep_task=NULL;
  reader_memory_snapshot("test");assert(listed()==live&&!captured.font_source&&!captured.prefetch&&!captured.background);
  assert(captured.font_blocks==219&&!captured.prefetch_worker&&!captured.prefetch_stack_free);
+ check_inventory();
  // 清空模拟拥有者后重复读零，分配查询不得触碰旧指针。
  // Clearing simulated owners allows repeated zero snapshots without querying stale pointers.
  for(unsigned i=0;i<64;++i)if(allocated[i].pointer){free(allocated[i].pointer);allocated[i].pointer=NULL;}
@@ -140,6 +160,7 @@ int main(void){
  s_glyph_maps[0].glyphs=s_glyph_maps[1].glyphs=NULL;
  s_page_images=NULL;s_page_image_count=0;
  reader_memory_snapshot("test");reader_memory_snapshot("test");assert(!listed()&&logs==6&&source_snapshots==6&&source_logs==6);
+ check_inventory();
  puts("PASS: actual owner snapshots, borrowed/static exclusion, CFF alias, glyph lists, partial allocation, retained workspaces and repeated exit");
 }
 '''

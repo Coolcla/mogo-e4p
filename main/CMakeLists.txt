@@ -99,6 +99,8 @@ idf_component_register(
         "power/cache_wake_restore.c"
         "power/s31_sleep_compat.c"
         "services/storage_jobs.c"
+        "services/memory_manager.c"
+        "services/memory_inventory.c"
         "services/network_policy.c"
         "services/network_service.c"
         "services/network_http.c"

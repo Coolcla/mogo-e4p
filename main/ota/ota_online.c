@@ -23,6 +23,7 @@
 #include "esp_log.h"
 #endif
 #include "storage_jobs.h"
+#include "memory_manager.h"
 #include "time_service.h"
 #include "weather_service.h"
 #include "../diagnostics/network_diagnostics.h"
@@ -89,12 +90,8 @@ void pico_online_display_end(bool held) {
     if (held) xSemaphoreGiveRecursive(s_flash_display);
 }
 static bool memory_available(size_t internal_min, size_t internal_block, size_t external_min) {
-    const unsigned internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
-    const unsigned external = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
-    return heap_caps_get_free_size(internal) >= internal_min &&
-        heap_caps_get_largest_free_block(internal) >= internal_block &&
-        heap_caps_get_free_size(external) >= external_min &&
-        heap_caps_get_largest_free_block(external) >= 32768;
+    return mm_check_capacity(MM_POOL_INTERNAL, internal_min, internal_block) &&
+        mm_check_capacity(MM_POOL_PSRAM, external_min, 32768);
 }
 static bool release_nonessential_resources(void) {
     app_weather_cancel_join();

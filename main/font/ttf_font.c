@@ -1888,7 +1888,7 @@ static void unload_here(void) {
     font_ready = false;
     cache_reset();
     io_unmap();
-    io_reset();
+    (void)ttf_block_cache_release(&s_cur->f_blocks);
     abandon_font_source();
     font_file_pos = UINT32_MAX;
     heap_caps_free(file_loca);
@@ -2080,14 +2080,13 @@ size_t ttf_font_cache_clear_all(void) {
     int keep = s_cur_index;
     size_t freed = 0;
     for (int i = 0; i < TTF_FONT_SLOTS; i++) {
-        if (!s_slots[i].f_ready) continue;
         s_cur_index = i;
         s_cur = &s_slots[i];
         freed += s_cur->f_glyphs.bytes;
         cache_reset();
         packed_root = -1;
         packed_weight = -1;
-        io_reset();
+        freed += ttf_block_cache_release(&s_cur->f_blocks);
     }
     s_cur_index = keep;
     s_cur = &s_slots[keep];
@@ -2817,6 +2816,28 @@ void ttf_draw_text_px_bw(
     }
 }
 
+
+void ttf_font_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit) return;
+    for (unsigned i = 0; i < TTF_FONT_SLOTS; ++i) {
+        const ttf_slot_t *slot = &s_slots[i];
+        const ttf_font_source_t *source = &slot->f_source;
+        if (source->f_mem_owned) visit(context, source->f_mem);
+        visit(context, source->f_glyf_ram);
+        visit(context, source->f_gvar_ram);
+        visit(context, slot->f_file_loca);
+        visit(context, slot->f_gvar_glyph_off);
+        if (!slot->f_data_borrowed) visit(context, slot->f_font_data);
+        visit(context, slot->f_blocks.f_io_data);
+        visit(context, slot->f_blocks.f_io_run_buf);
+        for (const glyph_entry_t *entry = slot->f_glyphs.head; entry; entry = entry->lru_next) {
+            visit(context, entry);
+            visit(context, entry->bitmap);
+        }
+    }
+    visit(context, work);
+    visit(context, s_catalog);
+}
 
 #if CONFIG_READER_PERF && CONFIG_READER_MEMORY
 void ttf_font_memory_stats(reader_memory_stats_t *stats) {

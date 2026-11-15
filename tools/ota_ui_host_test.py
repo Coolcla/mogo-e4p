@@ -119,8 +119,11 @@ void pico_online_get_status(pico_update_status_t *out){*out=backend_status;}
 #include "ui/ui_nav_layout.h"
 #include "app.h"
 static enum {SETTINGS_MAIN,SETTINGS_TEXT_EDIT,SETTINGS_BLUETOOTH,SETTINGS_BLE_SCAN,SETTINGS_SHELF_STYLE,
- SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_UPGRADE,SETTINGS_PIN_ENTRY,SETTINGS_READING_BG} s_page;
-static bool s_input_settle,s_input_layout,s_scroll_present_pending;
+ SETTINGS_SYSTEM_FONT,SETTINGS_WALLPAPER,SETTINGS_AVATAR,SETTINGS_UPGRADE,SETTINGS_PIN_ENTRY,SETTINGS_READING_BG,SETTINGS_MEMORY} s_page;
+static bool s_input_settle,s_input_layout,s_scroll_present_pending,s_memory_present_pending;
+static void memory_render_content(uint8_t *fb){(void)fb;assert(false);}
+static EpdRect memory_area_hint(app_ctx_t *ctx){(void)ctx;assert(false);return (EpdRect){0};}
+static EpdRect display_rect_to_epd(EpdRect rect){return rect;}
 static EpdRect s_input_area;
 typedef struct {int kind;} EpdWaveform;
 static const EpdWaveform E0470_WAVEFORM={0},E0470_FOLLOW_WAVEFORM={1};

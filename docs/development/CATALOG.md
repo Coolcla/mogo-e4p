@@ -67,6 +67,7 @@
 ## 设计与草稿
 
 - [docs/development/designs/DISPLAY_REFRESH.md](designs/DISPLAY_REFRESH.md)
+- [docs/development/designs/MEMORY_MANAGEMENT.md](designs/MEMORY_MANAGEMENT.md)
 
 ## 图片与附件
 

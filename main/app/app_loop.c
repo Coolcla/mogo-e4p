@@ -38,6 +38,8 @@
  * User revision: acknowledge accepted manual collage locks before saves/reader joins; omit the badge for automatic sleep and direct shutdown/restart.
  * 用户2026-11-08修订：阅读关闭触摸时只保留底部三键；直读与回放在手势、快捷层及电源弹窗前统一过滤。
  * User revision 2026-11-08: reader touch lock retains only the panel keys; filter live and replayed frames before gestures, quick layer and power dialog.
+ * 用户新增（2026-11-15）：统一内存 broker 在输入、快捷层和页面同步后由主循环推进一次，清理回调只在这个安全边界执行。
+ * User addition (2026-11-15): advance the unified memory broker once after input, quick-layer and page synchronization; cleanup callbacks run only at this safety boundary.
  */
 
 #include "../diagnostics/reader_perf.h"
@@ -47,6 +49,7 @@
 #include "../diagnostics/lock_sleep_trace.h"
 #endif
 #include "app_lifecycle.h"
+#include "memory_manager.h"
 #include "platform/s31_input.h"
 #include "app_input.h"
 #include "app_media.h"
@@ -1137,6 +1140,9 @@ void app_loop_run(const app_loop_config_t* config) {
             while (ble_pt_pop_raw(&raw_event)) {}
         }
         app_quick_layer_sync_status(&ctx, current);
+        if (!power_dialog_open && !app_quick_layer_is_open() && !menu_open &&
+            !ui_click_feedback_active() && !ctx.request_app && !ctx.request_menu && !ctx.request_return)
+            mm_tick(ctx.now_ms);
         // 上键全局兜底与 on_tick 同门控：弹窗、快捷层、菜单持有输入时不响应。
         // / Global up-key fallback gated like on_tick: silent while the dialog,
         // quick layer or menu owns input.

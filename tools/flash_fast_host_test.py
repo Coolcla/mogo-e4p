@@ -506,6 +506,33 @@ class FlashTests(unittest.TestCase):
         log = b"Loaded app from partition at offset 0x10000\nApp version: 1.0.3\nELF file SHA256: abcdef123...\nUI ready on Home\n"
         self.assertTrue(all(self.run_boot(log).values()))
 
+    def test_paired_boot_characters_preserve_identity_checks_and_raw_log(self):
+        prefix = b"I (971) boot: Loaded app from partition at offset 0x10000\r\n"
+        version = b"I (1504) app_init: App version: 1.0.3"
+        elf = b"I (1504) app_init: ELF file SHA256: abcdef123..."
+        doubled = b"\r\n\r\n".join(bytes(byte for byte in line for _ in range(2)) for line in (version, elf))
+        log = prefix + doubled + b"\r\n\r\nI (5689) app_loop: UI ready on Home\r\n"
+        self.assertTrue(all(fast.boot_checks(log.decode(), self.bundle, 0x10000).values()))
+        self.assertTrue(all(self.run_boot([log[:110], log[110:]]).values()))
+        self.assertEqual((self.folder / "boot.log").read_bytes(), log)
+        for field, value in (("version", "other"), ("elf_sha256", "000000000")):
+            wrong = dict(self.bundle, **{field: value})
+            self.assertFalse(all(fast.boot_checks(log.decode(), wrong, 0x10000).values()))
+        self.assertFalse(all(fast.boot_checks(log.decode(), self.bundle, 0x510000).values()))
+
+    def test_paired_fatal_boot_line_is_still_rejected(self):
+        identity = b"Loaded app from partition at offset 0x10000\nApp version: 1.0.3\nELF file SHA256: abcdef123...\nUI ready on Home\n"
+        for fatal in (b"panic", b"Guru Meditation", b"abort()", b"Brownout", b"Rebooting"):
+            line = b"E (6000) task: " + fatal
+            doubled = bytes(byte for byte in line for _ in range(2)) + b"\r\n"
+            with self.subTest(fatal=fatal), self.assertRaises(fast.FlashError):
+                self.run_boot([identity, doubled])
+
+    def test_normalizer_preserves_ordinary_and_corrupt_lines(self):
+        for line in ("I (1504) app_init: App version: 1.0.3", "11223344", "II  ((11550044))  broken"):
+            with self.subTest(line=line):
+                self.assertEqual(fast.normalize_boot_log(line), line)
+
     def test_retained_crash_log_does_not_reject_a_healthy_boot(self):
         identity = b"Loaded app from partition at offset 0x10000\nApp version: 1.0.3\nELF file SHA256: abcdef123...\nUI ready on Home\n"
         history = b"E (6098) crash: panic pc=0x2f011aac exc=4 core=1 \r\n"

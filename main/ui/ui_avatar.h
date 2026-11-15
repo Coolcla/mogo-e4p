@@ -12,3 +12,7 @@ ui_avatar_state_t ui_avatar_poll(const char *path,int side,uint8_t *pixels);
 void ui_avatar_invalidate(void);
 /// 仅卸载卡或睡眠需要等文件句柄收齐；切页绝不调用。/ Join file ownership only before unmount/sleep, never on navigation.
 bool ui_avatar_quiesce(unsigned timeout_ms);
+
+/// 在发布锁内访问仍持有的像素；回调不得修改、分配或阻塞，不等待解码。
+/// Visit live pixels under the publication lock; callbacks must not mutate, allocate or block. Never wait for decoding.
+void ui_avatar_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);
