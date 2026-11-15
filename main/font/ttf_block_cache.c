@@ -31,6 +31,16 @@ void ttf_block_cache_reset(ttf_block_cache_t *cache) {
     touch_n = 0;
 }
 
+size_t ttf_block_cache_release(ttf_block_cache_t *cache) {
+    size_t bytes = (io_data ? (size_t)TTF_IO_SLOTS * TTF_IO_BLOCK : 0) +
+        (io_run_buf ? (size_t)TTF_IO_RUN_MAX * TTF_IO_BLOCK : 0);
+    heap_caps_free(io_data);
+    heap_caps_free(io_run_buf);
+    io_data = io_run_buf = NULL;
+    ttf_block_cache_reset(cache);
+    return bytes;
+}
+
 bool ttf_block_cache_ensure(ttf_block_cache_t *cache) {
     if (io_data == NULL) {
         io_data = heap_caps_malloc(

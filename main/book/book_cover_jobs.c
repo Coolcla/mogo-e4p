@@ -20,6 +20,16 @@ static cover_job_slot_t *s_jobs;
 static portMUX_TYPE s_lock=portMUX_INITIALIZER_UNLOCKED;
 static unsigned s_generation;
 static bool s_running,s_paused;
+void book_cover_jobs_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit) return;
+    portENTER_CRITICAL(&s_lock);
+    visit(context, s_jobs);
+    if (s_jobs) for (unsigned i = 0; i < BOOK_COVER_JOB_SLOTS; ++i) {
+        visit(context, s_jobs[i].result.pixels);
+        visit(context, s_jobs[i].automatic);
+    }
+    portEXIT_CRITICAL(&s_lock);
+}
 static uint8_t contrast_gray(uint8_t value,unsigned contrast) {
     int v=128+((int)value-128)*(int)contrast/100;
     return (uint8_t)(v<0?0:v>255?255:v)&0xf0;

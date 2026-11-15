@@ -472,6 +472,13 @@ static esp_netif_t *s_netif;
 static esp_event_handler_instance_t s_events, s_ip_events;
 static bool s_wifi, s_started, s_loop_owned;
 static char *s_buffer;
+static size_t s_memory_internal, s_memory_psram;
+void wifi_transfer_memory_usage(size_t *internal_bytes, size_t *psram_bytes) {
+    portENTER_CRITICAL(&s_lock);
+    if (internal_bytes) *internal_bytes = s_memory_internal;
+    if (psram_bytes) *psram_bytes = s_memory_psram;
+    portEXIT_CRITICAL(&s_lock);
+}
 static bool s_stopping, s_upload_active;
 static bool s_config_busy;
 // 对时独占 SNTP 与临时 WiFi；取消后等待清理完成，才允许拆网络或睡眠。
@@ -2099,12 +2106,14 @@ void wifi_transfer_stop(void) {
     if (!cancel_time_sync(false)) return;
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
     if (s_http) { httpd_stop(s_http); s_http = NULL; }
+    portENTER_CRITICAL(&s_lock); s_memory_internal = 0; portEXIT_CRITICAL(&s_lock);
     if (s_started) { esp_wifi_stop(); s_started = false; }
     if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
     if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
     if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
+    portENTER_CRITICAL(&s_lock); s_memory_psram = 0; portEXIT_CRITICAL(&s_lock);
     free(s_buffer); s_buffer = NULL;
     if (s_ble_network_reserved) { s_ble_network_reserved = false; ble_pt_network_release(); }
     portENTER_CRITICAL(&s_lock);
@@ -2193,6 +2202,8 @@ esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
     if (!cfg->network_only) {
         s_buffer = heap_caps_malloc(16384, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (!s_buffer) { err = ESP_ERR_NO_MEM; goto fail; }
+        const size_t buffer_bytes = heap_caps_get_allocated_size(s_buffer);
+        portENTER_CRITICAL(&s_lock); s_memory_psram = buffer_bytes; portEXIT_CRITICAL(&s_lock);
     }
     if (!cfg->network_only) {
     httpd_config_t http = HTTPD_DEFAULT_CONFIG();
@@ -2211,6 +2222,7 @@ esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     err = httpd_start(&s_http, &http);
     if (err != ESP_OK) goto fail;
+    portENTER_CRITICAL(&s_lock); s_memory_internal = http.stack_size; portEXIT_CRITICAL(&s_lock);
     ESP_LOGI("transfer", "http ready internal free=%u largest=%u psram free=%u",
              (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
              (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),

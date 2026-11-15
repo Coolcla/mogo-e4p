@@ -14,6 +14,10 @@
 #include "wifi_transfer.h"
 #include "cellular_service.h"
 #include "ble_page_turner.h"
+#include "reader_prefetch.h"
+#include "ttf_font.h"
+#include "usb_storage.h"
+#include "ui_font.h"
 
 void app_lifecycle_checkpoint(app_ctx_t *ctx, const app_desc_t *current) {
     if (current->on_before_lock) current->on_before_lock(ctx);
@@ -63,4 +67,17 @@ app_lifecycle_light_t app_lifecycle_prepare_light(void) {
         wifi_transfer_resume_after_sleep();
     }
     return (app_lifecycle_light_t){.jobs_ready = true, .ble_stopped = ble_stopped};
+}
+
+bool app_lifecycle_memory_clean(mm_clean_reason_t reason) {
+    (void)reason;
+    // USB 和升级期间不改字体资源；连接及文件 worker 的缓冲不属于本回调。
+    // Leave font resources alone during USB/updates; connection and file-worker buffers are outside this callback.
+    if (usb_storage_active() || pico_online_busy()) return false;
+    // 推屏已经交还阅读借用；防御性地尝试锁，繁忙时保留所有共享字体资源。
+    // Presentation has returned reader borrows; defensively try the lock and retain shared fonts while busy.
+    if (!reader_prefetch_trim()) return false;
+    (void)ttf_font_cache_clear_all();
+    (void)ui_font_cache_clear();
+    return true;
 }

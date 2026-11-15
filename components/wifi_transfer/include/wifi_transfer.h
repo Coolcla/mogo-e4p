@@ -76,6 +76,9 @@ typedef struct {
 esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg);
 /// 等待请求退出并释放本组件资源；可重复调用。/ Join requests and release owned resources; repeatable.
 void wifi_transfer_stop(void);
+/// 只读已发布的传输缓冲/HTTP栈字节数；驱动和临时分配不在此范围，查询不解引用活动指针。
+/// Read published transfer-buffer/HTTP-stack sizes without dereferencing live pointers; excludes driver and temporary allocations.
+void wifi_transfer_memory_usage(size_t *internal_bytes, size_t *psram_bytes);
 /// 原子拒绝文件操作期间的停止；成功则已停服，由同一控制任务调用。/ Atomically refuse stopping during file operations; true means stopped. Owner task only.
 bool wifi_transfer_try_stop_if_idle(void);
 /// 锁屏浅睡前停用射频；唤醒后按原会话配置恢复。上传中返回 false。

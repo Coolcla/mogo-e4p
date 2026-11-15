@@ -56,6 +56,25 @@ static size_t s_bytes;
 static uint32_t s_age;
 static uint8_t s_cover[256];
 
+void ui_font_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit || !s_glyphs) return;
+    visit(context, s_glyphs);
+    for (unsigned i = 0; i < UI_GLYPH_SLOTS; ++i) visit(context, s_glyphs[i].bitmap);
+}
+
+size_t ui_font_cache_clear(void) {
+    size_t released = s_bytes;
+    if (s_glyphs) {
+        for (int i = 0; i < UI_GLYPH_SLOTS; ++i) free(s_glyphs[i].bitmap);
+        released += UI_GLYPH_SLOTS * sizeof(*s_glyphs);
+        free(s_glyphs);
+        s_glyphs = NULL;
+    }
+    s_bytes = 0;
+    s_age = 0;
+    return released;
+}
+
 static bool ready(void) {
     if (s_attempted) return s_ready;
     s_attempted = true;

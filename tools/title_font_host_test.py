@@ -79,7 +79,17 @@ void *heap_caps_malloc(size_t n,int caps){(void)caps;allocation_t *p=malloc(size
 void *heap_caps_calloc(size_t n,size_t s,int caps){void *p=heap_caps_malloc(n*s,caps);memset(p,0,n*s);return p;}
 void heap_caps_free(void *p){if(!p)return;allocation_t *a=(allocation_t *)p-1;live-=a->bytes;free(a);}
 size_t heap_caps_get_allocated_size(void *p){assert(p);return ((allocation_t*)p-1)->bytes;}
+static const void *inventory_seen[4096];
+static unsigned inventory_count;
+static void inventory_count_allocation(void *context,const void *p){
+ if(!p)return;
+ for(unsigned i=0;i<inventory_count;++i)assert(inventory_seen[i]!=p);
+ assert(inventory_count<4096);inventory_seen[inventory_count++]=p;
+ *(size_t *)context+=heap_caps_get_allocated_size((void *)p);
+}
 static void check_font_memory(void){
+ size_t inventoried=0;inventory_count=0;
+ ttf_font_visit_allocations(inventory_count_allocation,&inventoried);assert(inventoried==live);
 #if CONFIG_READER_PERF && CONFIG_READER_MEMORY
  reader_memory_stats_t stats={0};ttf_font_memory_stats(&stats);
  assert(stats.font_source+stats.font_tables+stats.font_blocks+stats.font_glyphs+stats.font_work+stats.font_catalog==live);
@@ -195,6 +205,17 @@ int main(int argc,char **argv){
   }
   record_coverage=false;
   ttf_set_stroke_adjust(0);assert(opens==initial_opens);
+  // 清理全部槽的缓存后活动字体和句柄保留，字形按需重建且像素一致。
+  // Clearing every slot retains the active face/handle; lazy glyph rebuilding produces identical pixels.
+  record_coverage=true;ttf_set_antialias(true);memset(pixels,15,sizeof(pixels));
+  ttf_draw_text_px(pixels,20,80,48,text,EPD_DRAW_ALIGN_LEFT,0,15);
+  uint8_t before_trim[sizeof(pixels)];memcpy(before_trim,pixels,sizeof(pixels));
+  size_t before_trim_live=live,freed=ttf_font_cache_clear_all();
+  assert(freed>0&&live+freed==before_trim_live&&ttf_font_ready()&&active_fd==1&&opens==initial_opens);
+  check_font_memory();assert(ttf_font_cache_clear_all()==0);
+  memset(pixels,15,sizeof(pixels));ttf_draw_text_px(pixels,20,80,48,text,EPD_DRAW_ALIGN_LEFT,0,15);
+  assert(!memcmp(before_trim,pixels,sizeof(pixels))&&opens==initial_opens&&active_fd==1);
+  record_coverage=false;
   widths[face]=ttf_text_width_px(40,text);
   check_font_memory();assert(live-resident<128*1024&&peak<1024*1024);
  }
@@ -224,7 +245,7 @@ int main(int argc,char **argv){
  }
  ttf_font_unload();check_font_memory();
  puts("PASS: 20 real font-slot cycles preserve system selection, reject full/invalid slots, reclaim owned images and retain constant warm workspace bytes");
- puts("PASS: actual imported system/reader TTF at 32/40/48px, direct raster identity, five stroke levels with native normal identity and fixed advances, single file/face, bounded warm cache and no duplicate font load");
+ puts("PASS: actual imported system/reader TTF at 32/40/48px, direct raster identity, five stroke levels with native normal identity and fixed advances, single file/face, cache eviction/rebuild pixel identity and no duplicate font load");
 }
 '''
     helper='static void copy_text(char *to,size_t cap,const char *from){snprintf(to,cap,"%s",from);}'+'\n'+function('draw_reading_font_name',ROOT/'main/apps/app_book.c')+'\n'

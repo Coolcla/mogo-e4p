@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转和
- * 震动入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关，锁屏键放在第二排末尾。
+ * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转、
+ * 震动和内存入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关，锁屏键放在第二排末尾。
  * 灯灭时层高只有圆钮区；开灯后圆钮下方展开两条横向胶囊滑杆，直接浮在遮
  * 罩上：无卡片、无文字、无旋钮，图标在胶囊内左端，白色填充从左缘生长。灯灭时
  * 开层后停顿再继续下拉可临时展开胶囊，只属本次开层；一次连续快滑只开层。
  * English: A shallow full-width top layer with rounded bottom corners and four
- * base unlabeled circles; runtime cellular, rotation and haptics entries append
+ * base unlabeled circles; runtime cellular, rotation, haptics and memory entries append
  * to the second row, while frontlight boards draw a sun switch in the fourth
  * circle and end row two with a lock key. While the light is off the layer keeps only the circle band; switching
  * it on expands two horizontal capsule sliders below the circles, floating on
@@ -32,8 +32,10 @@
  * User addition: add a second-row haptics switch beside reader rotation.
  * 用户 2026-11-14 修订：锁屏键移到第二排末尾，复用完整的系统锁形掩模，修复锁梁断点。
  * User revision on 2026-11-14: end row two with lock and use the system icon mask to keep its shackle continuous.
- * 冻结：不访问硬件、设置或刷新，不申请帧缓存；只在展开/状态变化后由主循环调用绘图。
- * Frozen: No hardware, settings, presentation or frame allocations; the loop draws only on opening or state changes.
+ * 冻结（2026-11-15修订）：不访问硬件、设置或刷新，不申请帧缓存；只在展开/状态变化后
+ * 由主循环调用绘图。内存键只绘制传入的忙碌状态，不在 UI 层执行清理。
+ * Frozen (revised 2026-11-15): no hardware, settings, presentation or framebuffer allocations;
+ * the loop draws only on opening/state changes. Memory only paints supplied busy state and never cleans here.
  */
 #include "ui_quick_menu.h"
 #include <stdlib.h>
@@ -84,7 +86,9 @@ static void rotation_icon(uint8_t *fb, int cx, int cy, bool unlocked) {
 /* ---- 圆键 / Circle keys ---- */
 
 static void draw_badge(uint8_t *fb,const ui_quick_menu_t *menu,int button,bool active) {
-    if((button > 1 && button != ui_quick_menu_cellular_button(menu)) || !active)return;
+    const bool status_key = button <= 1 || button == ui_quick_menu_cellular_button(menu) ||
+        button == ui_quick_menu_memory_button(menu);
+    if(!status_key || !active)return;
     int cx=center_x(menu,button);
     const int cy = ui_quick_menu_button_y(menu, button);
     epd_fill_circle(cx+30,cy-30,5,UI_GRAY_WHITE,fb);
@@ -103,6 +107,7 @@ static void draw_key(uint8_t *fb,int button,const ui_quick_menu_t *menu,bool act
     if(button<3) ui_draw_icon(fb,cx,cy,44,s_icons[button],UI_GRAY_BLACK);
     else if (button == ui_quick_menu_cellular_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_MOGO_CELLULAR_SIGNAL,UI_GRAY_BLACK);
     else if(frontlight_key) ui_draw_icon(fb,cx,cy,44,UI_ICON_SUN,UI_GRAY_BLACK);
+    else if (button == ui_quick_menu_memory_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_CPU,UI_GRAY_BLACK);
     else if (button == ui_quick_menu_lock_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_LOCK,UI_GRAY_BLACK);
     else if (button == ui_quick_menu_haptics_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_VIBRATE,UI_GRAY_BLACK);
     else if (button == ui_quick_menu_rotation_button(menu)) rotation_icon(fb,cx,cy,menu->rotation_enabled);
@@ -187,6 +192,7 @@ bool ui_quick_menu_draw_button(uint8_t *fb,const ui_quick_menu_t *menu,int butto
     if(!fb||!dirty||button<0||button>=ui_quick_menu_button_count(menu)||epd_rotated_display_width()<UI_LOCK_WIDTH||epd_rotated_display_height()<ui_quick_menu_height(menu))return false;
     if(menu!=NULL&&menu->frontlight&&button==3)active=menu->fl_on;
     if(menu!=NULL&&button==ui_quick_menu_rotation_button(menu))active=menu->rotation_enabled;
+    if(menu!=NULL&&button==ui_quick_menu_memory_button(menu))active=menu->memory_busy;
     draw_key(fb,button,menu,active,pressed);
     draw_badge(fb,menu,button,active);
     *dirty=key_rect(menu,button);
@@ -243,7 +249,8 @@ void ui_quick_menu_draw(uint8_t *fb,const ui_quick_menu_t *menu,bool wifi,bool b
             (i == ui_quick_menu_cellular_button(menu) && menu->cellular_enabled) ||
             (i == 3 && menu != NULL && menu->frontlight && menu->fl_on) ||
             (i == ui_quick_menu_rotation_button(menu) && menu->rotation_enabled) ||
-            (i == ui_quick_menu_haptics_button(menu) && menu->haptics_enabled);
+            (i == ui_quick_menu_haptics_button(menu) && menu->haptics_enabled) ||
+            (i == ui_quick_menu_memory_button(menu) && menu->memory_busy);
         draw_key(fb, i, menu, active, false);
         draw_badge(fb, menu, i, active);
     }

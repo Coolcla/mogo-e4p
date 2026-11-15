@@ -9,6 +9,7 @@
 #include "ui_power_dialog.h"
 #include "ui_quick_menu.h"
 #include "boot_state.h"
+#include "memory_manager.h"
 uint8_t app_settings_system_contrast(void) {return 100;}
 void pico_boot_ready(void) {}
 void app_book_cover_mode_changed(void) {}
@@ -59,6 +60,20 @@ void app_device_settings_request_bluetooth(bool return_to_origin) {
 void app_device_settings_request_network(bool return_to_origin) {
     (void)return_to_origin; ++network_settings_requests;
 }
+void app_device_settings_request_memory(bool return_to_origin) {
+    (void)return_to_origin;
+}
+bool reader_prefetch_trim(void) { return true; }
+void reader_prefetch_lock(void) {}
+void reader_prefetch_discard(void) {}
+void reader_prefetch_unlock(void) {}
+size_t ttf_font_cache_clear_all(void) { return 0; }
+size_t ui_font_cache_clear(void) { return 0; }
+bool mm_clean_active(void) { return false; }
+esp_err_t mm_request_clean(mm_clean_reason_t reason, uint32_t *request_id) {
+    (void)reason; if (request_id) *request_id = 1; return 0;
+}
+void mm_tick(int64_t now_ms) { (void)now_ms; }
 // 阅读正文返回：正文可见且恢复点可用时由主循环记下，返回时重开同一本书。
 // Reader-body return: the loop captures the resume point when the body is visible
 // and reopens the same book on the way back.
@@ -215,7 +230,7 @@ const EpdWaveform *display_normalize_waveform(bool hold_gray) {
 enum EpdDrawError update_display_area_diff_with(EpdiyHighlevelState*h,const void*w,int m,EpdRect a) {
     if(a.height==108&&a.width==108){
         assert(a.y==UI_QUICK_CIRCLE_Y-UI_QUICK_RADIUS ||
-               ((fl_ready||haptics_present)&&a.y==UI_QUICK_CIRCLE_Y+UI_QUICK_ROTATION_ROW_STEP-UI_QUICK_RADIUS));
+               a.y==UI_QUICK_CIRCLE_Y+UI_QUICK_ROTATION_ROW_STEP-UI_QUICK_RADIUS);
         if(m==MODE_GL16)++fl_key_gl;
         else {assert(w==&E0470_FOLLOW_WAVEFORM&&m==MODE_DU);++quick_du;}
     }
@@ -1001,7 +1016,7 @@ int main(void) {
     // 刷新收层后重新打开，第二排震动键之后的最后一键才是锁屏。
     // Reopen after refresh closes the layer; lock follows haptics at the end of row two.
     add(300,20,1,0);add(300,110,1,0);add(0,0,0,0);
-    add(256,296,1,0);add(0,0,0,0);run();
+    add(570,296,1,0);add(0,0,0,0);run();
     assert(idle_locks==1&&before_locks==1&&fulls>=2&&!touch_calls&&quick_draws==2&&normalize_pushes==1&&!haptics_settings_writes);
     for(int policy=0;policy<3;++policy){
         reset();main_fast=policy==1;main_water=policy==2;first.on_gesture=gesture;click_enabled=true;
@@ -1057,7 +1072,7 @@ int main(void) {
         haptics_present = haptics_on = true; auto_update_return = true; time_step = 1000000;
         snprintf(reader_resume_path, sizeof(reader_resume_path), "%s", "/sdcard/books/haptics.epub");
         add(300,20,1,0); add(300,110,1,0); add(0,0,0,0);
-        add(85,296,1,0); add(85,296,1,0); add(85,296,1,0); add(0,0,0,0); run();
+        add(171,296,1,0); add(171,296,1,0); add(171,296,1,0); add(0,0,0,0); run();
         assert(haptics_settings_requests == 1 && haptics_return_to_origin && haptics_on && !haptics_settings_writes);
         assert(reader_returns == 1 && !strcmp(reader_return_path, "/sdcard/books/haptics.epub"));
         assert(enters == 2);

@@ -55,6 +55,9 @@ static void blend_lut_init(void) {
 void ui_reader_background_release(void) {
     free(s_gray); s_gray = NULL; s_path[0] = 0; s_width = s_height = 0; s_rotation = -1;
 }
+void ui_reader_background_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (visit) visit(context, s_gray);
+}
 // 逻辑坐标 → 面板半字节序号；旋转映射与 epd_draw_pixel/_get_pixel 一致（偶数位为低半字节）。
 // Logical coords to a panel nibble index; the rotation matches epd_draw_pixel/_get_pixel
 // (even positions pack into the low nibble).

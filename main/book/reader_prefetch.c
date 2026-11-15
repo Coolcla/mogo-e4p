@@ -7,6 +7,7 @@
  */
 #include "../diagnostics/reader_memory.h"
 #include "reader_prefetch.h"
+#include "../services/memory_manager.h"
 #include "book_layout.h"
 #include "reader_perf.h"
 #include "esp_heap_caps.h"
@@ -40,6 +41,9 @@ void reader_prefetch_lock(void) {
 void reader_prefetch_unlock(void) {
     if (s_draw_lock) xSemaphoreGive(s_draw_lock);
 }
+bool reader_prefetch_try_lock(void) {
+    return !s_draw_lock || xSemaphoreTake(s_draw_lock, 0) == pdTRUE;
+}
 void reader_prefetch_invalidate(void) {
     s_next_page = s_prep_page = -1;
     s_next_generation = 0;
@@ -58,9 +62,8 @@ static int reader_prefetch_step(void) {
     return result;
 }
 static bool reader_prefetch_buffer(void) {
-    if (!s_next_fb && heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) >
-            s_prep_bytes + BOOK_PREP_RESERVE)
-        s_next_fb = heap_caps_aligned_alloc(16, s_prep_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!s_next_fb)
+        s_next_fb = mm_alloc(MM_OWNER_READER, MM_POOL_PSRAM, s_prep_bytes, 16, BOOK_PREP_RESERVE);
     return s_next_fb != NULL;
 }
 static void prep_task(void *arg) {
@@ -125,8 +128,14 @@ void reader_prefetch_work_idle(size_t page) {
 }
 void reader_prefetch_discard(void) {
     reader_prefetch_invalidate();
-    free(s_next_fb);
+    (void)mm_free(s_next_fb);
     s_next_fb = NULL;
+}
+bool reader_prefetch_trim(void) {
+    if (s_draw_lock && xSemaphoreTake(s_draw_lock, 0) != pdTRUE) return false;
+    reader_prefetch_discard();
+    reader_prefetch_unlock();
+    return true;
 }
 void reader_prefetch_release(void) {
     reader_prefetch_discard();

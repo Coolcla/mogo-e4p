@@ -35,6 +35,7 @@
  */
 
 #include "display.h"
+#include "display_memory.h"
 #include "board_hardware.h"
 #include "ota_online.h"
 
@@ -55,6 +56,16 @@
 #include "ui/ui_nav_layout.h"
 
 static const char* TAG = "read_pico";
+void display_visit_allocations(const display_state_t *state,
+    void (*visit)(void *context, const void *allocation), void *context) {
+    if (!state || !visit) return;
+    visit(context, state->front_fb);
+    visit(context, state->back_fb);
+    visit(context, state->difference_fb);
+    visit(context, state->dirty_lines);
+    visit(context, state->dirty_columns);
+}
+
 static bool s_bulk_io;
 static bool s_full_refresh_requested;
 static bool s_complete_refresh_requested;

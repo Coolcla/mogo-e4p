@@ -24,8 +24,8 @@ static int layer_height(const ui_quick_menu_t *menu) {
 static int circle_hit(const ui_quick_menu_t *menu, int x, int y) {
     const int width = epd_rotated_display_width();
     const int count = ui_quick_menu_button_count(menu);
-    const int radius = width / 8 < UI_QUICK_HIT_RADIUS ? width / 8 : UI_QUICK_HIT_RADIUS;
     for (int i = 0; i < count; ++i) {
+        const int radius = ui_quick_menu_button_layout(menu, i, width).hit_radius;
         const int dx = x - ui_quick_menu_button_x(menu, i, width), dy = y - ui_quick_menu_button_y(menu, i);
         if (dx * dx + dy * dy <= radius * radius) return i;
     }
@@ -198,10 +198,10 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
         return true;
     }
     if (abs(dx) > UI_TOUCH_SLOP_PX || abs(dy) > UI_TOUCH_SLOP_PX) menu->moved = true;
-    // WiFi / 蓝牙 / 震动圆键按住 0.5 秒：关层并请求对应设置页，抬手不再触发点按。手指允许
+    // WiFi / 蓝牙 / 震动 / 内存圆键按住 0.5 秒：关层并请求对应设置页，抬手不再触发点按。手指允许
     // 在圆键命中半径内轻微漂移；层状态先收起，由主循环在同轮末尾切页，swallow
     // 保证这条接触序列不落到新页面。
-    // Holding the WiFi / Bluetooth / haptics circle for 0.5 s closes the layer and requests
+    // Holding the WiFi / Bluetooth / haptics / memory circle for 0.5 s closes the layer and requests
     // its settings page; the release no longer taps. The finger may drift inside
     // the circle's hit radius. The layer closes first and the loop switches pages
     // at the end of the tick; swallow keeps this contact stream from reaching the
@@ -209,14 +209,17 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
     const int hx = x - (int)menu->x0, hy = y - (int)menu->y0;
     const bool haptics_key = menu->haptics_available && menu->hit == ui_quick_menu_haptics_button(menu);
     const bool cellular_key = menu->cellular_available && menu->hit == ui_quick_menu_cellular_button(menu);
-    if (menu->open && (menu->hit == 0 || menu->hit == 1 || cellular_key || haptics_key) &&
+    const bool memory_key = menu->hit == ui_quick_menu_memory_button(menu);
+    if (menu->open && (menu->hit == 0 || menu->hit == 1 || cellular_key || haptics_key || memory_key) &&
+        (!memory_key || (!menu->moved && circle_hit(menu, x, y) == menu->hit)) &&
         hx * hx + hy * hy <= UI_QUICK_HIT_RADIUS * UI_QUICK_HIT_RADIUS &&
         ctx->now_ms - menu->started_ms >= UI_QUICK_HOLD_SETTINGS_MS) {
         menu->open = menu->tracking = false;
         menu->swallow = true;
         menu->fl_pull = false;
         menu->drag = UI_QUICK_CTL_NONE;
-        event->action = haptics_key ? UI_QUICK_HAPTICS_SETTINGS
+        event->action = memory_key ? UI_QUICK_MEMORY_SETTINGS
+            : haptics_key ? UI_QUICK_HAPTICS_SETTINGS
             : cellular_key ? UI_QUICK_CELLULAR_SETTINGS
             : menu->hit == 0 ? UI_QUICK_WIFI_SETTINGS : UI_QUICK_BLUETOOTH_SETTINGS;
         return true;
@@ -290,6 +293,7 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
                 else if (menu->hit == 1) event->action = UI_QUICK_BLUETOOTH;
                 else if (menu->hit == ui_quick_menu_cellular_button(menu)) event->action = UI_QUICK_CELLULAR;
                 else if (menu->hit == 2) event->action = UI_QUICK_FULL;
+                else if (menu->hit == ui_quick_menu_memory_button(menu)) event->action = UI_QUICK_MEMORY_CLEAN;
                 else if (menu->hit == ui_quick_menu_lock_button(menu)) event->action = UI_QUICK_LOCK;
                 else if (menu->hit == ui_quick_menu_rotation_button(menu)) event->action = UI_QUICK_ROTATION;
             } else if (menu->drag != UI_QUICK_CTL_NONE) {

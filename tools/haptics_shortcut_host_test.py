@@ -69,6 +69,8 @@ unit += "static settings_page_t s_page,s_enter_page;\n"
 for name in ("app_device_settings_request_bluetooth", "app_device_settings_request_haptics"):
     unit += function(name, SETTINGS) + "\n"
 entry = function("on_enter", SETTINGS)
+entry = entry.replace(branch(entry, "if (s_enter_page == SETTINGS_MEMORY)"), "")
+entry = re.sub(r"^.*s_memory_.*$|^.*s_enter_memory_from_quick.*$", "", entry, flags=re.M)
 unit += "static void enter_shortcut(void){\n" + re.search(r"s_page = SETTINGS_MAIN;", entry).group(0) + "\n"
 unit += entry[entry.index("    s_ble_shortcut_back = false;"):entry.rfind("}")] + "}\n"
 gesture = function("on_gesture", SETTINGS)

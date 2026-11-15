@@ -339,7 +339,7 @@ class Device:
                 data = self.serial.read(8192)
                 captured.extend(data)
                 log.write(data)
-                text = captured.decode("utf-8", errors="replace")
+                text = normalize_boot_log(captured.decode("utf-8", errors="replace"))
                 # 中文：首页在 UI ready 后打印 RTC 中的上次崩溃，仅该固定日志前缀不是本次异常。
                 # English: Home logs the retained RTC crash after UI ready; only that exact prefix denotes history.
                 fatal_text = re.sub(r"(?m)^(E \(\d+\) crash: )panic", r"\1previous crash", text)
@@ -385,7 +385,21 @@ def cleanup_device(device, receipt, budget, output):
         receipt["serial_released"] = True
 
 
+def normalize_boot_log(text):
+    # S31 启动日志有时逐字符重复；仅在整行成对相同且解码后仍为标准日志头时归一。
+    # S31 startup lines can duplicate every character; normalize only complete pairs with a standard decoded log prefix.
+    lines = []
+    for line in text.splitlines():
+        if len(line) >= 8 and len(line) % 2 == 0 and line[::2] == line[1::2]:
+            decoded = line[::2]
+            if re.match(r"^[EWIDV] \(\d+\) ", decoded):
+                line = decoded
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def boot_checks(text, bundle, offset):
+    text = normalize_boot_log(text)
     matches = re.findall(r"Loaded app from partition at offset (0x[0-9a-fA-F]+)", text)
     versions = re.findall(r"App version:\s*(\S+)", text)
     hashes = re.findall(r"ELF file SHA256:\s*([0-9a-fA-F]+)", text)

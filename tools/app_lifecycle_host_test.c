@@ -13,6 +13,7 @@ static char events[64];
 static size_t used;
 static int tab, save_error, ble_error;
 static bool images_ok;
+static bool prefetch_ready;
 static bool reader, fullscreen, ota, cover_ok, avatar_ok, transfer_ok;
 static bool page_flushed;
 static pico_resume_t saved;
@@ -27,6 +28,7 @@ static void reset(void) {
     used = 0; events[0] = 0; save_error = ble_error = 0;
     ota = page_flushed = reader = fullscreen = false;
     images_ok = cover_ok = avatar_ok = transfer_ok = true;
+    prefetch_ready = true;
     memset(&saved, 0xa5, sizeof(saved));
 }
 static void page_before_lock(app_ctx_t *ctx) {
@@ -49,10 +51,15 @@ esp_err_t pico_boot_save_resume(const pico_resume_t *resume) {
 void app_time_service_cancel(void) { event('T'); }
 void pico_ota_auto_cancel(void) { event('U'); }
 bool pico_online_busy(void) { event('O'); return ota; }
-bool lock_images_quiesce(unsigned timeout_ms) { assert(timeout_ms==2000); event('G'); return images_ok; }
-bool book_cover_jobs_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000); event('C'); return cover_ok; }
-bool ui_avatar_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000); event('A'); return avatar_ok; }
+bool lock_images_quiesce(unsigned timeout_ms) { assert(timeout_ms==2000 || timeout_ms == 250); event('G'); return images_ok; }
+bool book_cover_jobs_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('C'); return cover_ok; }
+bool ui_avatar_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('A'); return avatar_ok; }
 bool wifi_transfer_pause_for_sleep(void) { event('W'); return transfer_ok; }
+bool ble_pt_connected(void) { return false; }
+bool ble_pt_connecting(void) { return false; }
+bool reader_prefetch_trim(void) { event('Q'); return prefetch_ready; }
+size_t ttf_font_cache_clear_all(void) { event('F'); return 0; }
+size_t ui_font_cache_clear(void) { event('V'); return 0; }
 esp_err_t ble_pt_stop(uint32_t timeout_ms) { assert(timeout_ms == 2000); event('B'); return ble_error; }
 esp_err_t ble_pt_stop_for_sleep(uint32_t timeout_ms) { assert(timeout_ms == 2000); event('L'); return ble_error; }
 
@@ -102,5 +109,14 @@ int main(void) {
         reset(); transfer_ok = i & 1;
         assert(app_lifecycle_pause_for_lock() == transfer_ok); expect("UTW");
     }
+    reset();
+    assert(app_lifecycle_memory_clean(MM_CLEAN_USER_SHORTCUT));
+    expect("OQFV");
+    reset(); ota = true;
+    assert(!app_lifecycle_memory_clean(MM_CLEAN_MEMORY_PAGE)); expect("O");
+    reset(); prefetch_ready = false;
+    assert(!app_lifecycle_memory_clean(MM_CLEAN_PRESSURE)); expect("OQ");
+    reset(); images_ok = cover_ok = avatar_ok = false;
+    assert(app_lifecycle_memory_clean(MM_CLEAN_PRESSURE)); expect("OQFV");
     puts("app_lifecycle: PASS (checkpoint, short-circuit, budgets, awake fallback, repeat handoff)");
 }

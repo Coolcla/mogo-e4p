@@ -6,6 +6,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 ## v1.1.2 · 本地测试 / Local testing · 2026-11-15
 
 - 书架与首页扫描复用按 TF 卡身份隔离的稳定条目缓存，并按路径、大小和修改时间校验；完整扫描失败时不提交缓存。网格书架延后作者元数据读取，书目容量从 64 条起步动态扩展，已加入 300 本压力回归。
+- 新增统一内存管理：快捷栏内存键短按清理、长按进入管理页；实时显示内部 RAM、PSRAM、最大连续块、历史最低、字体、显示与缓存等资源归属和清理结果，未覆盖用量标为未追踪/外部。/ Add quick-controls tap-to-clean and hold-to-manage, with live RAM/PSRAM, contiguous capacity, low-water marks, font/display/cache ownership and cleanup results; label uncovered usage untracked/external.
+- 阅读预绘加入分池准入与所有权账本，OTA 复用容量检查；内存压力触发限频清理，在主循环安全边界回收预绘、字形及字体文件块缓存，繁忙时保留资源。/ Add pool admission/accounting for reader prefetch and shared OTA checks; throttled pressure cleanup evicts prefetch, glyphs and font blocks at UI safety boundaries while retaining busy resources.
 
 ## v1.1.2 · 2026-11-14
 

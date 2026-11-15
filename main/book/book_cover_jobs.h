@@ -28,3 +28,7 @@ int book_cover_jobs_take(unsigned generation,unsigned slot,book_cover_result_t *
 void book_cover_jobs_cancel(unsigned generation);
 /// 仅卸载/睡眠前收齐文件句柄，导航不等待。/ Join handles only before unmount/sleep; navigation never waits.
 bool book_cover_jobs_quiesce(unsigned timeout_ms);
+
+/// UI 任务在发布锁内访问队列与未交付结果；回调不得修改、分配或阻塞。
+/// The UI task visits the queue and undelivered results under the publication lock; callbacks must not mutate, allocate or block.
+void book_cover_jobs_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);

@@ -10,4 +10,7 @@
 // Blended reading backgrounds use fixed screen coordinates; paper is white-point clamped and preview shares the cached tones.
 bool ui_reader_background_prepare(const char *path);
 void ui_reader_background_release(void);
+/// UI 安全边界访问唯一背景缓存；回调不得修改、分配或阻塞。
+/// Visit the sole background cache at a UI safety boundary; the callback must not mutate, allocate or block.
+void ui_reader_background_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);
 void ui_reader_background_paint(uint8_t *fb, EpdRect area, bool blend);

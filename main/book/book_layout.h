@@ -147,3 +147,7 @@ const book_layout_glyph_t *book_layout_glyphs(size_t page, size_t *count);
 
 /// 在事件/生命周期中启用几何采集，分配随下一次布局进行。/ Enable capture in an event/lifecycle; allocation occurs at the next layout build.
 void book_layout_enable_selection(bool enabled);
+
+/// 调用方持有阅读绘制锁；访问布局唯一堆分配，回调不得修改、分配或阻塞。
+/// Caller holds the reader draw lock; visit unique layout allocations without mutation, allocation or blocking in the callback.
+void book_layout_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);

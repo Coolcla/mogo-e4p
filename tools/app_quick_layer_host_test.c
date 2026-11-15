@@ -6,6 +6,7 @@
 #include "ui_quick_menu.h"
 #include "display_normalize.h"
 #include "wifi_transfer.h"
+#include "memory_manager.h"
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -19,6 +20,8 @@ static bool available = true, saved_on = true, hw_on, ble, online, usb, hold_gra
 static bool motor_available, saved_haptics = true;
 static unsigned haptics_writes, haptics_pulses, setup_haptics;
 static bool shown_haptics;
+static bool memory_busy;
+static unsigned memory_requests, memory_accepted, setup_memory;
 static uint8_t saved_bri = 40, saved_cct = 50, hw_bri, hw_cct;
 static unsigned settings_writes, applies, rows, pushes, renders, fallback, failures;
 static unsigned wifi_starts, wifi_stops, captures, enters, exits, setup_wifi, setup_bt, setup_network;
@@ -91,6 +94,14 @@ void app_transfer_request_wifi_setup(void) {++setup_wifi; record(17, setup_wifi)
 void app_device_settings_request_bluetooth(bool origin) {expect_origin = origin; ++setup_bt; record(18, origin);}
 void app_device_settings_request_network(bool origin) {expect_origin = origin; ++setup_network; record(181, origin);}
 void app_device_settings_request_haptics(bool origin) {expect_origin = origin; ++setup_haptics;}
+void app_device_settings_request_memory(bool origin) {expect_origin = origin; ++setup_memory; record(182, origin);}
+bool mm_clean_active(void) {return memory_busy;}
+esp_err_t mm_request_clean(mm_clean_reason_t reason, uint32_t *request_id) {
+    assert(reason == MM_CLEAN_USER_SHORTCUT && !app_quick_layer_is_open());
+    ++memory_requests;
+    if (memory_busy) return ESP_ERR_INVALID_STATE;
+    ++memory_accepted; if (request_id) *request_id = memory_accepted; return ESP_OK;
+}
 void app_present(app_ctx_t *c, const app_desc_t *p, app_redraw_t redraw) {
     assert(c == &ctx && p == current);
     if (redraw == APP_REDRAW_FULL) ++fallback;
@@ -359,6 +370,27 @@ int main(void) {
         release(); assert(setup_haptics == h + 1 && haptics_writes == hwrites);
     }
     puts("PASS: haptics toggles persist, enabling previews once, state syncs, and holds route from page/settings/reader without a release tap");
+    for (unsigned busy=0;busy<2;++busy) {
+        open_layer(); memory_busy=busy!=0;
+        ui_quick_menu_t layout={.frontlight=available,.haptics_available=motor_available};
+        const int key=ui_quick_menu_memory_button(&layout),x=ui_quick_menu_button_x(&layout,key,684);
+        const unsigned requested=memory_requests,accepted=memory_accepted,previous_pushes=pushes;
+        assert(!tap_xy(x,ui_quick_menu_button_y(&layout,key)));
+        assert(!app_quick_layer_is_open()&&memory_requests==requested+1&&memory_accepted==accepted+!busy&&pushes>previous_pushes);
+    }
+    for (unsigned origin=0;origin<3;++origin) {
+        open_layer(); current=origin==0?&page:origin==1?&app_device_settings:&reader_page;
+        ui_quick_menu_t layout={.frontlight=available,.haptics_available=motor_available,
+            .rotation_available=origin==2&&rotate_available};
+        const int key=ui_quick_menu_memory_button(&layout),x=ui_quick_menu_button_x(&layout,key,684),y=ui_quick_menu_button_y(&layout,key);
+        const unsigned requested=memory_requests,setup=setup_memory,previous_captures=captures,previous_enters=enters;
+        (void)frame(true,true,false,x,y,10,false);(void)frame(true,false,false,x,y,500,false);
+        assert(!app_quick_layer_is_open()&&setup_memory==setup+1&&expect_origin==(origin!=1));
+        if(origin==1)assert(enters==previous_enters+1&&!ctx.request_app);
+        else assert(captures==previous_captures+1&&ctx.request_app==&app_device_settings);
+        release();assert(memory_requests==requested);
+    }
+    puts("PASS: memory cleanup follows underlay restoration, rejects duplicate busy taps, and settings holds preserve origin without cleaning on release");
     printf("QUICK_TRACE %016" PRIx64 " applies=%u rows=%u pushes=%u failures=%u\n", trace, applies, rows, pushes, failures);
     return 0;
 }

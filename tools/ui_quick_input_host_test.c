@@ -237,10 +237,10 @@ int main(void){
  feed(300,300,0,false,true,true,true);
  puts("PASS: light-off expansion needs a paused continuation or a fresh drag, never chains inside one fast swipe, forgets on reopen and never lights up");
 
- // 没有前光的板：第四枚仍是锁屏，卡片区域不命中，层高仍是 264，下拉延续与
+ // 没有前光的板：第四枚仍是锁屏，卡片区域不命中，层高仍是 404，下拉延续与
  // 再次下拉都不会产生 EXPAND。
  // Boards without a frontlight keep the lock on the fourth circle, ignore the
- // card area and stay 264px tall; neither continued nor fresh pulls expand.
+ // card area and stay 404px tall; neither continued nor fresh pulls expand.
  ui_quick_menu_set_frontlight(&menu,false,true,40,50);
  open();
  assert(feed(300,200,1,false,false,true,true).action==UI_QUICK_NONE&&!menu.fl_expanded);
@@ -250,20 +250,20 @@ int main(void){
  feed(300,300,0,false,true,true,true);
  assert(feed(598,156,1,true,false,true,true).action==UI_QUICK_NONE);
  assert(feed(598,156,0,false,true,true,true).action==UI_QUICK_LOCK);
- assert(feed(300,300,1,true,false,true,true).control==UI_QUICK_CTL_NONE);
- assert(feed(300,300,0,false,true,true,true).action==UI_QUICK_CLOSE);
- puts("PASS: no-frontlight boards keep the lock key, the 264px layer and ignore card hits");
+ assert(feed(300,450,1,true,false,true,true).control==UI_QUICK_CTL_NONE);
+ assert(feed(300,450,0,false,true,true,true).action==UI_QUICK_CLOSE);
+ puts("PASS: no-frontlight boards keep the lock key, the 404px layer and ignore card hits");
  // 竖屏滑杆在下方、横屏滑杆在右侧；方向键仍在第二排，按钮/间隙/滑杆独立命中。
  // Portrait sliders sit below and landscape sliders sit right; orientation stays in row two with disjoint key/gap/slider hits.
  for(screen_width=684;screen_width<=1216;screen_width+=532){
   menu.rotation_available=true;menu.rotation_enabled=true;ui_quick_menu_set_frontlight(&menu,false,false,40,50);open();
-  assert(ui_quick_menu_button_count(&menu)==5&&menu.rotation_enabled);
-  const ui_quick_action_t actions[]={UI_QUICK_WIFI,UI_QUICK_BLUETOOTH,UI_QUICK_FULL,UI_QUICK_LOCK,UI_QUICK_ROTATION};
-  for(int i=0;i<5;++i){
+  assert(ui_quick_menu_button_count(&menu)==6&&menu.rotation_enabled);
+  const ui_quick_action_t actions[]={UI_QUICK_WIFI,UI_QUICK_BLUETOOTH,UI_QUICK_FULL,UI_QUICK_LOCK,UI_QUICK_ROTATION,UI_QUICK_MEMORY_CLEAN};
+  for(int i=0;i<6;++i){
    int x=ui_quick_menu_button_x(&menu,i,screen_width);
    int y=ui_quick_menu_button_y(&menu,i);
-   const bool row_two=i==4;
-   assert(x==(screen_width>684?102+(i>=4?i-4:i)*140:(row_two?screen_width/8:(2*i+1)*screen_width/8)));
+   const bool row_two=i>=4;
+   assert(x>=UI_QUICK_RADIUS&&x+UI_QUICK_RADIUS<=screen_width);
    assert(y==(row_two?296:156));
    assert(feed(x,y,1,true,false,true,true).action==UI_QUICK_NONE&&ui_quick_menu_pressed(&menu)==i);
    assert(feed(x,y,0,false,true,true,true).action==actions[i]);
@@ -274,7 +274,7 @@ int main(void){
   assert(feed(x,296,0,false,true,true,true).action==UI_QUICK_ROTATION);
   assert(ui_quick_menu_height(&menu)==404);
   ui_quick_menu_set_frontlight(&menu,true,true,40,50);
-  assert(ui_quick_menu_button_count(&menu)==6);
+  assert(ui_quick_menu_button_count(&menu)==7);
   assert(ui_quick_menu_height(&menu)==(screen_width>684?404:620));
   x=ui_quick_menu_button_x(&menu,ui_quick_menu_lock_button(&menu),screen_width);
   assert(feed(x,296,1,true,false,true,true).action==UI_QUICK_NONE);
@@ -322,7 +322,7 @@ int main(void){
    assert(ui_quick_menu_height(&menu)==404&&!menu.fl_expanded);
   }
   ui_quick_menu_set_frontlight(&menu,false,false,40,50);
-  menu.rotation_available=false;ui_quick_menu_reset(&menu);assert(ui_quick_menu_button_count(&menu)==4);
+  menu.rotation_available=false;ui_quick_menu_reset(&menu);assert(ui_quick_menu_button_count(&menu)==5);
  }
  puts("PASS: responsive two-column landscape and stacked portrait keep controls, slider endpoints, holds and light expansion distinct");
  // 震动键在普通页及阅读页、横竖屏中都独立命中；长按不补点按，滑杆编号不冲突。
@@ -332,7 +332,7 @@ int main(void){
   ui_quick_menu_set_frontlight(&menu,true,true,40,50);open();
   const int key=4+reader;
   const int x=ui_quick_menu_button_x(&menu,key,screen_width),y=296;
-  assert(ui_quick_menu_button_count(&menu)==6+reader);
+  assert(ui_quick_menu_button_count(&menu)==7+reader);
   assert(ui_quick_menu_height(&menu)==(screen_width==684?620:404));
   assert(feed(x,y,1,true,false,true,true).action==UI_QUICK_NONE&&ui_quick_menu_pressed(&menu)==key);
   e=feed(x,y,0,false,true,true,true);
@@ -357,6 +357,41 @@ int main(void){
   }
  }
  puts("PASS: haptics short/hold threshold, release swallowing, cancellation and disjoint sliders in normal/reader portrait/landscape layouts");
+ // 穷举能力组合；每个圆键命中区彼此分离，也不与滑杆相交。
+ // Enumerate capabilities; every circle hit zone stays disjoint from its neighbours and the sliders.
+ for(screen_width=684;screen_width<=1216;screen_width+=532)for(unsigned flags=0;flags<16;++flags){
+  menu=(ui_quick_menu_t){.rotation_available=(flags&1)!=0,.haptics_available=(flags&2)!=0,
+      .cellular_available=(flags&4)!=0};
+  ui_quick_menu_set_frontlight(&menu,(flags&8)!=0,true,40,50);open();
+  for(int i=0;i<ui_quick_menu_button_count(&menu);++i){
+   const int x=ui_quick_menu_button_x(&menu,i,screen_width),y=ui_quick_menu_button_y(&menu,i);
+   const int radius=ui_quick_menu_button_layout(&menu,i,screen_width).hit_radius;
+   assert(x-radius>=0&&x+radius<screen_width);
+   for(int j=0;j<i;++j){
+    int dx=x-ui_quick_menu_button_x(&menu,j,screen_width),dy=y-ui_quick_menu_button_y(&menu,j);
+    int sum=radius+ui_quick_menu_button_layout(&menu,j,screen_width).hit_radius;
+    assert(dx*dx+dy*dy>sum*sum);
+   }
+   if(menu.frontlight)for(int ctl=UI_QUICK_CTL_BRIGHTNESS;ctl<=UI_QUICK_CTL_CCT;++ctl){
+    EpdRect track=ui_quick_menu_frontlight_hit(&menu,(ui_quick_control_t)ctl);
+    assert(x+radius<track.x||x-radius>=track.x+track.width||y+radius<track.y||y-radius>=track.y+track.height);
+   }
+  }
+  const int key=ui_quick_menu_memory_button(&menu),x=ui_quick_menu_button_x(&menu,key,screen_width),y=ui_quick_menu_button_y(&menu,key);
+  feed(x,y,1,true,false,true,true);
+  assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_MEMORY_CLEAN);
+  feed(x,y,1,true,false,true,true);time_ms+=499;
+  assert(feed(x,y,1,false,false,true,true).action==UI_QUICK_NONE);++time_ms;
+  assert(feed(x,y,1,false,false,true,true).action==UI_QUICK_MEMORY_SETTINGS&&!menu.open);
+  assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_NONE);
+  open();feed(x,y,1,true,false,true,true);time_ms+=500;
+  assert(feed(x+30,y,1,false,false,true,true).action==UI_QUICK_NONE&&menu.open);
+  assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_NONE);
+  feed(x,y,1,true,false,true,true);time_ms+=500;
+  assert(feed(x,y,2,false,false,true,true).action==UI_QUICK_NONE);
+  assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_NONE);
+ }
+ puts("PASS: memory tap/500ms hold, release swallowing and move/multitouch cancellation across every capability/orientation; disjoint key and slider hit zones");
  return 0;
 }
 

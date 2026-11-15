@@ -4,6 +4,7 @@
  */
 #pragma once
 #include "app.h"
+#include "memory_manager.h"
 
 /// 页面先保存并收齐阅读借用，再按原格式保存主页面或阅读恢复点；保留原写入失败处理。
 /// Let the page save and join reader borrows before saving the original tab/reader checkpoint; retain existing write-failure handling.
@@ -25,3 +26,7 @@ typedef struct {
 /// 每项保持原2000ms预算；区分文件交还失败与蓝牙失败后的唤醒轮询。
 /// Retain each original 2000ms budget; distinguish file handoff failure from awake polling after Bluetooth failure.
 app_lifecycle_light_t app_lifecycle_prepare_light(void);
+
+/// 在主循环安全边界回收预绘、字体块及字形；USB/OTA 或阅读借用繁忙时返回 false。
+/// Reclaim prefetch, font blocks and glyphs at a UI safety boundary; return false during USB/OTA or reader borrows.
+bool app_lifecycle_memory_clean(mm_clean_reason_t reason);

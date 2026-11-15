@@ -26,6 +26,9 @@ void *heap_caps_malloc(size_t size, int caps) {
     if (fail_alloc > 0) --fail_alloc;
     void *pointer = malloc(size); assert(pointer); ++live; return pointer;
 }
+void heap_caps_free(void *pointer) {
+    if (pointer) { assert(live); --live; free(pointer); }
+}
 int64_t esp_timer_get_time(void) { return ++ticks; }
 ssize_t cache_test_read(int source_fd, void *out, size_t size) {
     ++reads;
@@ -66,8 +69,11 @@ static void counters(void) {
     position = UINT32_MAX;
 }
 static void drop(ttf_block_cache_t *cache) {
-    if (cache->f_io_data) { free(cache->f_io_data); --live; }
-    if (cache->f_io_run_buf) { free(cache->f_io_run_buf); --live; }
+    const size_t bytes = (cache->f_io_data ? TTF_IO_SLOTS * TTF_IO_BLOCK : 0) +
+        (cache->f_io_run_buf ? TTF_IO_RUN_MAX * TTF_IO_BLOCK : 0);
+    assert(ttf_block_cache_release(cache) == bytes);
+    assert(!cache->f_io_data && !cache->f_io_run_buf && !cache->f_touch_n);
+    assert(ttf_block_cache_release(cache) == 0);
     *cache = (ttf_block_cache_t){0};
 }
 static void check_read(ttf_block_cache_t *cache, uint32_t off, size_t size) {
@@ -146,6 +152,8 @@ int main(void) {
     ttf_block_cache_reset(&a); counters(); read_limit = 17;
     assert(!ttf_block_cache_read(&a, &input, 0, out, 18));
     assert(a.f_io_fill[0] == 17 && reads == 1);
+    drop(&a); assert(!live);
+    counters(); check_read(&a, 0, 100); assert(a.f_io_data && a.f_io_run_buf && live == 2);
     drop(&a); assert(!live); fclose(file);
     puts("PASS: real font block caching, slot isolation, bounded storage, coalescing, OOM/raw fallback, short reads, seek/read errors and retained-buffer resets");
 }

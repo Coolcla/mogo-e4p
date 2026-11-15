@@ -1,13 +1,13 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转和
- * 震动入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关。灯灭时层高
+ * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转、
+ * 震动和内存入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关。灯灭时层高
  * 只有圆钮区；点按开灯后圆钮下方才展开两条横向胶囊滑杆：直接
  * 浮在遮罩上，无卡片、无文字、无旋钮，图标在胶囊内左端，白色填充从左缘生长，
  * 无极滑动；再次熄灯即收起。灯灭时开层后停顿再继续下拉也可临时展开胶囊滑杆，
  * 只属本次开层：收层或再开层即回到只有圆钮区，熄灯点按同样收起；一次连续快滑
  * 只开层不展开。
  * English: A shallow full-width top layer with rounded bottom corners and four
- * base unlabeled circles; runtime cellular, rotation and haptics entries append
+ * base unlabeled circles; runtime cellular, rotation, haptics and memory entries append
  * to the second row, while boards with a frontlight draw a sun switch in the fourth
  * circle. While the light is off the layer keeps only the circle band; switching
  * it on expands two horizontal capsule sliders below the circles: they float on
@@ -42,8 +42,11 @@
  * User addition: a second-row haptics key follows reader rotation; tap toggles it and hold opens its settings.
  * 用户 2026-11-14 修订：第二排先排移动网络、阅读方向、震动，锁屏键最后；锁形复用系统图标。
  * User revision on 2026-11-14: row two orders cellular, reader rotation, haptics, then lock; reuse the system lock icon.
- * 冻结：不访问硬件、设置或刷新，不申请帧缓存；只在展开/状态变化后由主循环调用绘图。
- * Frozen: No hardware, settings, presentation or frame allocations; the loop draws only on opening or state changes.
+ * 冻结（2026-11-15修订）：内存键只产出清理/管理事件，状态由快捷层装配；不在识别器
+ * 访问 broker、硬件、设置或刷新，不申请帧缓存，仍只在展开/状态变化后由主循环调用绘图。
+ * Frozen (revised 2026-11-15): the memory key emits cleanup/management events and receives
+ * state from the layer; the recognizer never accesses the broker, hardware, settings or
+ * presentation and allocates no framebuffer, and the loop still draws only on open/state changes.
  */
 #pragma once
 #include "app.h"
@@ -59,8 +62,8 @@
 // natural swipe routinely spans 150px+, so a total-travel test chains opening and
 // expanding inside one flick (user report 2026-10-25).
 #define UI_QUICK_PULL_SETTLE_MS 300
-// WiFi / 蓝牙 / 震动圆键按住这么久直接进对应设置页；阈值到了就关层，抬手不再算点按。
-// Holding the WiFi / Bluetooth / haptics circle this long opens its settings page; the
+// WiFi / 蓝牙 / 震动 / 内存圆键按住这么久直接进设置页；阈值到了就关层，抬手不再算点按。
+// Holding the WiFi / Bluetooth / haptics / memory circle this long opens its settings page; the
 // layer closes at the threshold and the release no longer counts as a tap.
 #define UI_QUICK_HOLD_SETTINGS_MS 500
 #define UI_QUICK_HEIGHT 264
@@ -104,6 +107,7 @@ typedef enum {
     UI_QUICK_WIFI_SETTINGS, UI_QUICK_BLUETOOTH_SETTINGS, UI_QUICK_CELLULAR_SETTINGS,
     UI_QUICK_ROTATION,
     UI_QUICK_HAPTICS, UI_QUICK_HAPTICS_SETTINGS,
+    UI_QUICK_MEMORY_CLEAN, UI_QUICK_MEMORY_SETTINGS,
 } ui_quick_action_t;
 
 /// 前光控件；快捷层只产出事件，硬件和设置由主循环执行。
@@ -120,6 +124,7 @@ typedef struct {
     bool rotation_available, rotation_enabled; ///< 只由当前页面提供，不落盘 / Supplied by the current page, never persisted
     bool haptics_available, haptics_enabled; ///< 马达能力与已保存的开关状态 / Motor capability and saved switch state
     bool cellular_available, cellular_enabled, cellular_ready; ///< Runtime capability and state; absent hardware hides the entry
+    bool memory_busy; ///< 清理状态来自 broker；识别器不读取 broker / Cleanup state supplied by the broker owner; recognizer never reads it
     uint16_t x0, y0;
     int hit;
     int64_t started_ms;
@@ -157,14 +162,16 @@ typedef struct {
     ui_quick_control_t drag;
 } ui_quick_menu_t;
 
-/// 绘图与命中共享布局；第二排依次放移动网络、阅读方向和震动，有前光时末尾为锁屏。
-/// Shared painting/hit geometry; row two has cellular, rotation and haptics, followed by lock on frontlight boards.
+/// 绘图与命中共享布局；第二排依次放移动网络、阅读方向、震动、内存，有前光时末尾为锁屏。
+/// Shared painting/hit geometry; row two has cellular, rotation, haptics and memory, followed by lock on frontlight boards.
 static inline int ui_quick_menu_base_button_count(const ui_quick_menu_t *menu) {
-    return menu && menu->frontlight ? 5 : 4;
+    (void)menu;
+    return 4;
 }
 static inline int ui_quick_menu_button_count(const ui_quick_menu_t *menu) {
-    return ui_quick_menu_base_button_count(menu) + (menu && menu->cellular_available ? 1 : 0) +
-        (menu && menu->rotation_available ? 1 : 0) + (menu && menu->haptics_available ? 1 : 0);
+    return 4 + 1 + (menu && menu->cellular_available ? 1 : 0) +
+        (menu && menu->rotation_available ? 1 : 0) + (menu && menu->haptics_available ? 1 : 0) +
+        (menu && menu->frontlight ? 1 : 0);
 }
 static inline int ui_quick_menu_lock_button(const ui_quick_menu_t *menu) {
     return menu && menu->frontlight ? ui_quick_menu_button_count(menu) - 1 : 3;
@@ -181,28 +188,47 @@ static inline int ui_quick_menu_haptics_button(const ui_quick_menu_t *menu) {
     return menu && menu->haptics_available ? 4 +
         (menu->cellular_available ? 1 : 0) + (menu->rotation_available ? 1 : 0) : -1;
 }
+static inline int ui_quick_menu_memory_button(const ui_quick_menu_t *menu) {
+    return 4 + (menu && menu->cellular_available ? 1 : 0) +
+        (menu && menu->rotation_available ? 1 : 0) + (menu && menu->haptics_available ? 1 : 0);
+}
 static inline bool ui_quick_menu_landscape(void) {
     return epd_rotated_display_width() > epd_rotated_display_height();
 }
+/// 行列与命中半径由同一布局描述提供，横屏为滑杆保留独立触摸余量。
+/// One layout descriptor supplies rows, columns and hit radii, leaving a separate landscape slider margin.
+typedef struct { int row, column, columns, left, width, hit_radius; } ui_quick_button_layout_t;
+static inline ui_quick_button_layout_t ui_quick_menu_button_layout(const ui_quick_menu_t *menu, int button, int width) {
+    ui_quick_button_layout_t layout = {.row = button / 4, .column = button % 4, .columns = 4,
+        .left = 0, .width = width, .hit_radius = UI_QUICK_HIT_RADIUS};
+    if (button >= 4) {
+        layout.row = 1;
+        layout.column = button - 4;
+        layout.columns = ui_quick_menu_button_count(menu) - 4;
+        if (ui_quick_menu_landscape()) {
+            layout.left = 48;
+            layout.width = UI_QUICK_LANDSCAPE_TRACK_X - 16 - layout.left;
+        }
+        const int radius = layout.width / (2 * layout.columns) - 2;
+        if (radius < layout.hit_radius) layout.hit_radius = radius;
+    }
+    return layout;
+}
 static inline int ui_quick_menu_button_x(const ui_quick_menu_t *menu, int button, int width) {
-    (void)menu;
-    const int column = button >= 4 ? button - 4 : button;
-    if (ui_quick_menu_landscape())
-        return 48 + UI_QUICK_RADIUS + column * UI_QUICK_LANDSCAPE_COLUMN_STEP;
-    return (column * 2 + 1) * width / 8;
+    const ui_quick_button_layout_t layout = ui_quick_menu_button_layout(menu, button, width);
+    if (!layout.row && ui_quick_menu_landscape())
+        return 48 + UI_QUICK_RADIUS + layout.column * UI_QUICK_LANDSCAPE_COLUMN_STEP;
+    return layout.left + (2 * layout.column + 1) * layout.width / (2 * layout.columns);
 }
 static inline int ui_quick_menu_row_offset(const ui_quick_menu_t *menu) {
-    return menu && (menu->frontlight || menu->cellular_available || menu->rotation_available || menu->haptics_available)
-        ? UI_QUICK_ROTATION_ROW_STEP : 0;
+    return menu && ui_quick_menu_button_count(menu) > 4 ? UI_QUICK_ROTATION_ROW_STEP : 0;
 }
 static inline int ui_quick_menu_button_y(const ui_quick_menu_t *menu, int button) {
-    return UI_QUICK_CIRCLE_Y + (button >= 4 ? ui_quick_menu_row_offset(menu) : 0);
+    return UI_QUICK_CIRCLE_Y + ui_quick_menu_button_layout(menu, button, epd_rotated_display_width()).row * UI_QUICK_ROTATION_ROW_STEP;
 }
 static inline int ui_quick_menu_height(const ui_quick_menu_t *menu) {
     if (ui_quick_menu_landscape())
-        return menu && (menu->frontlight || menu->cellular_available || menu->rotation_available || menu->haptics_available ||
-                        (menu->frontlight && (menu->fl_on || menu->fl_expanded)))
-            ? UI_QUICK_HEIGHT + UI_QUICK_ROTATION_ROW_STEP : UI_QUICK_HEIGHT;
+        return UI_QUICK_HEIGHT + UI_QUICK_ROTATION_ROW_STEP;
     return (menu && menu->frontlight && (menu->fl_on || menu->fl_expanded)
         ? UI_QUICK_FRONTLIGHT_HEIGHT : UI_QUICK_HEIGHT) + ui_quick_menu_row_offset(menu);
 }

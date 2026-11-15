@@ -35,6 +35,9 @@ typedef struct {
 /// 沿用原行为：重置保留已分配缓冲，首次分配 data 时也会清空预取列表。
 /// Preserve existing behavior: reset retains allocated buffers; first data allocation also clears pending prefetch.
 void ttf_block_cache_reset(ttf_block_cache_t *cache);
+/// 释放块缓存与连续读取暂存；字体源保持打开，下一次读取按需重建。
+/// Free block storage and run scratch, keeping the font source open for lazy rebuilding.
+size_t ttf_block_cache_release(ttf_block_cache_t *cache);
 /// 连续读取暂存分配失败不影响单块缓存可用性。/ Failure to allocate run scratch leaves single-block caching usable.
 bool ttf_block_cache_ensure(ttf_block_cache_t *cache);
 /// source 和回调只在本次同步调用中借用；调用方先处理整表映射与内存字体。

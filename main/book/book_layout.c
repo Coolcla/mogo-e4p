@@ -1504,6 +1504,16 @@ int book_layout_draw_slice(uint8_t *fb,size_t page,EpdRect rect,int px,book_layo
 }
 
 
+void book_layout_visit_allocations(void (*visit)(void *context, const void *allocation), void *context) {
+    if (!visit) return;
+    visit(context, s_pages);
+    visit(context, s_line);
+    visit(context, s_images);
+    visit(context, s_page_img_start);
+    visit(context, s_glyph_maps[0].glyphs);
+    visit(context, s_glyph_maps[1].glyphs);
+}
+
 #if CONFIG_READER_PERF && CONFIG_READER_MEMORY
 void book_layout_memory_stats(reader_memory_stats_t *stats) {
     stats->layout = reader_memory_owned(s_pages) + reader_memory_owned(s_line) +

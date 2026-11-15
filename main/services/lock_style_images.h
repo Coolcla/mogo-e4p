@@ -33,3 +33,7 @@ unsigned lock_images_revision(void);
 /// 取消并等待文件句柄实际交还；不能强杀仍持有TF句柄的任务。
 /// Cancel and wait for actual file-handle return; never delete a live file worker.
 bool lock_images_quiesce(unsigned timeout_ms);
+
+/// 在发布锁内访问未交付目录与缓存；回调不得修改、分配或阻塞。
+/// Visit the undelivered catalogue and cached pixels under the publication lock; callbacks must not mutate, allocate or block.
+void lock_images_visit_allocations(void (*visit)(void *context, const void *allocation), void *context);

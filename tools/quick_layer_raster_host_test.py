@@ -74,9 +74,10 @@ header=(root/'main/ui/ui_quick_menu.h').read_text()
 code+='\n'.join(re.findall(r'^#define UI_QUICK[^\n]*',header,re.M))+'\n'
 code+=re.search(r'typedef enum \{\s*UI_QUICK_CTL_NONE.*?\} ui_quick_control_t;',header,re.S).group(0)+'\n'
 code+=re.search(r'typedef struct \{.*?\} ui_quick_menu_t;',header,re.S).group(0)+'\n'
-for name in ('ui_quick_menu_base_button_count', 'ui_quick_menu_button_count', 'ui_quick_menu_lock_button',
+code+='typedef struct { int row, column, columns, left, width, hit_radius; } ui_quick_button_layout_t;\n'
+for name in ('ui_quick_menu_button_count', 'ui_quick_menu_lock_button',
              'ui_quick_menu_cellular_button', 'ui_quick_menu_rotation_button',
-             'ui_quick_menu_haptics_button', 'ui_quick_menu_landscape', 'ui_quick_menu_button_x',
+             'ui_quick_menu_haptics_button', 'ui_quick_menu_memory_button', 'ui_quick_menu_landscape', 'ui_quick_menu_button_layout', 'ui_quick_menu_button_x',
              'ui_quick_menu_row_offset', 'ui_quick_menu_button_y', 'ui_quick_menu_height',
              'ui_quick_menu_frontlight_track', 'ui_quick_menu_frontlight_hit'):
     code+=function('main/ui/ui_quick_menu.h',name)
@@ -91,7 +92,7 @@ code+=body('main/ui/ui_quick_menu.c')+body('main/ui/ui_click_feedback.c')
 code+=r'''
 static uint8_t pixel(uint8_t *fb,int x,int y){return ui_read_pixel(fb,x,y)*17u;}
 static bool icon_edge(const ui_quick_menu_t *menu,int x,int y){
- for(int i=0;i<ui_quick_menu_button_count(menu);++i)if(abs(x-center_x(menu,i))<=(i==4?30:22)&&abs(y-ui_quick_menu_button_y(menu,i))<=(i==4?30:22))return true;
+ for(int i=0;i<ui_quick_menu_button_count(menu);++i)if(abs(x-center_x(menu,i))<=(i==ui_quick_menu_rotation_button(menu)?30:22)&&abs(y-ui_quick_menu_button_y(menu,i))<=(i==ui_quick_menu_rotation_button(menu)?30:22))return true;
  for(int control=UI_QUICK_CTL_BRIGHTNESS;control<=UI_QUICK_CTL_CCT;++control){
   EpdRect track=ui_quick_menu_frontlight_track(menu,(ui_quick_control_t)control);
   if(abs(x-(track.x+48))<=UI_QUICK_FL_ICON_SIZE/2&&abs(y-(track.y+track.height/2))<=UI_QUICK_FL_ICON_SIZE/2)return true;
@@ -104,12 +105,12 @@ int main(void){
   for(int policy=0;policy<3;++policy){
    // 三种层状态：无前光、开灯展开卡片、有前光但熄灯收起。
    // Three layer states: no frontlight, card expanded while on, collapsed while off.
-   for(int fl=0;fl<3;++fl)for(int haptics=0;haptics<3;++haptics){
+   for(int fl=0;fl<3;++fl)for(int haptics=0;haptics<3;++haptics)for(int cellular=0;cellular<2;++cellular){
     ui_quick_menu_t menu={.rotation_available=policy>0,.rotation_enabled=policy==2,
-     .haptics_available=haptics>0,.haptics_enabled=haptics==2};menu.frontlight=fl!=0;menu.fl_on=fl==1;menu.fl_bri=60;menu.fl_cct=30;
+     .haptics_available=haptics>0,.haptics_enabled=haptics==2,.cellular_available=cellular!=0};menu.frontlight=fl!=0;menu.fl_on=fl==1;menu.fl_bri=60;menu.fl_cct=30;
     const int layer_height=ui_quick_menu_height(&menu);
     assert(layer_height<=epd_rotated_display_height());
-    if(ui_quick_menu_landscape())assert(layer_height==(policy>0||haptics>0||fl!=0?404:264));
+    if(ui_quick_menu_landscape())assert(layer_height==404);
     patterned();int before=allocs;ui_quick_menu_draw(frame,&menu,true,false);
     assert(allocs==before&&!live);int grays=0;
     for(int y=0;y<epd_rotated_display_height();++y)for(int x=0;x<epd_rotated_display_width();++x){
@@ -206,6 +207,6 @@ int main(void){
 with tempfile.TemporaryDirectory() as tmp:
     src=Path(tmp)/'test.c';src.write_text(code)
     exe=Path(tmp)/'test'
-    subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',
+    subprocess.run(['cc','-O1','-std=c11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',
                     '-I'+str(root/'main'), "-I" + str(root / "main/display"), "-I" + str(root / "main/settings"),str(src),str(root/'main/ui/ui_image_dither.c'),'-o',str(exe)],check=True)
     subprocess.run([str(exe)],check=True)

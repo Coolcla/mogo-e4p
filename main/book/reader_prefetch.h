@@ -11,6 +11,9 @@
 /// 串行化借用布局和字体的绘制；首次启动预绘前无需锁。
 /// Serialize drawing that borrows layout and fonts; no lock is needed before the first worker start.
 void reader_prefetch_lock(void);
+/// UI 任务无等待地借用字体/布局锁；成功后必须 unlock。
+/// Try to borrow the font/layout lock on the UI task without waiting; success must pair with unlock.
+bool reader_prefetch_try_lock(void);
 /// 交还绘制锁。/ Return the draw lock.
 void reader_prefetch_unlock(void);
 /// UI 确认允许预绘后启动目标页；true 必须与同次同步推屏后的 end 配对。
@@ -37,6 +40,9 @@ void reader_prefetch_work_idle(size_t page);
 void reader_prefetch_invalidate(void);
 /// 同样前提下释放帧缓存，保留任务和锁。/ Under the same precondition, free the frame but retain worker and locks.
 void reader_prefetch_discard(void);
+/// UI 安全边界尝试释放预绘帧；后台持锁时立即返回 false，不唤醒任务或等待。
+/// Try to evict the frame at a UI safety boundary; return false immediately while the worker owns the lock, without waking or waiting.
+bool reader_prefetch_trim(void);
 /// 离开阅读应用且后台已交还后回收全部资源；可重复调用。
 /// Reclaim everything after leaving the reader and worker handoff; repeated calls are safe.
 void reader_prefetch_release(void);
