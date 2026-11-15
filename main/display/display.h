@@ -101,6 +101,8 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
 enum EpdDrawError display_panel_repair(EpdiyHighlevelState* hl);
 /// 图片页清除旧光学状态，再驱动完整灰阶。/ Clear the prior optical state and drive the full gray ladder for images.
 enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl);
+/// 阅读开书首帧只做一轮清理，再驱动完整灰阶，减少黑闪。/ Reader entry image frame uses one cleanup cycle before the full gray ladder.
+enum EpdDrawError update_display_reader_image_gray(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode
 );

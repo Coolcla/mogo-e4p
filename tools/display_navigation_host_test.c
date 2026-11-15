@@ -86,10 +86,17 @@ bool board_rails_on(void) { return !power_failure; }
 bool epd_power_scan_allowed(void) { return board_rails_on(); }
 void epd_power_session_begin(void) {}
 void epd_power_session_end(void) {}
+EpdRect epd_full_screen(void) { return (EpdRect){0, 0, W, H}; }
 
 bool board_epd_release_drive(void) {return true;}
 void epd_poweroff(void) {}
 void epd_clear(void) { assert(ota_display_depth);++clears; memset(panel, 255, BYTES);}
+void epd_clear_area_cycles(EpdRect area, int cycles, int cycle_time) {
+    assert(ota_display_depth && area.x == 0 && area.y == 0 && area.width == W && area.height == H);
+    assert((cycles == 1 || cycles == 3) && cycle_time == 15);
+    ++clears;
+    memset(panel, 255, BYTES);
+}
 void epd_hl_set_all_white(EpdiyHighlevelState* state) {memset(state->front_fb, 255, BYTES);}
 void epd_hl_waveform(EpdiyHighlevelState* state, const EpdWaveform* waveform) {state->waveform = waveform;}
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* state, EpdRect area, e0470_turn_dir_t dir) {

@@ -706,14 +706,14 @@ static enum EpdDrawError update_display_full_unlocked(EpdiyHighlevelState* hl) {
 static enum EpdDrawError update_display_area_diff_with_unlocked(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode, EpdRect);
 static enum EpdDrawError update_display_area_full_with_unlocked(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode, EpdRect);
 
-static enum EpdDrawError update_display_image_gray_unlocked(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_image_gray_unlocked(EpdiyHighlevelState* hl, int clear_cycles) {
     enum EpdDrawError intercepted;
     if (main_before_update(hl, &intercepted)) return intercepted;
     // 图片保留十六级原始灰阶；白底和完整 48 相波形稳定呈现层次。
     // Images keep sixteen source grays; a white baseline and the full 48-phase table preserve tones.
     use_scan_for(&E0470_FULL_WAVEFORM, MODE_GC16);
     if (!display_power_ready()) return DISPLAY_DRAW_POWER_NOT_READY;
-    epd_clear();
+    if (clear_cycles > 0) epd_clear_area_cycles(epd_full_screen(), clear_cycles, 15);
     epd_hl_waveform(hl, &E0470_FULL_WAVEFORM);
     enum EpdDrawError result = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
 
@@ -1011,7 +1011,16 @@ enum EpdDrawError display_panel_repair(EpdiyHighlevelState* hl) {
 enum EpdDrawError update_display_image_gray(EpdiyHighlevelState* hl) {
     bool held = display_present_begin();
     enum EpdDrawError result = s_complete_refresh_requested
-        ? update_display_full_unlocked(hl) : update_display_image_gray_unlocked(hl);
+        ? update_display_full_unlocked(hl) : update_display_image_gray_unlocked(hl, 3);
+    if (result == EPD_DRAW_SUCCESS) s_full_refresh_requested = false;
+    display_present_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_reader_image_gray(EpdiyHighlevelState* hl) {
+    bool held = display_present_begin();
+    enum EpdDrawError result = s_complete_refresh_requested
+        ? update_display_full_unlocked(hl) : update_display_image_gray_unlocked(hl, 1);
     if (result == EPD_DRAW_SUCCESS) s_full_refresh_requested = false;
     display_present_end(held);
     return result;

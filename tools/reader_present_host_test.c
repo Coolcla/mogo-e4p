@@ -48,7 +48,7 @@ enum EpdDrawError update_display_area_diff_padded(EpdiyHighlevelState *s, const 
                                                  enum EpdDrawMode m, EpdRect a, int x, int y) {
     (void)s;(void)w;(void)m;(void)a;(void)x;(void)y;assert(!"unexpected padded output");return EPD_DRAW_INVALID_CROP;
 }
-enum call_kind { AREA, DIFF, FULL_AREA, WHOLE, WHOLE_DIFF, FULL, FAST, WATER, TICK };
+enum call_kind { AREA, DIFF, FULL_AREA, WHOLE, WHOLE_DIFF, FULL, IMAGE_GRAY, FAST, WATER, TICK };
 typedef struct {
     enum call_kind kind;
     const EpdWaveform *wave;
@@ -93,6 +93,12 @@ enum EpdDrawError update_display_full(EpdiyHighlevelState *s) {
                                      complete_refresh_pending ? MODE_GC16 : 0, none);
     if (result == EPD_DRAW_SUCCESS) complete_refresh_pending = false;
     return result;
+}
+enum EpdDrawError update_display_image_gray(EpdiyHighlevelState *s) {
+    return record(s, IMAGE_GRAY, &E0470_FULL_WAVEFORM, MODE_GC16, none);
+}
+enum EpdDrawError update_display_reader_image_gray(EpdiyHighlevelState *s) {
+    return record(s, IMAGE_GRAY, &E0470_FULL_WAVEFORM, MODE_GC16, none);
 }
 enum EpdDrawError update_display_fast_page(EpdiyHighlevelState *s) { return record(s, FAST, NULL, 0, none); }
 enum EpdDrawError update_display_water_turn(EpdiyHighlevelState *s, EpdRect a, e0470_turn_dir_t d) {
@@ -214,7 +220,7 @@ int main(void) {
     r.cleanup = true; count = outputs = 0;
     reader_present_output(&hl, &r); expect(0, WHOLE, &E0470_FULL_WAVEFORM, MODE_GC16, none);
     r.cleanup = false; r.refresh = READER_PRESENT_FULL; count = outputs = 0;
-    reader_present_output(&hl, &r); expect(0, WHOLE, &E0470_FULL_WAVEFORM, MODE_GC16, none);
+    reader_present_output(&hl, &r); expect(0, IMAGE_GRAY, &E0470_FULL_WAVEFORM, MODE_GC16, none);
     r = reset(); r.status_pending = r.footer_pending = r.cleanup = r.tools_toggle = true; r.refresh = READER_PRESENT_PAGE;
     reader_present_output(&hl, &r); assert(count == 1); expect(0, FULL_AREA, &E0470_FULL_WAVEFORM, MODE_GC16, r.screen_area);
     r.refresh = READER_PRESENT_FULL; count = outputs = 0;

@@ -44,6 +44,12 @@ reader_present_result_t reader_present_output(EpdiyHighlevelState *hl,
             ? display_refresh_area(hl, DISPLAY_REFRESH_READER_BODY, request->body_area, frame_flags)
             : display_refresh_area(hl, DISPLAY_REFRESH_READER_IMAGE, request->body_area, DISPLAY_REFRESH_DEFAULT);
     }
+    else if (request->image_gray_refresh && request->refresh == READER_PRESENT_FULL)
+        // 开书首帧虽含插图仍是明确的整屏请求：先把物理屏和 back 基准归到白色，再用完整
+        // 48 相灰阶表提交目标。若走图片 AUTO 差分，未变化的首页横线不会进入 dirty map。
+        // An illustration on an explicitly full first frame still needs a white-baseline commit:
+        // the image AUTO differential leaves unchanged home-page rows out of the dirty map.
+        err = update_display_reader_image_gray(hl);
     else if (request->image_gray_refresh) err = request->water_effect &&
         request->refresh != READER_PRESENT_FULL && !request->cleanup
         // 换章那一帧走整屏差分，表的选择与正文带差分一致。

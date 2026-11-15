@@ -67,7 +67,7 @@ static bool white_baseline, correct_target_at_draw;
 static int scan_at_draw, prefill_at_draw;
 static enum EpdDrawError next_draw_error;
 static unsigned draw_errors_remaining;
-static unsigned blind_pushes, repair_delays, poweroffs;
+static unsigned blind_pushes, repair_delays, poweroffs, clear_cycles;
 static bool checking_repair;
 static bool drive_active, no_change;
 static bool power_failure;
@@ -126,6 +126,13 @@ void epd_push_pixels(EpdRect area, short time, int color) {
     ++blind_pushes;
 }
 void epd_clear(void) { physical_scan_power(); assert(ota_display_depth); assert(powerons > 0); ++clears; }
+void epd_clear_area_cycles(EpdRect area, int cycles, int cycle_time) {
+    physical_scan_power();
+    assert(ota_display_depth && area.x == 0 && area.y == 0 && area.width == 1216 && area.height == 684);
+    assert((cycles == 1 || cycles == 3) && cycle_time == 15);
+    ++clears;
+    clear_cycles += (unsigned)cycles;
+}
 int64_t esp_timer_get_time(void) { return now_us; }
 
 // 与 highlevel.c:307 相同：该 API 清前缓冲，而不是参考后缓冲。
@@ -257,12 +264,21 @@ int main(void) {
     assert(update_display_fast_page(&hl) == EPD_DRAW_SUCCESS);
     assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_WAVEFORM && last_scan == BOARD_EPD_SCAN_FULL && full_draws > 0);
 
-    // Image pages clear the optical state and use the full grayscale waveform.
+    // Standalone image pages retain three optical cleanup cycles and the full grayscale waveform.
     memcpy(front, target, FB_BYTES);
     memset(back, 0x55, FB_BYTES);
-    clears = draws = 0;
+    clears = draws = clear_cycles = 0;
     assert(update_display_image_gray(&hl) == EPD_DRAW_SUCCESS);
-    assert(clears == 1 && draws == 1 && white_baseline && correct_target_at_draw);
+    assert(clears == 1 && clear_cycles == 3 && draws == 1 && white_baseline && correct_target_at_draw);
+    assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_FULL_WAVEFORM &&
+           hl.waveform == &E0470_WAVEFORM);
+
+    // Reader entry image frames use one cleanup cycle, while the standalone image page retains three.
+    memcpy(front, target, FB_BYTES);
+    memset(back, 0x55, FB_BYTES);
+    clears = draws = clear_cycles = 0;
+    assert(update_display_reader_image_gray(&hl) == EPD_DRAW_SUCCESS);
+    assert(clears == 1 && clear_cycles == 1 && draws == 1 && white_baseline && correct_target_at_draw);
     assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_FULL_WAVEFORM &&
            hl.waveform == &E0470_WAVEFORM);
 
