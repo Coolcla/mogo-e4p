@@ -1269,10 +1269,12 @@ static void reader_footer_strip_number(char *dst, size_t cap, const char *source
 }
 static void reader_footer_chapter_name(char *dst, size_t cap) {
     char source[128] = {0};
-    bool selected = s_selected_toc < book_navigation_count() &&
+    bool page_title = book_layout_page_chapter_title(s_reader_session.position.page,
+                                                     source, sizeof(source));
+    bool selected = !page_title && s_selected_toc < book_navigation_count() &&
         book_navigation_chapter(s_selected_toc) == s_reader_session.position.chapter &&
         book_navigation_title(s_selected_toc, source, sizeof(source)) == ESP_OK && source[0];
-    if (!selected) {
+    if (!page_title && !selected) {
         if (s_chapter_heading_title[0]) copy_text(source, sizeof(source), s_chapter_heading_title);
         else if (book_chapter_title(s_reader_session.position.chapter, source, sizeof(source)) != ESP_OK) source[0] = 0;
     }
@@ -2705,7 +2707,7 @@ static EpdRect title_style_window_rect(int index) {
 // The line above the cards: a book without a horizontal heading says so, otherwise the selected
 // style's description.
 static const char* title_style_note(void) {
-    if (!book_has_chapter_headings()) return "当前书籍没有章节题头，样式对 EPUB / MOBI 生效";
+    if (!book_chapter_count()) return "当前书籍没有可用章节题头";
     if (app_settings_book_vertical()) return "竖排沿用两列题头，样式对横排生效";
     return s_title_style_details[app_settings_book_title_style()];
 }
@@ -3371,15 +3373,18 @@ static reader_heading_t reader_heading_metrics(const char *title, const char *la
     return metrics;
 }
 
-static void draw_vertical_heading(uint8_t *fb, EpdRect body) {
-    reader_heading_t metrics = reader_heading_metrics(s_chapter_heading_title, s_chapter_heading_label, body);
+static void draw_vertical_heading_text(uint8_t *fb, EpdRect body, const char *title, const char *label) {
+    reader_heading_t metrics = reader_heading_metrics(title, label, body);
     if (!metrics.width) return;
     int y = body.y + (body.height - metrics.text_height) / 2;
     if (y < body.y + 8) y = body.y + 8;
     ttf_font_select(TTF_FONT_SLOT_SYSTEM);
     if (metrics.label_px)
-        ttf_draw_text_px_vertical(fb, metrics.label_x, y, metrics.label_px, s_chapter_heading_label, 0, 0, 15);
-    ttf_draw_text_px_vertical(fb, metrics.title_x, y, metrics.title_px, s_chapter_heading_title, 0, 0, 15);
+        ttf_draw_text_px_vertical(fb, metrics.label_x, y, metrics.label_px, label, 0, 0, 15);
+    ttf_draw_text_px_vertical(fb, metrics.title_x, y, metrics.title_px, title, 0, 0, 15);
+}
+static void draw_vertical_heading(uint8_t *fb, EpdRect body) {
+    draw_vertical_heading_text(fb, body, s_chapter_heading_title, s_chapter_heading_label);
 }
 
 /* ---- 横排题头样式 / Horizontal heading styles ---- */
@@ -3512,6 +3517,9 @@ static void draw_reader_outer(uint8_t *fb,size_t page) {
     if (app_settings_reader_statusbar()) ui_nav_status(fb);
     draw_reader_header(fb);
     EpdRect body=body_rect();
+    char page_heading[READER_HEADING_TITLE_BYTES] = {0};
+    const bool page_has_heading = page != 0 &&
+        book_layout_page_chapter_title(page, page_heading, sizeof(page_heading));
     if (page == 0 && s_chapter_heading_title[0] &&
         (s_chapter_lead_height || s_chapter_lead_width)) {
         if (app_settings_book_vertical()) {
@@ -3528,6 +3536,16 @@ static void draw_reader_outer(uint8_t *fb,size_t page) {
                                     (int)app_settings_book_title_size(),
                                     s_chapter_heading_label, s_chapter_heading_title);
         }
+    } else if (page_has_heading && (s_chapter_lead_height || s_chapter_lead_width)) {
+        // EPUB 可把多个目录章写进同一 spine 文件；布局已为章首块分页，这里复用同一套题头样式。
+        // EPUBs may put several TOC chapters in one spine file; the layout split the chapter-start
+        // block onto a new page, so paint that page with the same heading style.
+        if (app_settings_book_vertical())
+            draw_vertical_heading_text(fb, body, page_heading, "");
+        else
+            draw_reader_title_style(fb, reader_heading_band(body.y),
+                                    (int)app_settings_book_title_style(),
+                                    (int)app_settings_book_title_size(), "", page_heading);
     }
     ui_reader_background_paint(fb, (EpdRect){0,0,READER_WIDTH,READER_HEIGHT}, true);
     draw_reader_images(fb, page, body);

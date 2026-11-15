@@ -89,7 +89,8 @@ esp_err_t book_chapter_load_blocks(size_t i, html_text_t *out) {
     memset(out, 0, sizeof(*out));
     if (s_mobi) return book_mobi_load_target(s_mobi, i, NULL, SIZE_MAX, NULL, out);
     if (s_epub) return book_epub_load(s_epub, i, out);
-    return book_chapter_load(i, &out->utf8, &out->len);
+    if (!s_book.file || i >= s_book.count) return ESP_ERR_INVALID_ARG;
+    return book_txt_load_blocks(&s_book, i, out);
 }
 esp_err_t book_chapter_load_blocks_anchor(size_t i, const char *anchor,
                                            size_t *anchor_offset, html_text_t *out) {

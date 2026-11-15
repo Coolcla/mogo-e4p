@@ -93,13 +93,15 @@ static int right_slack(void) { return s_right_slack >= 0 ? s_right_slack : s_rec
 // 块表是有序字节区间，二分查找当前行样式。/ Blocks are ordered byte ranges; binary-search the line style.
 static const blk_t* block_at(size_t off) {
     if (!s_block_count) return NULL;
+    if (off < s_blocks[0].offset) return NULL;
     size_t lo = 0, hi = s_block_count;
     while (lo + 1 < hi) {
         size_t mid = lo + (hi - lo) / 2;
         if (s_blocks[mid].offset <= off) lo = mid;
         else hi = mid;
     }
-    return &s_blocks[lo];
+    const blk_t *block = &s_blocks[lo];
+    return off < block->offset + block->len ? block : NULL;
 }
 
 // 字体 run 表由调用方借用（和块表同一份 html_text），绘制时按段换字体。
@@ -475,7 +477,9 @@ static size_t skip_image_spacing(size_t off) {
         if (visible != off) { off = visible; continue; }
         if (!s_block_count) break;
         const blk_t* block = block_at(off);
-        if (block->offset != off) break;
+        // TXT blocks omit blank source lines; let take_line consume those lines as ordinary
+        // paragraph breaks instead of dereferencing a missing block or dropping the spacing.
+        if (!block || block->offset != off) break;
         size_t end = block->offset + block->len;
         if (block->image >= 0) {
             if (s_images_visible) break;
@@ -682,6 +686,16 @@ static int gap_for(int height, bool heading) {
     return (int)((unsigned)height * s_paragraph_percent / (heading ? 150 : 100));
 }
 
+// 章首块由页面题头接管：保留页表起点用于进度与命中测试，正文流跳过这一个块。
+// A chapter-start block is owned by the page heading: keep its page-table offset for progress
+// and hit testing, but skip the block in the body stream because the caller paints it as chrome.
+static size_t after_block(size_t off, const blk_t *block) {
+    size_t next = block ? block->offset + block->len : off;
+    if (next < s_len && s_text[next] == '\r') ++next;
+    if (next < s_len && s_text[next] == '\n') ++next;
+    return next;
+}
+
 static bool append_page(size_t off) {
     if (s_count == PAGE_MAX) return false;
     if (s_count == s_capacity) {
@@ -701,6 +715,12 @@ static bool append_page(size_t off) {
     ++s_count;
     s_page_img_start[s_count] = (uint32_t)s_image_count;
     return true;
+}
+
+static bool page_starts_chapter(size_t page) {
+    if (page >= s_count || !s_block_count) return false;
+    const blk_t *block = block_at(s_pages[page]);
+    return block && block->offset == s_pages[page] && block->chapter_start;
 }
 
 // 段首的全角/半角空白不参与排版，缩进由阅读设置决定；返回第一个可见字节。
@@ -918,6 +938,14 @@ static bool build_vertical(size_t len) {
         size_t visible_off = skip_image_spacing(off);
         if (visible_off != off) { off = visible_off; continue; }
         const blk_t* block = block_at(off);
+        if (block && block->offset == off && block->chapter_start) {
+            // 竖排同样让章首单独占一页，并让开右侧题头列。
+            // Vertical layout follows the same page break and reserves the heading columns.
+            if (s_pages[s_count - 1] != off && !append_page(off)) return false;
+            used = s_chapter_lead_width < (unsigned)s_rect.width ? s_chapter_lead_width : 0;
+            off = after_block(off, block);
+            continue;
+        }
         if (block && block->image >= 0 && off == block->offset) {
             int img_w = 0, img_h = 0;
             // 首页题头占的就是顶部这一条，插图不能在题头上开画。
@@ -987,13 +1015,21 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         size_t expected = 0;
         for (size_t i = 0; i < count; ++i) {
             const blk_t* b = &blocks[i];
+            if (b->offset > len) return false;
+            while (expected < b->offset && expected < len &&
+                   (utf8[expected] == '\r' || utf8[expected] == '\n')) ++expected;
             if (b->offset != expected || b->offset >= len || !b->len || b->len > len - b->offset ||
                 ((unsigned char)utf8[b->offset] & 0xc0) == 0x80) return false;
             size_t end = b->offset + b->len;
             if (i + 1 < count) {
-                if (end >= len || utf8[end] != '\n') return false;
-                expected = end + 1;
-            } else if (end != len) return false;
+                if (end >= len) return false;
+                expected = end;
+                while (expected < len && (utf8[expected] == '\r' || utf8[expected] == '\n')) ++expected;
+                if (expected != blocks[i + 1].offset) return false;
+            } else {
+                while (end < len && (utf8[end] == '\r' || utf8[end] == '\n')) ++end;
+                if (end != len) return false;
+            }
         }
     }
     s_blocks = blocks;
@@ -1032,6 +1068,16 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
         const blk_t* block = block_at(off);
+        if (block && block->offset == off && block->chapter_start) {
+            // 章首不允许和上一章共页；若页表已经因行满落在这里，只复用现有页。
+            // A chapter start may not share a page with the preceding chapter. If wrapping has
+            // already opened a page at this offset, reuse it instead of appending a duplicate.
+            if (s_pages[s_count - 1] != off && !append_page(off)) goto fail;
+            used = s_lead_height;
+            pending_gap = 0;
+            off = after_block(off, block);
+            continue;
+        }
         if (block && block->image >= 0 && off == block->offset) {
             used += pending_gap;
             pending_gap = 0;
@@ -1108,6 +1154,22 @@ size_t book_layout_page_start_offset(size_t page) {
     return page < s_count ? s_pages[page] : s_len;
 }
 
+bool book_layout_page_chapter_title(size_t page, char *buf, size_t cap) {
+    if (!buf || !cap) return false;
+    buf[0] = 0;
+    if (page >= s_count || !s_block_count || !s_text) return false;
+    const blk_t *block = block_at(s_pages[page]);
+    if (!block || block->offset != s_pages[page] || !block->chapter_start ||
+        block->image >= 0 || !block->len) return false;
+    size_t n = block->len;
+    if (n >= cap) n = cap - 1;
+    while (n && ((unsigned char)s_text[block->offset + n] & 0xc0) == 0x80) --n;
+    if (!n) return false;
+    memcpy(buf, s_text + block->offset, n);
+    buf[n] = 0;
+    return true;
+}
+
 size_t book_layout_page_for_offset(size_t off) {
     size_t lo = 0, hi = s_count;
     while (lo + 1 < hi) {
@@ -1182,7 +1244,8 @@ static void draw_vertical_column(uint8_t* fb, EpdRect rect, int left, int pitch,
 static void draw_vertical_page(uint8_t* fb, size_t page, EpdRect rect) {
     size_t off = s_pages[page];
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
-    int64_t used = page == 0 && s_chapter_lead_width < (unsigned)rect.width
+    int64_t used = (page == 0 || page_starts_chapter(page)) &&
+                   s_chapter_lead_width < (unsigned)rect.width
         ? (int64_t)s_chapter_lead_width : 0;
     uint32_t img_at = s_page_img_start ? s_page_img_start[page] : 0;
     const uint32_t img_end = s_page_img_start ? s_page_img_start[page + 1] : 0;
@@ -1192,6 +1255,12 @@ static void draw_vertical_page(uint8_t* fb, size_t page, EpdRect rect) {
     while (off < end) {
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
+        const blk_t* chapter_block = block_at(off);
+        if (chapter_block && chapter_block->offset == off && chapter_block->chapter_start) {
+            used = s_chapter_lead_width < (unsigned)rect.width ? s_chapter_lead_width : 0;
+            off = after_block(off, chapter_block);
+            continue;
+        }
         const blk_t* image_block = block_at(off);
         if (image_block && image_block->image >= 0 && off == image_block->offset) {
             // 插图独占一页，位置由调用方按整页图绘制；记录只用于识别这一页。
@@ -1278,7 +1347,7 @@ static void draw_page_impl(uint8_t* fb, size_t page, EpdRect rect, int px) {
     if (s_vertical) { draw_vertical_page(fb, page, rect); return; }
     size_t off = s_pages[page];
     size_t end = page + 1 < s_count ? s_pages[page + 1] : s_len;
-    int64_t used = page == 0 ? s_lead_height : 0;
+    int64_t used = (page == 0 || page_starts_chapter(page)) ? s_lead_height : 0;
     int64_t pending_gap = 0;
     // 本页插图按出现顺序排在池里，游标走到哪个块就用哪条记录，不必再查表。
     // This page's images sit in the pool in encounter order, so the walk just consumes them in
@@ -1292,6 +1361,11 @@ static void draw_page_impl(uint8_t* fb, size_t page, EpdRect rect, int px) {
     while (off < end) {
         size_t visible = skip_image_spacing(off);
         if (visible != off) { off = visible; continue; }
+        const blk_t* chapter_block = block_at(off);
+        if (chapter_block && chapter_block->offset == off && chapter_block->chapter_start) {
+            off = after_block(off, chapter_block);
+            continue;
+        }
         const blk_t* image_block = block_at(off);
         if (image_block && image_block->image >= 0 && off == image_block->offset) {
             while (img_at < img_end && s_images[img_at].image != image_block->image) ++img_at;
