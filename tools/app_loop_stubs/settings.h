@@ -1,6 +1,8 @@
 /* 中文：调度测试替身。/ English: Scheduler test shim. */
 #pragma once
 #include "common.h"
+#include "app/app_quick_items.h"
+const app_quick_layout_t *app_settings_quick_layout(void);
 
 bool app_settings_ble_turner(void);
 void app_settings_set_ble_turner(bool enabled);

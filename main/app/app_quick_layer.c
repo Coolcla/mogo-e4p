@@ -35,13 +35,14 @@ static int s_quick_pressed=-1;
 // 上一次推上屏的快捷层高度；收起前光卡片后按旧高度擦除，避免 224..480 残留。
 // Height last presented; closing the frontlight card erases by the old height so 224..480 cannot remain.
 static int s_quick_height;
+static int64_t s_rotation_notice_until;
 // 回放期间只更新硬件，整批结束后再按最终值刷一行；否则一次拖动会被每个积压帧各刷一遍。
 // During replay only hardware follows; one row is flushed at the end, or a single drag would present every queued frame.
 static bool s_fl_pending;
 static bool s_fl_pending_commit;
 static ui_quick_control_t s_fl_pending_control;
-// 屏幕上第四枚圆钮当前画出的开灯状态；点按翻转后据此决定是否重画。
-// The frontlight state currently painted on the fourth circle; a tap uses it to decide the repaint.
+// 前光圆钮当前画出的开灯状态；点按翻转后据此决定是否重画。
+// The light state currently painted on its item; a tap uses it to decide the repaint.
 static bool s_fl_shown_on;
 // 只提交本层尚未保存的调节；关闭后的旧预览不能覆盖实体键已保存的新状态。
 // Commit only unsaved changes made here; a closed layer's stale preview must not overwrite a saved key change.
@@ -85,6 +86,30 @@ static void quick_rotation_sync(app_ctx_t *ctx, const app_desc_t *current) {
     s_quick.rotation_enabled = s_quick.rotation_available && current->rotation_enabled && current->rotation_enabled(ctx);
 }
 
+static bool quick_button_active(int button, unsigned status, bool light_on) {
+    switch (ui_quick_menu_item(&s_quick, button)) {
+        case APP_QUICK_WIFI: return (status & 1u) != 0;
+        case APP_QUICK_BLUETOOTH: return (status & 2u) != 0;
+        case APP_QUICK_CELLULAR: return (status & 16u) != 0;
+        case APP_QUICK_HAPTICS: return (status & 8u) != 0;
+        case APP_QUICK_MEMORY: return (status & 64u) != 0;
+        case APP_QUICK_FRONTLIGHT: return light_on;
+        case APP_QUICK_ROTATION: return s_quick.rotation_enabled;
+        default: return false;
+    }
+}
+
+static void quick_rotation_notice_present(app_ctx_t *ctx, const app_desc_t *current) {
+    EpdRect dirty;
+    if (!ui_quick_menu_draw_notice(ctx->fb, &s_quick, &dirty)) return;
+    enum EpdDrawError error = display_refresh_area(ctx->hl, DISPLAY_REFRESH_DETAIL, dirty, DISPLAY_REFRESH_DEFAULT);
+    guard_draw_result(ctx->hl, error);
+    if (error != EPD_DRAW_SUCCESS) {
+        app_quick_layer_reset();
+        app_present(ctx, current, APP_REDRAW_FULL);
+    }
+}
+
 // 同步输出完再接收下一条触摸，不安排旧层回放；错误时关闭层并可靠全刷当前页。
 // Complete presentation before accepting another contact, with no stale replay; close and full-refresh the current page on error.
 void app_quick_layer_present(app_ctx_t *ctx, const app_desc_t *current, bool full) {
@@ -100,18 +125,8 @@ void app_quick_layer_present(app_ctx_t *ctx, const app_desc_t *current, bool ful
         // 已合成的页面直接全刷，只还原圆键按压，不重排底页或重算玻璃。
         // Refresh the composed framebuffer directly, restoring only the pressed tile without underlay layout or glass regeneration.
         for(int i=0;i<ui_quick_menu_button_count(&s_quick);++i){
-            bool active=i==0?(status&1u)!=0
-                :i==1?(status&2u)!=0
-                :i==ui_quick_menu_cellular_button(&s_quick)?(status&16u)!=0
-                :i==ui_quick_menu_haptics_button(&s_quick)?(status&8u)!=0
-                :i==ui_quick_menu_memory_button(&s_quick)?(status&64u)!=0
-                :i==3&&s_quick.frontlight&&s_quick.fl_on;
-            bool was_active=i==0?(s_quick_status&1u)!=0
-                :i==1?(s_quick_status&2u)!=0
-                :i==ui_quick_menu_cellular_button(&s_quick)?(s_quick_status&16u)!=0
-                :i==ui_quick_menu_haptics_button(&s_quick)?(s_quick_status&8u)!=0
-                :i==ui_quick_menu_memory_button(&s_quick)?(s_quick_status&64u)!=0
-                :i==3&&s_quick.frontlight&&s_fl_shown_on;
+            bool active = quick_button_active(i, status, s_quick.fl_on);
+            bool was_active = quick_button_active(i, s_quick_status, s_fl_shown_on);
             if(i==s_quick_pressed||active!=was_active){
                 EpdRect dirty;(void)ui_quick_menu_draw_button(ctx->fb,&s_quick,i,active,false,&dirty);
             }
@@ -159,18 +174,8 @@ void app_quick_layer_present_buttons(app_ctx_t *ctx,const app_desc_t *current) {
     int pressed=ui_quick_menu_pressed(&s_quick);
     enum EpdDrawError error=EPD_DRAW_SUCCESS;
     for(int i=0;i<ui_quick_menu_button_count(&s_quick);++i){
-        bool active=i==0?(status&1u)!=0
-            :i==1?(status&2u)!=0
-            :i==ui_quick_menu_cellular_button(&s_quick)?(status&16u)!=0
-            :i==ui_quick_menu_haptics_button(&s_quick)?(status&8u)!=0
-            :i==ui_quick_menu_memory_button(&s_quick)?(status&64u)!=0
-            :i==3&&s_quick.frontlight&&s_quick.fl_on;
-        bool was_active=i==0?(s_quick_status&1u)!=0
-            :i==1?(s_quick_status&2u)!=0
-            :i==ui_quick_menu_cellular_button(&s_quick)?(s_quick_status&16u)!=0
-            :i==ui_quick_menu_haptics_button(&s_quick)?(s_quick_status&8u)!=0
-            :i==ui_quick_menu_memory_button(&s_quick)?(s_quick_status&64u)!=0
-            :i==3&&s_quick.frontlight&&s_fl_shown_on;
+        bool active = quick_button_active(i, status, s_quick.fl_on);
+        bool was_active = quick_button_active(i, s_quick_status, s_fl_shown_on);
         if(active==was_active&&(pressed==i)==(s_quick_pressed==i))continue;
         EpdRect dirty;
         if(ui_quick_menu_draw_button(ctx->fb,&s_quick,i,active,pressed==i,&dirty)){
@@ -294,6 +299,8 @@ static void quick_reenter_page(app_ctx_t *ctx, const app_desc_t *current) {
 bool app_quick_layer_feed_frame(app_ctx_t *ctx, const app_desc_t *current, bool *lock_requested,
                              bool coalesce) {
     quick_rotation_sync(ctx, current);
+    if (!s_quick.open && !s_quick.tracking && !s_quick.swallow)
+        s_quick.layout = *app_settings_quick_layout();
     ui_quick_event_t event;
     bool owned = ui_quick_menu_feed(&s_quick, ctx,
         current->render && !current->holds_pmu && !usb_storage_active() && !pico_online_busy(),
@@ -417,7 +424,13 @@ bool app_quick_layer_feed_frame(app_ctx_t *ctx, const app_desc_t *current, bool 
         }
         *lock_requested = true;
     }
-    else if (event.action == UI_QUICK_ROTATION && s_quick.rotation_available && current->on_rotation_toggle) {
+    else if (event.action == UI_QUICK_ROTATION) {
+        if (!s_quick.rotation_available || !current->on_rotation_toggle) {
+            s_quick.rotation_notice = true;
+            s_rotation_notice_until = ctx->now_ms + 2200;
+            quick_rotation_notice_present(ctx, current);
+            return owned;
+        }
         current->on_rotation_toggle(ctx);
         quick_rotation_sync(ctx, current);
         EpdRect dirty;
@@ -434,6 +447,7 @@ bool app_quick_layer_feed_frame(app_ctx_t *ctx, const app_desc_t *current, bool 
 
 void app_quick_layer_init(void) {
     app_quick_layer_reset();
+    s_quick.layout = *app_settings_quick_layout();
     s_quick.haptics_available = haptics_available();
     s_quick.cellular_available = cellular_service_capable();
     // 本板有没有前光决定层高和卡片；预览值来自已加载的设置，开机恢复由 app_main 写入硬件。
@@ -462,6 +476,10 @@ bool app_quick_layer_cancel_input(void) {
 }
 
 void app_quick_layer_sync_status(app_ctx_t *ctx, const app_desc_t *current) {
+    if (s_quick.open && s_quick.rotation_notice && ctx->now_ms >= s_rotation_notice_until) {
+        s_quick.rotation_notice = false;
+        quick_rotation_notice_present(ctx, current);
+    }
     const bool was_available = s_quick.cellular_available;
     const unsigned before = s_quick_status;
     const unsigned after = quick_status();

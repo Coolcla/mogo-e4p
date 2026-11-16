@@ -8,13 +8,13 @@ Reader prefetch frames use the allocation ledger, and OTA shares capacity checks
 
 ## 使用入口 / User entry points
 
-- 快捷栏第二排常驻 CPU 图标的内存键。短按先收起快捷栏、恢复底页，再提交一次清理；长按 500ms 进入内存管理页，抬手不再触发短按。移动离开按键或超过容差会取消内存长按。/ The persistent CPU icon in quick-controls row two clears memory on a tap after restoring the underlay. A 500ms hold opens Memory Management and consumes the release; leaving the key or exceeding movement tolerance cancels the hold.
+- 快捷栏默认显示 CPU 图标的内存键，可在「快捷栏管理」调整显隐和位置。短按先收起快捷栏、恢复底页，再提交一次清理；长按 500ms 进入内存管理页，抬手不再触发短按。移动离开按键或超过容差会取消内存长按。/ The default CPU icon in quick controls (visibility/order managed in Settings) clears memory on a tap after restoring the underlay. A 500ms hold opens Memory Management and consumes the release; leaving the key or exceeding movement tolerance cancels the hold.
 - 管理页属于设备设置子页。从其他页面直达后，返回键回到来源页；中键回首页。从设置内直达时，返回设备设置主页。/ Memory Management is a Settings subpage. Back returns to the originating page after a quick-controls entry from elsewhere, while the middle key opens Home. Entries from Settings return to its main page.
 - 页面分别显示内部 RAM、PSRAM 的总量、已用比例、可用量、最大连续块及启动以来的最低可用量，并显示可归属资源、分配未通过次数和最近清理结果。资源归属包括常驻内存和可清理缓存，不等于可释放量。/ The page separates internal RAM and PSRAM totals, usage, free bytes, largest contiguous blocks and boot-session low-water marks. It also shows attributed resources, admission failures and the latest cleanup result. Attributed usage includes resident allocations and evictable caches, so it does not equal reclaimable bytes.
 - 每 500ms 采样；普通数据变化最多约每秒刷新一次内容区，清理状态变化在下一次采样时立即呈现，题头和底部导航保持稳定。绘图本身不采样或清理。/ Sample every 500ms and refresh changed data at most about once per second. Cleanup-state transitions present at the next sample; the heading and navigation remain stable. Rendering neither samples nor cleans resources.
 
-横竖屏快捷栏共用一份布局描述进行绘制和命中；第二排按移动网络、阅读方向、震动、内存、锁屏排列，按硬件及当前页面能力隐藏相应按键。横屏为前光滑杆保留独立触摸空间。
-Portrait and landscape quick controls share painting/hit geometry. Row two orders cellular, orientation, haptics, memory and lock, hiding capability-dependent controls as appropriate. Landscape leaves separate touch space for frontlight sliders.
+横竖屏快捷栏共用已保存的显隐与顺序进行绘制和命中，最多两排、每排四个；按硬件能力略过前光、震动或移动网络，旋转键不因当前页面而消失。横屏为前光滑杆保留独立触摸空间。
+Portrait and landscape share saved visibility/order for painting and hit tests, capped at two rows of four. Hardware gates light, haptics and cellular; rotation stays present across pages. Landscape reserves separate slider space.
 
 ## 分配与所有权 / Allocation and ownership
 

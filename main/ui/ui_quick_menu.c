@@ -1,41 +1,26 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转、
- * 震动和内存入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关，锁屏键放在第二排末尾。
- * 灯灭时层高只有圆钮区；开灯后圆钮下方展开两条横向胶囊滑杆，直接浮在遮
- * 罩上：无卡片、无文字、无旋钮，图标在胶囊内左端，白色填充从左缘生长。灯灭时
- * 开层后停顿再继续下拉可临时展开胶囊，只属本次开层；一次连续快滑只开层。
- * English: A shallow full-width top layer with rounded bottom corners and four
- * base unlabeled circles; runtime cellular, rotation, haptics and memory entries append
- * to the second row, while frontlight boards draw a sun switch in the fourth
- * circle and end row two with a lock key. While the light is off the layer keeps only the circle band; switching
- * it on expands two horizontal capsule sliders below the circles, floating on
- * the shade: no card, text or knob, the icon inside the left end and a white
- * fill growing from the left edge. With the light off, pausing after the open
- * and then pulling further down expands the capsules for that opening only;
- * one continuous fast swipe only opens, never expands.
- * 用户修订：常驻大滑杆先改为随开关展开的卡片行，再按用户参考图去掉卡片容器，
- * 改成控制中心式横向胶囊；亮度用半填充圆图标，色温用温度计图标；填充不足一个
- * 帽宽时按行收进左端半圆。
- * User revision: the always-present sliders first became a card of rows, then per
- * the user's reference the card was dropped for control-centre style horizontal
- * capsules; brightness uses the half-filled circle and colour temperature the
- * thermometer; a fill narrower than one cap tucks into the left cap row by row.
- * 用户修订：面板用不透明白底，圆键仅黑白及固定灰；滑杆使用黑白填充与固定白底图标。
- * User revision: opaque white panels, black/white/fixed-gray keys, and binary sliders with fixed white icon disks.
- * 用户修订：阅读旋转键放第二排左侧，环形箭头围住开锁/闭锁；前光行随之下移。
- * User revision: put the reader rotation key at the left of row two, with a
- * circular arrow around an open/closed lock, and shift the frontlight rows below it.
- * 用户修订：横屏左侧紧凑排按钮，右侧双滑杆对齐两行，快捷层不再占满屏高。
- * User revision: landscape packs keys on the left and aligns right-side sliders
- * to the two rows so the quick layer no longer fills the screen height.
- * 用户新增：第二排增加触摸震动开关，阅读时紧邻旋转键。
- * User addition: add a second-row haptics switch beside reader rotation.
- * 用户 2026-11-14 修订：锁屏键移到第二排末尾，复用完整的系统锁形掩模，修复锁梁断点。
- * User revision on 2026-11-14: end row two with lock and use the system icon mask to keep its shackle continuous.
- * 冻结（2026-11-15修订）：不访问硬件、设置或刷新，不申请帧缓存；只在展开/状态变化后
- * 由主循环调用绘图。内存键只绘制传入的忙碌状态，不在 UI 层执行清理。
- * Frozen (revised 2026-11-15): no hardware, settings, presentation or framebuffer allocations;
- * the loop draws only on opening/state changes. Memory only paints supplied busy state and never cleans here.
+ * 中文：顶部快捷栏，最多两排、每排四个无文字圆钮；项目显隐与顺序由装配层提供。
+ * 用户2026-11-16修订：取代按页面能力追加与固定键位，旋转键默认在各页常驻；
+ * 不支持旋转的页面显示提示，不改变阅读会话。用户可在设置中选择项目和位置。
+ * English: A top quick bar with at most two rows of four unlabeled circles, whose
+ * visibility and order come from the layer owner. The user's 2026-11-16 revision
+ * replaces page-specific appended keys and fixed positions: rotation is resident
+ * by default, unavailable pages show a notice without changing the reader session,
+ * and Settings manages the visible items and their positions.
+ * 前光开关展开亮度和色温胶囊；熄灯收起。灯灭时停顿后继续下拉，或再次下拉，
+ * 可仅在本次开层临时展开；连续快滑不连触发。横屏圆键在左、滑杆在右。
+ * The light switch expands brightness/temperature capsules and switching off
+ * collapses them. While off, a paused continuation or fresh pull expands them
+ * for this opening only; a continuous flick never chains both actions. Landscape
+ * puts circles on the left and sliders on the right.
+ * WiFi、蓝牙、移动网络、震动和内存长按500ms进入对应设置，抬手不再触发短按。
+ * Holding WiFi, Bluetooth, cellular, haptics or memory for 500ms opens its settings
+ * without also activating the release tap.
+ * 冻结：识别器只产出动作及前光事件，不访问页面、broker、硬件、设置或刷新；
+ * 不申请帧缓存。绘图与命中使用同一项目顺序和几何，主循环负责调用绘图。
+ * Frozen: the recognizer only emits actions and frontlight events, never accesses
+ * pages, broker, hardware, settings or presentation, and allocates no framebuffer.
+ * Painting and hits share item order and geometry; the loop owns drawing calls.
  */
 #include "ui_quick_menu.h"
 #include <stdlib.h>
@@ -86,7 +71,8 @@ static void rotation_icon(uint8_t *fb, int cx, int cy, bool unlocked) {
 /* ---- 圆键 / Circle keys ---- */
 
 static void draw_badge(uint8_t *fb,const ui_quick_menu_t *menu,int button,bool active) {
-    const bool status_key = button <= 1 || button == ui_quick_menu_cellular_button(menu) ||
+    const app_quick_item_t item = ui_quick_menu_item(menu, button);
+    const bool status_key = item == APP_QUICK_WIFI || item == APP_QUICK_BLUETOOTH || button == ui_quick_menu_cellular_button(menu) ||
         button == ui_quick_menu_memory_button(menu);
     if(!status_key || !active)return;
     int cx=center_x(menu,button);
@@ -100,11 +86,12 @@ static void draw_badge(uint8_t *fb,const ui_quick_menu_t *menu,int button,bool a
 static void draw_key(uint8_t *fb,int button,const ui_quick_menu_t *menu,bool active,bool pressed) {
     int cx=center_x(menu,button);
     const int cy=ui_quick_menu_button_y(menu,button);
-    const bool frontlight_key=button==3&&menu!=NULL&&menu->frontlight;
+    const app_quick_item_t item = ui_quick_menu_item(menu, button);
+    const bool frontlight_key=item==APP_QUICK_FRONTLIGHT;
     epd_fill_circle(cx,cy,UI_QUICK_RADIUS,active?UI_GRAY_LIGHT:UI_GRAY_WHITE,fb);
     epd_draw_circle(cx,cy,UI_QUICK_RADIUS,UI_GRAY_BLACK,fb);
     epd_draw_circle(cx,cy,UI_QUICK_RADIUS-1,UI_GRAY_BLACK,fb);
-    if(button<3) ui_draw_icon(fb,cx,cy,44,s_icons[button],UI_GRAY_BLACK);
+    if(item<=APP_QUICK_FULL) ui_draw_icon(fb,cx,cy,44,s_icons[item],UI_GRAY_BLACK);
     else if (button == ui_quick_menu_cellular_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_MOGO_CELLULAR_SIGNAL,UI_GRAY_BLACK);
     else if(frontlight_key) ui_draw_icon(fb,cx,cy,44,UI_ICON_SUN,UI_GRAY_BLACK);
     else if (button == ui_quick_menu_memory_button(menu)) ui_draw_icon(fb,cx,cy,44,UI_ICON_CPU,UI_GRAY_BLACK);
@@ -190,7 +177,7 @@ void ui_quick_menu_end(void) {}
 
 bool ui_quick_menu_draw_button(uint8_t *fb,const ui_quick_menu_t *menu,int button,bool active,bool pressed,EpdRect *dirty) {
     if(!fb||!dirty||button<0||button>=ui_quick_menu_button_count(menu)||epd_rotated_display_width()<UI_LOCK_WIDTH||epd_rotated_display_height()<ui_quick_menu_height(menu))return false;
-    if(menu!=NULL&&menu->frontlight&&button==3)active=menu->fl_on;
+    if(menu!=NULL&&ui_quick_menu_item(menu,button)==APP_QUICK_FRONTLIGHT)active=menu->fl_on;
     if(menu!=NULL&&button==ui_quick_menu_rotation_button(menu))active=menu->rotation_enabled;
     if(menu!=NULL&&button==ui_quick_menu_memory_button(menu))active=menu->memory_busy;
     draw_key(fb,button,menu,active,pressed);
@@ -228,6 +215,16 @@ void ui_quick_menu_draw_status(uint8_t *fb) {
     ui_nav_status(fb);
 }
 
+bool ui_quick_menu_draw_notice(uint8_t *fb, const ui_quick_menu_t *menu, EpdRect *dirty) {
+    if (!fb || !menu || !dirty) return false;
+    *dirty = (EpdRect){40, ui_quick_menu_height(menu) - 50, epd_rotated_display_width() - 80, 32};
+    ui_fill_rect_fast(*dirty, UI_GRAY_WHITE, fb);
+    if (menu->rotation_notice)
+        ui_text_fixed_vc(fb, epd_rotated_display_width() / 2, dirty->y + 16, 20,
+            "仅阅读正文支持自动旋转", EPD_DRAW_ALIGN_CENTER, false);
+    return true;
+}
+
 EpdRect ui_quick_menu_rect(const ui_quick_menu_t *menu) {
     return (EpdRect){0, 0, epd_rotated_display_width(), ui_quick_menu_height(menu)};
 }
@@ -245,9 +242,10 @@ void ui_quick_menu_draw(uint8_t *fb,const ui_quick_menu_t *menu,bool wifi,bool b
     // Keep the system time/signature/battery legible on white; share navigation's 44px Lucide line icons.
     ui_quick_menu_draw_status(fb);
     for (int i = 0; i < ui_quick_menu_button_count(menu); ++i) {
-        bool active = (i == 0 && wifi) || (i == 1 && bluetooth) ||
+        const app_quick_item_t item = ui_quick_menu_item(menu, i);
+        bool active = (item == APP_QUICK_WIFI && wifi) || (item == APP_QUICK_BLUETOOTH && bluetooth) ||
             (i == ui_quick_menu_cellular_button(menu) && menu->cellular_enabled) ||
-            (i == 3 && menu != NULL && menu->frontlight && menu->fl_on) ||
+            (item == APP_QUICK_FRONTLIGHT && menu->fl_on) ||
             (i == ui_quick_menu_rotation_button(menu) && menu->rotation_enabled) ||
             (i == ui_quick_menu_haptics_button(menu) && menu->haptics_enabled) ||
             (i == ui_quick_menu_memory_button(menu) && menu->memory_busy);
@@ -263,6 +261,7 @@ void ui_quick_menu_draw(uint8_t *fb,const ui_quick_menu_t *menu,bool wifi,bool b
         draw_fl_row(fb, menu, UI_QUICK_CTL_BRIGHTNESS);
         draw_fl_row(fb, menu, UI_QUICK_CTL_CCT);
     }
+    if (menu->rotation_notice) { EpdRect dirty; (void)ui_quick_menu_draw_notice(fb, menu, &dirty); }
     ui_fill_round_rect(fb, (EpdRect){width / 2 - 26, layer_height - 24, 52, 6}, 3, UI_GRAY_BLACK);
     // 只画遮罩内的双像素轮廓，顶部直角、底部圆角，不越过下层边界。
     // Draw a two-pixel outline within the mask: square top, rounded bottom, no underlay leakage.

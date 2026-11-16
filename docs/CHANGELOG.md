@@ -5,6 +5,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.2 · 本地测试 / Local testing · 2026-11-16
 
+- 快捷栏旋转锁定默认在各页面显示，不支持旋转时给出提示；设置新增「快捷栏管理」，可选择按钮并调整顺序，最多两排八个，支持重启保存与配置备份恢复。/ Show rotation lock across pages with an unavailable notice; add Settings quick-bar visibility and ordering for up to eight buttons in two rows, persisted across restarts and settings backups.
 - 修复纯联网 Wi-Fi 持续重置无操作计时、导致阅读等页面无法自动锁屏的问题；保留文件传书、USB 读卡及联网 OTA 期间的锁屏保护。/ Fix network-only Wi-Fi continually resetting idle time and preventing automatic lock in the reader and other pages; retain protection during file transfers, USB storage and online OTA.
 
 ## v1.1.2 · 本地测试 / Local testing · 2026-11-15

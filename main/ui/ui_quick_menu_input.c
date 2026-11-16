@@ -35,8 +35,7 @@ static int circle_hit(const ui_quick_menu_t *menu, int x, int y) {
 static int hit_test(const ui_quick_menu_t *menu, int x, int y) {
     int key = circle_hit(menu, x, y);
     if (key >= 0) return key;
-    // 胶囊行只在开灯或本次开层下拉展开时存在；否则卡片区域不是命中目标，也不
-    // 命中第四枚以外的键。
+    // 胶囊行只在开灯或本次开层下拉展开时存在；否则胶囊区域不是命中目标。
     // Capsule rows exist while the light is on or the layer was pulled open this
     // session; otherwise the card area matches nothing.
     if (!menu->frontlight || (!menu->fl_on && !menu->fl_expanded)) return -1;
@@ -60,6 +59,7 @@ static uint8_t slider_value(const ui_quick_menu_t *menu, int hit, int x) {
 }
 
 void ui_quick_menu_reset(ui_quick_menu_t *menu) {
+    const app_quick_layout_t layout = menu->layout;
     const bool rotation_available = menu->rotation_available, rotation_enabled = menu->rotation_enabled;
     const bool haptics_available = menu->haptics_available, haptics_enabled = menu->haptics_enabled;
     const bool cellular_available = menu->cellular_available, cellular_enabled = menu->cellular_enabled;
@@ -71,6 +71,7 @@ void ui_quick_menu_reset(ui_quick_menu_t *menu) {
     const uint8_t bri_dirty = menu->fl_bri_dirty;
     const uint8_t cct_dirty = menu->fl_cct_dirty;
     memset(menu, 0, sizeof(*menu));
+    menu->layout = layout;
     menu->rotation_available = rotation_available;
     menu->rotation_enabled = rotation_enabled;
     menu->haptics_available = haptics_available;
@@ -207,10 +208,11 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
     // at the end of the tick; swallow keeps this contact stream from reaching the
     // new page.
     const int hx = x - (int)menu->x0, hy = y - (int)menu->y0;
-    const bool haptics_key = menu->haptics_available && menu->hit == ui_quick_menu_haptics_button(menu);
-    const bool cellular_key = menu->cellular_available && menu->hit == ui_quick_menu_cellular_button(menu);
-    const bool memory_key = menu->hit == ui_quick_menu_memory_button(menu);
-    if (menu->open && (menu->hit == 0 || menu->hit == 1 || cellular_key || haptics_key || memory_key) &&
+    const app_quick_item_t item = ui_quick_menu_item(menu, menu->hit);
+    const bool haptics_key = item == APP_QUICK_HAPTICS;
+    const bool cellular_key = item == APP_QUICK_CELLULAR;
+    const bool memory_key = item == APP_QUICK_MEMORY;
+    if (menu->open && (item == APP_QUICK_WIFI || item == APP_QUICK_BLUETOOTH || cellular_key || haptics_key || memory_key) &&
         (!memory_key || (!menu->moved && circle_hit(menu, x, y) == menu->hit)) &&
         hx * hx + hy * hy <= UI_QUICK_HIT_RADIUS * UI_QUICK_HIT_RADIUS &&
         ctx->now_ms - menu->started_ms >= UI_QUICK_HOLD_SETTINGS_MS) {
@@ -221,7 +223,7 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
         event->action = memory_key ? UI_QUICK_MEMORY_SETTINGS
             : haptics_key ? UI_QUICK_HAPTICS_SETTINGS
             : cellular_key ? UI_QUICK_CELLULAR_SETTINGS
-            : menu->hit == 0 ? UI_QUICK_WIFI_SETTINGS : UI_QUICK_BLUETOOTH_SETTINGS;
+            : item == APP_QUICK_WIFI ? UI_QUICK_WIFI_SETTINGS : UI_QUICK_BLUETOOTH_SETTINGS;
         return true;
     }
     // 滑杆按下即定位：不等拖动阈值，手指落在哪一档就应用到哪一档。
@@ -276,10 +278,10 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
     } else if (ctx->released) {
         menu->tracking = false;
         if (menu->open && !menu->moved) {
-            if (menu->hit == 3 && menu->frontlight) {
-                // 第四枚圆钮就是前光开关：点按翻转，并作为一次立即提交；翻转也
+            if (item == APP_QUICK_FRONTLIGHT && circle_hit(menu, x, y) == menu->hit) {
+                // 前光圆钮点按翻转，并作为一次立即提交；翻转也
                 // 清掉下拉临时展开，熄灯即收起滑杆。
-                // The fourth circle is the frontlight switch: a tap flips it and
+                // A tap on the frontlight item flips the switch and
                 // commits immediately; the flip also clears the pull-down
                 // expansion, so switching off collapses the sliders.
                 menu->fl_on = !menu->fl_on;
@@ -289,13 +291,13 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
                 event->commit = true;
             } else if (menu->hit >= 0 && menu->hit < ui_quick_menu_button_count(menu) && circle_hit(menu, x, y) == menu->hit) {
                 if (haptics_key) event->action = UI_QUICK_HAPTICS;
-                else if (menu->hit == 0) event->action = UI_QUICK_WIFI;
-                else if (menu->hit == 1) event->action = UI_QUICK_BLUETOOTH;
-                else if (menu->hit == ui_quick_menu_cellular_button(menu)) event->action = UI_QUICK_CELLULAR;
-                else if (menu->hit == 2) event->action = UI_QUICK_FULL;
-                else if (menu->hit == ui_quick_menu_memory_button(menu)) event->action = UI_QUICK_MEMORY_CLEAN;
-                else if (menu->hit == ui_quick_menu_lock_button(menu)) event->action = UI_QUICK_LOCK;
-                else if (menu->hit == ui_quick_menu_rotation_button(menu)) event->action = UI_QUICK_ROTATION;
+                else if (item == APP_QUICK_WIFI) event->action = UI_QUICK_WIFI;
+                else if (item == APP_QUICK_BLUETOOTH) event->action = UI_QUICK_BLUETOOTH;
+                else if (item == APP_QUICK_CELLULAR) event->action = UI_QUICK_CELLULAR;
+                else if (item == APP_QUICK_FULL) event->action = UI_QUICK_FULL;
+                else if (item == APP_QUICK_MEMORY) event->action = UI_QUICK_MEMORY_CLEAN;
+                else if (item == APP_QUICK_LOCK) event->action = UI_QUICK_LOCK;
+                else if (item == APP_QUICK_ROTATION) event->action = UI_QUICK_ROTATION;
             } else if (menu->drag != UI_QUICK_CTL_NONE) {
                 event->control = menu->drag;
                 event->value = menu->drag == UI_QUICK_CTL_BRIGHTNESS

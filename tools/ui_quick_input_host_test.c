@@ -249,7 +249,11 @@ int main(void){
  assert(feed(300,300,1,false,false,true,true).action==UI_QUICK_NONE&&!menu.fl_expanded);
  feed(300,300,0,false,true,true,true);
  assert(feed(598,156,1,true,false,true,true).action==UI_QUICK_NONE);
- assert(feed(598,156,0,false,true,true,true).action==UI_QUICK_LOCK);
+ assert(feed(598,156,0,false,true,true,true).action==UI_QUICK_ROTATION);
+ int lock=ui_quick_menu_lock_button(&menu);
+ int lx=ui_quick_menu_button_x(&menu,lock,screen_width),ly=ui_quick_menu_button_y(&menu,lock);
+ feed(lx,ly,1,true,false,true,true);
+ assert(feed(lx,ly,0,false,true,true,true).action==UI_QUICK_LOCK);
  assert(feed(300,450,1,true,false,true,true).control==UI_QUICK_CTL_NONE);
  assert(feed(300,450,0,false,true,true,true).action==UI_QUICK_CLOSE);
  puts("PASS: no-frontlight boards keep the lock key, the 404px layer and ignore card hits");
@@ -258,7 +262,7 @@ int main(void){
  for(screen_width=684;screen_width<=1216;screen_width+=532){
   menu.rotation_available=true;menu.rotation_enabled=true;ui_quick_menu_set_frontlight(&menu,false,false,40,50);open();
   assert(ui_quick_menu_button_count(&menu)==6&&menu.rotation_enabled);
-  const ui_quick_action_t actions[]={UI_QUICK_WIFI,UI_QUICK_BLUETOOTH,UI_QUICK_FULL,UI_QUICK_LOCK,UI_QUICK_ROTATION,UI_QUICK_MEMORY_CLEAN};
+  const ui_quick_action_t actions[]={UI_QUICK_WIFI,UI_QUICK_BLUETOOTH,UI_QUICK_FULL,UI_QUICK_ROTATION,UI_QUICK_MEMORY_CLEAN,UI_QUICK_LOCK};
   for(int i=0;i<6;++i){
    int x=ui_quick_menu_button_x(&menu,i,screen_width);
    int y=ui_quick_menu_button_y(&menu,i);
@@ -268,10 +272,12 @@ int main(void){
    assert(feed(x,y,1,true,false,true,true).action==UI_QUICK_NONE&&ui_quick_menu_pressed(&menu)==i);
    assert(feed(x,y,0,false,true,true,true).action==actions[i]);
   }
-  int x=ui_quick_menu_button_x(&menu,4,screen_width);
-  feed(x,296,1,true,false,true,true);time_ms+=600;
-  assert(feed(x,296,1,false,false,true,true).action==UI_QUICK_NONE&&menu.open);
-  assert(feed(x,296,0,false,true,true,true).action==UI_QUICK_ROTATION);
+  int rotation=ui_quick_menu_rotation_button(&menu);
+  int x=ui_quick_menu_button_x(&menu,rotation,screen_width);
+  int ry=ui_quick_menu_button_y(&menu,rotation);
+  feed(x,ry,1,true,false,true,true);time_ms+=600;
+  assert(feed(x,ry,1,false,false,true,true).action==UI_QUICK_NONE&&menu.open);
+  assert(feed(x,ry,0,false,true,true,true).action==UI_QUICK_ROTATION);
   assert(ui_quick_menu_height(&menu)==404);
   ui_quick_menu_set_frontlight(&menu,true,true,40,50);
   assert(ui_quick_menu_button_count(&menu)==7);
@@ -322,7 +328,7 @@ int main(void){
    assert(ui_quick_menu_height(&menu)==404&&!menu.fl_expanded);
   }
   ui_quick_menu_set_frontlight(&menu,false,false,40,50);
-  menu.rotation_available=false;ui_quick_menu_reset(&menu);assert(ui_quick_menu_button_count(&menu)==5);
+  menu.rotation_available=false;ui_quick_menu_reset(&menu);assert(ui_quick_menu_button_count(&menu)==6);
  }
  puts("PASS: responsive two-column landscape and stacked portrait keep controls, slider endpoints, holds and light expansion distinct");
  // 震动键在普通页及阅读页、横竖屏中都独立命中；长按不补点按，滑杆编号不冲突。
@@ -330,9 +336,9 @@ int main(void){
  for(screen_width=684;screen_width<=1216;screen_width+=532)for(int reader=0;reader<2;++reader){
   menu.haptics_available=menu.haptics_enabled=true;menu.rotation_available=reader!=0;
   ui_quick_menu_set_frontlight(&menu,true,true,40,50);open();
-  const int key=4+reader;
+  const int key=ui_quick_menu_haptics_button(&menu);
   const int x=ui_quick_menu_button_x(&menu,key,screen_width),y=296;
-  assert(ui_quick_menu_button_count(&menu)==7+reader);
+  assert(ui_quick_menu_button_count(&menu)==8);
   assert(ui_quick_menu_height(&menu)==(screen_width==684?620:404));
   assert(feed(x,y,1,true,false,true,true).action==UI_QUICK_NONE&&ui_quick_menu_pressed(&menu)==key);
   e=feed(x,y,0,false,true,true,true);
@@ -392,6 +398,37 @@ int main(void){
   assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_NONE);
  }
  puts("PASS: memory tap/500ms hold, release swallowing and move/multitouch cancellation across every capability/orientation; disjoint key and slider hit zones");
+ // 每个项目都可隐藏，其他八项可跨两排排列；事件始终按项目而非位置触发。
+ // Hide each item and rotate the other eight through both rows; events follow item IDs rather than positions.
+ const ui_quick_action_t item_actions[APP_QUICK_ITEM_COUNT]={UI_QUICK_WIFI,UI_QUICK_BLUETOOTH,UI_QUICK_FULL,
+     UI_QUICK_NONE,UI_QUICK_CELLULAR,UI_QUICK_ROTATION,UI_QUICK_HAPTICS,UI_QUICK_MEMORY_CLEAN,UI_QUICK_LOCK};
+ for(screen_width=684;screen_width<=1216;screen_width+=532)
+ for(unsigned hidden=0;hidden<APP_QUICK_ITEM_COUNT;++hidden)for(unsigned shift=0;shift<8;++shift){
+  menu=(ui_quick_menu_t){.frontlight=true,.haptics_available=true,.cellular_available=true};
+  menu.layout.count=8;unsigned n=0;
+  for(unsigned item=0;item<APP_QUICK_ITEM_COUNT;++item)if(item!=hidden)menu.layout.order[(n++ + shift)%8]=item;
+  menu.layout.order[8]=hidden;open();
+  assert(ui_quick_menu_button_count(&menu)==8&&ui_quick_menu_find_button(&menu,(app_quick_item_t)hidden)==-1);
+  for(int i=0;i<8;++i){
+   int x=ui_quick_menu_button_x(&menu,i,screen_width),y=ui_quick_menu_button_y(&menu,i);
+   assert(y==UI_QUICK_CIRCLE_Y+(i/4)*UI_QUICK_ROTATION_ROW_STEP);
+   if(i>=4)assert(x==ui_quick_menu_button_x(&menu,i-4,screen_width));
+   feed(x,y,1,true,false,true,true);e=feed(x,y,0,false,true,true,true);
+   app_quick_item_t item=ui_quick_menu_item(&menu,i);
+   if(item==APP_QUICK_FRONTLIGHT)assert(e.control==UI_QUICK_CTL_ON&&e.commit);
+   else assert(e.action==item_actions[item]&&e.control==UI_QUICK_CTL_NONE);
+   ui_quick_action_t hold=item==APP_QUICK_WIFI?UI_QUICK_WIFI_SETTINGS:
+       item==APP_QUICK_BLUETOOTH?UI_QUICK_BLUETOOTH_SETTINGS:item==APP_QUICK_CELLULAR?UI_QUICK_CELLULAR_SETTINGS:
+       item==APP_QUICK_HAPTICS?UI_QUICK_HAPTICS_SETTINGS:item==APP_QUICK_MEMORY?UI_QUICK_MEMORY_SETTINGS:UI_QUICK_NONE;
+   if(hold!=UI_QUICK_NONE){
+    feed(x,y,1,true,false,true,true);time_ms+=500;
+    assert(feed(x,y,1,false,false,true,true).action==hold&&!menu.open);
+    assert(feed(x,y,0,false,true,true,true).action==UI_QUICK_NONE);open();
+   }
+  }
+ }
+ menu.layout.count=0;open();assert(ui_quick_menu_button_count(&menu)==0);
+ puts("PASS: every hidden item and all cyclic positions preserve taps/holds across portrait and landscape; zero selected items is valid");
  return 0;
 }
 

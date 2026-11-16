@@ -50,6 +50,22 @@
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
+#define NVS_KEY_QUICK_LAYOUT "quick_layout"
+static app_quick_layout_t s_quick_layout = APP_QUICK_LAYOUT_DEFAULT;
+
+static void quick_layout_encode(const app_quick_layout_t *layout, char encoded[APP_QUICK_ITEM_COUNT + 2]) {
+    encoded[0] = (char)('0' + layout->count);
+    for (unsigned i = 0; i < APP_QUICK_ITEM_COUNT; ++i) encoded[i + 1] = (char)('0' + layout->order[i]);
+    encoded[APP_QUICK_ITEM_COUNT + 1] = 0;
+}
+static bool quick_layout_decode(const char *encoded, app_quick_layout_t *layout) {
+    if (strlen(encoded) != APP_QUICK_ITEM_COUNT + 1) return false;
+    app_quick_layout_t candidate = {.count = (uint8_t)(encoded[0] - '0')};
+    for (unsigned i = 0; i < APP_QUICK_ITEM_COUNT; ++i) candidate.order[i] = (uint8_t)(encoded[i + 1] - '0');
+    if (!app_quick_layout_valid(&candidate)) return false;
+    *layout = candidate;
+    return true;
+}
 // NVS open也可能创建命名空间；保护覆盖整个写事务，失败不进入NVS。
 // NVS open may create a namespace, so protect the whole write transaction and skip NVS after failed shutdown.
 static esp_err_t settings_write_open(nvs_handle_t *handle) {
@@ -61,6 +77,21 @@ static esp_err_t settings_write_open(nvs_handle_t *handle) {
 static void settings_write_close(nvs_handle_t handle) {
     nvs_close(handle);
     epd_flash_end();
+}
+
+const app_quick_layout_t *app_settings_quick_layout(void) { return &s_quick_layout; }
+bool app_settings_set_quick_layout(const app_quick_layout_t *layout) {
+    if (!app_quick_layout_valid(layout)) return false;
+    if (!memcmp(layout, &s_quick_layout, sizeof(*layout))) return true;
+    char encoded[APP_QUICK_ITEM_COUNT + 2];
+    quick_layout_encode(layout, encoded);
+    nvs_handle_t h;
+    if (settings_write_open(&h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_str(h, NVS_KEY_QUICK_LAYOUT, encoded);
+    if (err == ESP_OK) err = nvs_commit(h);
+    settings_write_close(h);
+    if (err == ESP_OK) s_quick_layout = *layout;
+    return err == ESP_OK;
 }
 
 #define NVS_KEY_SLEEP "sleep"
@@ -378,6 +409,7 @@ static void migrate_device_name(char *name, size_t capacity) {
 }
 
 void app_settings_init(void) {
+    s_quick_layout = (app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
     s_network_route = NETWORK_ROUTE_AUTO;
     s_network_priority = NETWORK_AUTO_WIFI_FIRST;
     esp_err_t err = nvs_flash_init();
@@ -390,6 +422,11 @@ void app_settings_init(void) {
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    char quick_encoded[APP_QUICK_ITEM_COUNT + 2] = {0};
+    size_t quick_size = sizeof(quick_encoded);
+    if (nvs_get_str(h, NVS_KEY_QUICK_LAYOUT, quick_encoded, &quick_size) == ESP_OK &&
+        quick_size == sizeof(quick_encoded) && quick_encoded[APP_QUICK_ITEM_COUNT + 1] == 0)
+        (void)quick_layout_decode(quick_encoded, &s_quick_layout);
     uint8_t raw = APP_SLEEP_DEEP;
     if (nvs_get_u8(h, NVS_KEY_SLEEP, &raw) == ESP_OK && raw <= APP_SLEEP_OFF) {
         s_sleep = (app_sleep_mode_t)raw;
@@ -1688,6 +1725,20 @@ typedef struct {
     uint8_t checksum[4];
 } settings_backup_network_t;
 
+// v45 追加快捷栏排列，旧备份恢复默认排列。/ V45 appends quick-bar ordering; older backups restore the default.
+typedef struct { app_quick_layout_t layout; uint8_t checksum[4]; } settings_backup_quick_t;
+static uint32_t backup_quick_checksum(const settings_backup_quick_t *quick) {
+    const uint8_t *bytes = (const uint8_t *)&quick->layout;
+    uint32_t hash = 2166136261u;
+    for (unsigned i = 0; i < sizeof(quick->layout); ++i) hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+static bool backup_quick_valid(const settings_backup_quick_t *quick) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)quick->checksum[i] << (8 * i);
+    return app_quick_layout_valid(&quick->layout) && stored == backup_quick_checksum(quick);
+}
+
 // PICOSETA为第10版八字节标识；映射块独立校验，不改旧网络/阅读数据块。
 // PICOSETA is the eight-byte v10 identifier; independently check mappings without changing old network/history blocks.
 typedef struct { uint8_t actions[3], checksum[4]; } settings_backup_keys_t;
@@ -1985,9 +2036,9 @@ static unsigned backup_version(const settings_backup_v1_t *backup) {
     // W appends v32 bar heights; X appends v33 Home regions; Y appends v34 progress visibility; Z appends v35 book styles.
     // a/b/c/d追加禁触、票根背景、日历子样式与九宫格；e允许时钟，f在阅读线低两位保存样式、bit2保存跟随正文，无新尾块。
     // a/b/c/d append touch lock, ticket backgrounds, calendar variants and tap grids; e accepts clocks, f packs guide style in bits 0–1 and text-follow in bit 2 without new tails.
-    // A-F 为旧版；G/H 为 rc9x；K 为上游 rc96/97；L 为本地旧布局；M/N/O/P/Q 为本合并格式；R 追加 v27；S 追加 v28；T 追加 v29；U 追加 v30；V 追加 v31；g 追加 v42 网络设置；h 追加 v43 页眉页脚显隐；i 改为 v44 独立显隐语义。
-    // A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : 0;
+    // j 追加 v45 快捷栏排列。A-F 为旧版；G/H 为 rc9x；K 为上游 rc96/97；L 为本地旧布局；M/N/O/P/Q 为本合并格式；R 追加 v27；S 追加 v28；T 追加 v29；U 追加 v30；V 追加 v31；g 追加 v42 网络设置；h 追加 v43 页眉页脚显隐；i 改为 v44 独立显隐语义。
+    // j appends v45 quick-bar ordering. A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : 0;
 }
 
 static void backup_erase_secret(void *ptr, size_t size) {
@@ -2106,7 +2157,7 @@ esp_err_t app_settings_backup_save(void) {
     // v40：主样式增加时钟5，沿用v39尾块布局。/ V40 accepts clock style 5 with the v39 tail layout.
     // v42：追加移动网络开关及业务路由；v43 追加页眉页脚独立显隐。
     // V42 appends cellular and business-route settings; V43 appends independent chrome visibility.
-    memcpy(backup.magic, "PICOSETi", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSETj", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -2309,6 +2360,10 @@ esp_err_t app_settings_backup_save(void) {
     uint32_t visibility_hash = backup_chrome_visibility_checksum(&visibility);
     for (unsigned i = 0; i < 4; ++i) visibility.checksum[i] = (uint8_t)(visibility_hash >> (8 * i));
     if (ok) ok = fwrite(&visibility, 1, sizeof(visibility), file) == sizeof(visibility);
+    settings_backup_quick_t quick = {.layout = s_quick_layout};
+    uint32_t quick_hash = backup_quick_checksum(&quick);
+    for (unsigned i = 0; i < 4; ++i) quick.checksum[i] = (uint8_t)(quick_hash >> (8 * i));
+    if (ok) ok = fwrite(&quick, 1, sizeof(quick), file) == sizeof(quick);
     backup_erase_secret(&wifi, sizeof(wifi));
     if (ok) ok = book_history_backup_write(file) == ESP_OK;
     if (ok) ok = fflush(file) == 0;
@@ -2423,6 +2478,7 @@ esp_err_t app_settings_backup_restore(void) {
     settings_backup_chrome_heights_t heights = {
         .header = APP_READER_HEADER_HEIGHT_DEFAULT, .footer = APP_READER_FOOTER_HEIGHT_DEFAULT};
     settings_backup_chrome_visibility_t visibility = {.header = 1, .footer = 1};
+    settings_backup_quick_t quick = {.layout = APP_QUICK_LAYOUT_DEFAULT};
     settings_backup_chrome_t chrome = {.items = {
         APP_READER_SLOT_TITLE, APP_READER_SLOT_CLOCK, APP_READER_SLOT_ICON_BATTERY,
         APP_READER_SLOT_CHAPTER, APP_READER_SLOT_BLANK, APP_READER_SLOT_PAGE_PROGRESS}};
@@ -2532,6 +2588,7 @@ esp_err_t app_settings_backup_restore(void) {
     if (ok && version >= 39) ok = fread(&tap, 1, sizeof(tap), file) == sizeof(tap) && backup_tap_valid(&tap);
     if (ok && version >= 42) ok = fread(&network, 1, sizeof(network), file) == sizeof(network) && backup_network_valid(&network);
     if (ok && version >= 43) ok = fread(&visibility, 1, sizeof(visibility), file) == sizeof(visibility) && backup_chrome_visibility_valid(&visibility);
+    if (ok && version >= 45) ok = fread(&quick, 1, sizeof(quick), file) == sizeof(quick) && backup_quick_valid(&quick);
     if (version < 39) tap.mode = (profile.home_full_refresh & 32) ? APP_READER_TAP_VERTICAL : APP_READER_TAP_HORIZONTAL;
     // 旧备份没有本块：chrome 保持默认值并照常写回，与其他设置的恢复语义一致。
     // Older backups lack the block: chrome keeps its defaults and is written back like every other setting.
@@ -2645,6 +2702,9 @@ esp_err_t app_settings_backup_restore(void) {
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_CELLULAR, network.cellular_enabled);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_NETWORK_ROUTE, network.route);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_NETWORK_PRIORITY, network.priority);
+    char quick_encoded[APP_QUICK_ITEM_COUNT + 2];
+    quick_layout_encode(&quick.layout, quick_encoded);
+    if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_QUICK_LAYOUT, quick_encoded);
 
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_HOME_FULL, profile.home_full_refresh & 1);
     // v41 才定义 profile bit6 为壁纸显示方式；更早版本的同一位属于已撤下实验，必须回落裁剪。
@@ -2725,6 +2785,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_reader_chrome_heights[1] = heights.footer;
     s_reader_chrome_visible[0] = visibility.header != 0;
     s_reader_chrome_visible[1] = visibility.footer != 0;
+    s_quick_layout = quick.layout;
     s_reader_progress_bar = progress_bar.on != 0;
     s_book_weight = fine_weight/APP_BOOK_WEIGHT_SUBSTEPS+2;
     s_book_weight_fine = fine_weight;

@@ -1,55 +1,30 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：全宽浅顶部层，下圆角与基础四个无文字圆钮；运行时确认的移动网络、旋转、
- * 震动和内存入口按能力追加到第二排；有前光的板把第四枚圆钮画成太阳开关。灯灭时层高
- * 只有圆钮区；点按开灯后圆钮下方才展开两条横向胶囊滑杆：直接
- * 浮在遮罩上，无卡片、无文字、无旋钮，图标在胶囊内左端，白色填充从左缘生长，
- * 无极滑动；再次熄灯即收起。灯灭时开层后停顿再继续下拉也可临时展开胶囊滑杆，
- * 只属本次开层：收层或再开层即回到只有圆钮区，熄灯点按同样收起；一次连续快滑
- * 只开层不展开。
- * English: A shallow full-width top layer with rounded bottom corners and four
- * base unlabeled circles; runtime cellular, rotation, haptics and memory entries append
- * to the second row, while boards with a frontlight draw a sun switch in the fourth
- * circle. While the light is off the layer keeps only the circle band; switching
- * it on expands two horizontal capsule sliders below the circles: they float on
- * the shade with no card, text or knob, the icon sits inside the left end, a
- * white fill grows from the left edge, and dragging is continuous; switching off
- * collapses them again. With the light off, pausing after the open and then
- * pulling further down expands the capsules for that opening only: closing or
- * reopening returns to the circle band alone, and the light-off tap still
- * collapses them; one continuous fast swipe only opens, never expands.
- * 用户修订：保留独立锁屏键；有前光的板把前光开关放在第四枚圆钮，
- * 锁屏键放在第二排末尾，避免把锁屏动作藏在硬件能力分支里。滑杆仍按参考图使用
- * 控制中心式横向胶囊，亮度用半填充圆图标，色温用温度计图标，只在开灯时可触。
- * User revision: keep a dedicated lock key. On frontlight boards
- * the light switch stays in the fourth circle and the lock key ends row two,
- * so locking is not hidden by a capability-specific fallback. Sliders retain
- * the control-centre capsules, with contrast and thermometer icons, and respond
- * only while the light is on.
- * 用户新增：WiFi 与蓝牙圆键按住 0.5 秒直接进入各自的设置页；点按仍只切换开关。
- * User addition: holding the WiFi or Bluetooth circle for 0.5 s opens its settings
- * page; a tap still only toggles the switch.
- * 用户修订：阅读旋转键独占第二排左侧，环形箭头围住开锁/闭锁；首排保留四枚圆键，
- * 前光滑杆随第二排下移。其他页面保持原布局。
- * User revision: the reader rotation key sits at the left of a second row, with
- * a circular arrow around an open/closed lock. Keep four keys in the first row
- * and shift the frontlight sliders below the second row; other pages retain their layout.
- * 用户修订：横屏用左右分区，左侧四键紧凑排首行、旋转键留第二行，右侧双滑杆
- * 分别对齐两行；面板高度收至两行，不把竖屏滑杆继续堆在下方。
- * User revision: landscape groups four keys in the first left row and rotation
- * in the second, with two right-side sliders aligned to those rows; the panel
- * stays two rows tall instead of stacking portrait sliders below the keys.
- * 用户新增：触摸震动键放第二排，阅读时位于旋转键右侧；点按切换，长按进入震动设置。
- * User addition: a second-row haptics key follows reader rotation; tap toggles it and hold opens its settings.
- * 用户 2026-11-14 修订：第二排先排移动网络、阅读方向、震动，锁屏键最后；锁形复用系统图标。
- * User revision on 2026-11-14: row two orders cellular, reader rotation, haptics, then lock; reuse the system lock icon.
- * 冻结（2026-11-15修订）：内存键只产出清理/管理事件，状态由快捷层装配；不在识别器
- * 访问 broker、硬件、设置或刷新，不申请帧缓存，仍只在展开/状态变化后由主循环调用绘图。
- * Frozen (revised 2026-11-15): the memory key emits cleanup/management events and receives
- * state from the layer; the recognizer never accesses the broker, hardware, settings or
- * presentation and allocates no framebuffer, and the loop still draws only on open/state changes.
+ * 中文：顶部快捷栏，最多两排、每排四个无文字圆钮；项目显隐与顺序由装配层提供。
+ * 用户2026-11-16修订：取代按页面能力追加与固定键位，旋转键默认在各页常驻；
+ * 不支持旋转的页面显示提示，不改变阅读会话。用户可在设置中选择项目和位置。
+ * English: A top quick bar with at most two rows of four unlabeled circles, whose
+ * visibility and order come from the layer owner. The user's 2026-11-16 revision
+ * replaces page-specific appended keys and fixed positions: rotation is resident
+ * by default, unavailable pages show a notice without changing the reader session,
+ * and Settings manages the visible items and their positions.
+ * 前光开关展开亮度和色温胶囊；熄灯收起。灯灭时停顿后继续下拉，或再次下拉，
+ * 可仅在本次开层临时展开；连续快滑不连触发。横屏圆键在左、滑杆在右。
+ * The light switch expands brightness/temperature capsules and switching off
+ * collapses them. While off, a paused continuation or fresh pull expands them
+ * for this opening only; a continuous flick never chains both actions. Landscape
+ * puts circles on the left and sliders on the right.
+ * WiFi、蓝牙、移动网络、震动和内存长按500ms进入对应设置，抬手不再触发短按。
+ * Holding WiFi, Bluetooth, cellular, haptics or memory for 500ms opens its settings
+ * without also activating the release tap.
+ * 冻结：识别器只产出动作及前光事件，不访问页面、broker、硬件、设置或刷新；
+ * 不申请帧缓存。绘图与命中使用同一项目顺序和几何，主循环负责调用绘图。
+ * Frozen: the recognizer only emits actions and frontlight events, never accesses
+ * pages, broker, hardware, settings or presentation, and allocates no framebuffer.
+ * Painting and hits share item order and geometry; the loop owns drawing calls.
  */
 #pragma once
 #include "app.h"
+#include "app_quick_items.h"
 #include "epdiy.h"
 
 #define UI_QUICK_EDGE_PX 32
@@ -121,6 +96,8 @@ typedef enum {
 
 typedef struct {
     bool open, tracking, swallow, moved;
+    app_quick_layout_t layout; ///< 装配层提供的显示与顺序。/ Visibility/order supplied by the layer owner.
+    bool rotation_notice; ///< 当前页面不能旋转的提示。/ Rotation-unavailable notice for the current page.
     bool rotation_available, rotation_enabled; ///< 只由当前页面提供，不落盘 / Supplied by the current page, never persisted
     bool haptics_available, haptics_enabled; ///< 马达能力与已保存的开关状态 / Motor capability and saved switch state
     bool cellular_available, cellular_enabled, cellular_ready; ///< Runtime capability and state; absent hardware hides the entry
@@ -128,8 +105,8 @@ typedef struct {
     uint16_t x0, y0;
     int hit;
     int64_t started_ms;
-    /// 本板是否有前光；有前光时锁屏键位于第二排末尾，没有前光时第四枚圆钮就是锁屏。
-    /// Frontlight boards end row two with lock; without frontlight the fourth circle is the lock.
+    /// 本板是否有前光；仅控制前光项目与滑杆能力。
+    /// Frontlight capability controls the light item and sliders only.
     bool frontlight;
     bool fl_on;
     /// 灯灭时继续下拉产生的本次开层临时展开；开层、收层与熄灯点按都会清零，
@@ -162,36 +139,47 @@ typedef struct {
     ui_quick_control_t drag;
 } ui_quick_menu_t;
 
-/// 绘图与命中共享布局；第二排依次放移动网络、阅读方向、震动、内存，有前光时末尾为锁屏。
-/// Shared painting/hit geometry; row two has cellular, rotation, haptics and memory, followed by lock on frontlight boards.
-static inline int ui_quick_menu_base_button_count(const ui_quick_menu_t *menu) {
-    (void)menu;
-    return 4;
+/// 已保存的顺序同时控制绘图和命中；缺失硬件的项目不占位置。
+/// Saved order drives painting and hits; unavailable hardware consumes no slot.
+static inline bool ui_quick_menu_item_available(const ui_quick_menu_t *menu, app_quick_item_t item) {
+    if (item == APP_QUICK_CELLULAR) return menu && menu->cellular_available;
+    if (item == APP_QUICK_HAPTICS) return menu && menu->haptics_available;
+    if (item == APP_QUICK_FRONTLIGHT) return menu && menu->frontlight;
+    return item < APP_QUICK_ITEM_COUNT;
+}
+static inline const app_quick_layout_t *ui_quick_menu_layout(const ui_quick_menu_t *menu) {
+    static const app_quick_layout_t defaults = APP_QUICK_LAYOUT_DEFAULT;
+    return menu && app_quick_layout_valid(&menu->layout) ? &menu->layout : &defaults;
+}
+static inline app_quick_item_t ui_quick_menu_item(const ui_quick_menu_t *menu, int button) {
+    const app_quick_layout_t *layout = ui_quick_menu_layout(menu);
+    for (unsigned i = 0; i < layout->count; ++i) {
+        app_quick_item_t item = (app_quick_item_t)layout->order[i];
+        if (ui_quick_menu_item_available(menu, item) && button-- == 0) return item;
+    }
+    return APP_QUICK_ITEM_COUNT;
 }
 static inline int ui_quick_menu_button_count(const ui_quick_menu_t *menu) {
-    return 4 + 1 + (menu && menu->cellular_available ? 1 : 0) +
-        (menu && menu->rotation_available ? 1 : 0) + (menu && menu->haptics_available ? 1 : 0) +
-        (menu && menu->frontlight ? 1 : 0);
+    const app_quick_layout_t *layout = ui_quick_menu_layout(menu);
+    int count = 0;
+    for (unsigned i = 0; i < layout->count; ++i)
+        if (ui_quick_menu_item_available(menu, (app_quick_item_t)layout->order[i])) ++count;
+    return count;
 }
-static inline int ui_quick_menu_lock_button(const ui_quick_menu_t *menu) {
-    return menu && menu->frontlight ? ui_quick_menu_button_count(menu) - 1 : 3;
+static inline int ui_quick_menu_find_button(const ui_quick_menu_t *menu, app_quick_item_t item) {
+    for (int i = 0; i < ui_quick_menu_button_count(menu); ++i)
+        if (ui_quick_menu_item(menu, i) == item) return i;
+    return -1;
 }
-static inline int ui_quick_menu_cellular_button(const ui_quick_menu_t *menu) {
-    return menu && menu->cellular_available ? 4 : -1;
+static inline int ui_quick_menu_base_button_count(const ui_quick_menu_t *menu) {
+    int count = ui_quick_menu_button_count(menu);
+    return count < 4 ? count : 4;
 }
-static inline int ui_quick_menu_rotation_button(const ui_quick_menu_t *menu) {
-    return menu && menu->rotation_available ? 4 +
-        (menu->cellular_available ? 1 : 0) : -1;
-}
-/// 震动键排在可选的阅读旋转键之后；无马达时不显示。/ Haptics follows optional reader rotation and is absent without a motor.
-static inline int ui_quick_menu_haptics_button(const ui_quick_menu_t *menu) {
-    return menu && menu->haptics_available ? 4 +
-        (menu->cellular_available ? 1 : 0) + (menu->rotation_available ? 1 : 0) : -1;
-}
-static inline int ui_quick_menu_memory_button(const ui_quick_menu_t *menu) {
-    return 4 + (menu && menu->cellular_available ? 1 : 0) +
-        (menu && menu->rotation_available ? 1 : 0) + (menu && menu->haptics_available ? 1 : 0);
-}
+static inline int ui_quick_menu_lock_button(const ui_quick_menu_t *menu) { return ui_quick_menu_find_button(menu, APP_QUICK_LOCK); }
+static inline int ui_quick_menu_cellular_button(const ui_quick_menu_t *menu) { return ui_quick_menu_find_button(menu, APP_QUICK_CELLULAR); }
+static inline int ui_quick_menu_rotation_button(const ui_quick_menu_t *menu) { return ui_quick_menu_find_button(menu, APP_QUICK_ROTATION); }
+static inline int ui_quick_menu_haptics_button(const ui_quick_menu_t *menu) { return ui_quick_menu_find_button(menu, APP_QUICK_HAPTICS); }
+static inline int ui_quick_menu_memory_button(const ui_quick_menu_t *menu) { return ui_quick_menu_find_button(menu, APP_QUICK_MEMORY); }
 static inline bool ui_quick_menu_landscape(void) {
     return epd_rotated_display_width() > epd_rotated_display_height();
 }
@@ -199,7 +187,7 @@ static inline bool ui_quick_menu_landscape(void) {
 /// One layout descriptor supplies rows, columns and hit radii, leaving a separate landscape slider margin.
 typedef struct { int row, column, columns, left, width, hit_radius; } ui_quick_button_layout_t;
 static inline ui_quick_button_layout_t ui_quick_menu_button_layout(const ui_quick_menu_t *menu, int button, int width) {
-    ui_quick_button_layout_t layout = {.row = button / 4, .column = button % 4, .columns = 4,
+    ui_quick_button_layout_t layout = {.row = button / 4, .column = button % 4, .columns = ui_quick_menu_base_button_count(menu),
         .left = 0, .width = width, .hit_radius = UI_QUICK_HIT_RADIUS};
     if (button >= 4) {
         layout.row = 1;
@@ -216,7 +204,7 @@ static inline ui_quick_button_layout_t ui_quick_menu_button_layout(const ui_quic
 }
 static inline int ui_quick_menu_button_x(const ui_quick_menu_t *menu, int button, int width) {
     const ui_quick_button_layout_t layout = ui_quick_menu_button_layout(menu, button, width);
-    if (!layout.row && ui_quick_menu_landscape())
+    if (ui_quick_menu_landscape())
         return 48 + UI_QUICK_RADIUS + layout.column * UI_QUICK_LANDSCAPE_COLUMN_STEP;
     return layout.left + (2 * layout.column + 1) * layout.width / (2 * layout.columns);
 }
@@ -268,6 +256,8 @@ typedef struct {
 
 /// 清除层和手势；保留能力、震动状态与前光预览值。/ Clear layer/contact state while retaining capabilities, haptics state and light previews.
 void ui_quick_menu_reset(ui_quick_menu_t *menu);
+/// 绘制或清除本次旋转提示。/ Paint or clear the current rotation notice.
+bool ui_quick_menu_draw_notice(uint8_t *fb, const ui_quick_menu_t *menu, EpdRect *dirty);
 /// 设置本板前光能力并同步预览值；层高随开灯状态伸缩。
 /// Set frontlight capability and sync the preview values; the layer height follows the on state.
 void ui_quick_menu_set_frontlight(ui_quick_menu_t *menu, bool available, bool on,
@@ -279,16 +269,13 @@ bool ui_quick_menu_feed(ui_quick_menu_t *menu, const app_ctx_t *ctx, bool allowe
 /// 取消接触但保留已打开的层；正在拖动的滑杆保留当前值，由主循环决定是否落盘。
 /// Cancel a contact while retaining an already open layer; a dragged slider keeps its value and the loop decides persistence.
 void ui_quick_menu_cancel_input(ui_quick_menu_t *menu);
-/// 只覆盖顶部，保留下层其他像素；阅读时保留第二排，前光滑杆按横竖屏排版。
-/// Cover only the top, leaving other pixels intact; retain row two while reading and lay out expanded sliders for the screen orientation.
+/// 只覆盖顶部，按已选按钮数量安排两排，前光滑杆按横竖屏排版。
+/// Cover only the top, arranging selected buttons in at most two rows and orienting the sliders for the screen.
 void ui_quick_menu_draw(uint8_t *fb, const ui_quick_menu_t *menu, bool wifi, bool bluetooth);
 /// 当前按住的圆键，取消/滑出/释放或按住卡片时为-1。/ The held key, or -1 after cancellation, movement, release or a card press.
 int ui_quick_menu_pressed(const ui_quick_menu_t *menu);
-/// 重画实心圆键并叠加状态点/圆内按压，不分配、不模糊、不排字。第四枚圆钮按
-/// `menu->frontlight` 画太阳或锁；前光板开灯为活动灰底黑太阳，熄灭为浅底黑太阳。
-/// Repaint a solid key with its state badge and interior press, without allocating,
-/// blurring or shaping text. The fourth circle shows a sun on frontlight boards
-/// (or the lock elsewhere); the light-on face is the active gray under a black sun.
+/// 按项目重画圆键和状态点/按压；前光活动态跟随开关，不依赖槽位。
+/// Repaint an item and its state/press marks; frontlight activity follows its switch, independent of slot.
 bool ui_quick_menu_draw_button(uint8_t *fb, const ui_quick_menu_t *menu, int button,
                                bool active, bool pressed, EpdRect *dirty);
 /// 只重画胶囊行并返回受影响的矩形，供滑杆拖动局刷；熄灯时行不存在。

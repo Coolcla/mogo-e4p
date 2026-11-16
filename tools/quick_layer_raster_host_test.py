@@ -71,11 +71,12 @@ static void heap_caps_free(void *p){if(p){--live;free(p);}assert(live>=0);}
 '''
 code+='static void ui_fill_rect_fast(EpdRect r,uint8_t gray,uint8_t *fb){epd_fill_rect(r,gray,fb);}\n'
 header=(root/'main/ui/ui_quick_menu.h').read_text()
+code+='#include "app/app_quick_items.h"\n'
 code+='\n'.join(re.findall(r'^#define UI_QUICK[^\n]*',header,re.M))+'\n'
 code+=re.search(r'typedef enum \{\s*UI_QUICK_CTL_NONE.*?\} ui_quick_control_t;',header,re.S).group(0)+'\n'
 code+=re.search(r'typedef struct \{.*?\} ui_quick_menu_t;',header,re.S).group(0)+'\n'
 code+='typedef struct { int row, column, columns, left, width, hit_radius; } ui_quick_button_layout_t;\n'
-for name in ('ui_quick_menu_button_count', 'ui_quick_menu_lock_button',
+for name in ('ui_quick_menu_item_available', 'ui_quick_menu_layout', 'ui_quick_menu_item', 'ui_quick_menu_button_count', 'ui_quick_menu_find_button', 'ui_quick_menu_base_button_count', 'ui_quick_menu_lock_button',
              'ui_quick_menu_cellular_button', 'ui_quick_menu_rotation_button',
              'ui_quick_menu_haptics_button', 'ui_quick_menu_memory_button', 'ui_quick_menu_landscape', 'ui_quick_menu_button_layout', 'ui_quick_menu_button_x',
              'ui_quick_menu_row_offset', 'ui_quick_menu_button_y', 'ui_quick_menu_height',
@@ -88,14 +89,29 @@ for name in ('ui_read_pixel','ui_image_bw_rect','icon_row_decode', 'icon_nibble'
              'clamp_radius','draw_arc','ui_draw_round_rect_raw','ui_draw_round_rect',
              'ui_fill_round_rect_raw','ui_fill_round_rect'):
     code+=function('main/ui/ui_kit.c',name)
+code+='static void ui_text_fixed_vc(uint8_t *fb,int x,int y,int px,const char *s,int align,bool bold){(void)fb;(void)x;(void)y;(void)px;(void)s;(void)align;(void)bold;}\n'
 code+=body('main/ui/ui_quick_menu.c')+body('main/ui/ui_click_feedback.c')
 code+=r'''
 static uint8_t pixel(uint8_t *fb,int x,int y){return ui_read_pixel(fb,x,y)*17u;}
-static bool icon_edge(const ui_quick_menu_t *menu,int x,int y){
- for(int i=0;i<ui_quick_menu_button_count(menu);++i)if(abs(x-center_x(menu,i))<=(i==ui_quick_menu_rotation_button(menu)?30:22)&&abs(y-ui_quick_menu_button_y(menu,i))<=(i==ui_quick_menu_rotation_button(menu)?30:22))return true;
+static EpdRect icon_regions[APP_QUICK_MAX_VISIBLE + 2];
+static int icon_region_count;
+// 每帧预先读取同一份真实几何，逐像素仍检查完整遮罩，不在每个像素重复遍历配置。
+// Read the real geometry once per frame; retain every mask assertion without rewalking configuration for every pixel.
+static void cache_icon_regions(const ui_quick_menu_t *menu){
+ icon_region_count=0;
+ for(int i=0;i<ui_quick_menu_button_count(menu);++i){
+  int radius=i==ui_quick_menu_rotation_button(menu)?30:22;
+  icon_regions[icon_region_count++]=(EpdRect){center_x(menu,i)-radius,ui_quick_menu_button_y(menu,i)-radius,2*radius+1,2*radius+1};
+ }
  for(int control=UI_QUICK_CTL_BRIGHTNESS;control<=UI_QUICK_CTL_CCT;++control){
   EpdRect track=ui_quick_menu_frontlight_track(menu,(ui_quick_control_t)control);
-  if(abs(x-(track.x+48))<=UI_QUICK_FL_ICON_SIZE/2&&abs(y-(track.y+track.height/2))<=UI_QUICK_FL_ICON_SIZE/2)return true;
+  icon_regions[icon_region_count++]=(EpdRect){track.x+48-UI_QUICK_FL_ICON_SIZE/2,track.y+track.height/2-UI_QUICK_FL_ICON_SIZE/2,UI_QUICK_FL_ICON_SIZE+1,UI_QUICK_FL_ICON_SIZE+1};
+ }
+}
+static bool icon_edge(int x,int y){
+ for(int i=0;i<icon_region_count;++i){
+  EpdRect r=icon_regions[i];
+  if(x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height)return true;
  }
  return false;
 }
@@ -109,6 +125,7 @@ int main(void){
     ui_quick_menu_t menu={.rotation_available=policy>0,.rotation_enabled=policy==2,
      .haptics_available=haptics>0,.haptics_enabled=haptics==2,.cellular_available=cellular!=0};menu.frontlight=fl!=0;menu.fl_on=fl==1;menu.fl_bri=60;menu.fl_cct=30;
     const int layer_height=ui_quick_menu_height(&menu);
+    cache_icon_regions(&menu);
     assert(layer_height<=epd_rotated_display_height());
     if(ui_quick_menu_landscape())assert(layer_height==404);
     patterned();int before=allocs;ui_quick_menu_draw(frame,&menu,true,false);
@@ -117,7 +134,7 @@ int main(void){
      bool mask=y<layer_height&&layer_pixel(x,y,epd_rotated_display_width(),layer_height);
      uint8_t p=pixel(frame,x,y);
      if(!mask)assert(p==pixel(saved,x,y));
-     else {if(!icon_edge(&menu,x,y))assert(p==0||p==153||p==255);grays+=p==153;}
+     else {if(!icon_edge(x,y))assert(p==0||p==153||p==255);grays+=p==153;}
     }
     assert(grays>1000);
     assert(ui_quick_menu_rect(&menu).height==layer_height);
@@ -146,6 +163,26 @@ int main(void){
       if(x<dirty.x||x>=dirty.x+dirty.width||y<dirty.y||y>=dirty.y+dirty.height)assert(pixel(frame,x,y)==pixel(again,x,y));
      ui_quick_menu_draw(frame,&menu,true,false);
     }
+   }
+  }
+  // 每个图标在任意位置的实际像素都与单独显示时一致，避免排序后仍按旧槽位绘图。
+  // Every icon's actual pixels match its standalone reference in every slot, catching stale positional drawing.
+  for(unsigned item=0;item<APP_QUICK_ITEM_COUNT;++item){
+   ui_quick_menu_t custom={.frontlight=true,.fl_on=true,.haptics_available=true,.cellular_available=true};
+   custom.layout.count=1;custom.layout.order[0]=item;unsigned next=1;
+   for(unsigned other=0;other<APP_QUICK_ITEM_COUNT;++other)if(other!=item)custom.layout.order[next++]=other;
+   memset(frame,255,BYTES);EpdRect dirty;
+   assert(ui_quick_menu_draw_button(frame,&custom,0,false,false,&dirty));
+   int cx=center_x(&custom,0),cy=ui_quick_menu_button_y(&custom,0);
+   uint8_t reference[109*109];
+   for(int y=-54;y<=54;++y)for(int x=-54;x<=54;++x)reference[(y+54)*109+x+54]=pixel(frame,cx+x,cy+y);
+   for(unsigned slot=0;slot<8;++slot){
+    unsigned hidden=(item+1)%APP_QUICK_ITEM_COUNT;custom.layout.count=8;next=0;unsigned selected=0;
+    for(unsigned other=0;other<APP_QUICK_ITEM_COUNT;++other)if(other!=hidden){if(other==item)selected=next;custom.layout.order[next++]=other;}
+    custom.layout.order[8]=hidden;custom.layout.order[selected]=custom.layout.order[slot];custom.layout.order[slot]=item;
+    memset(frame,255,BYTES);assert(ui_quick_menu_draw_button(frame,&custom,slot,false,false,&dirty));
+    cx=center_x(&custom,slot);cy=ui_quick_menu_button_y(&custom,slot);
+    for(int y=-54;y<=54;++y)for(int x=-54;x<=54;++x)assert(reference[(y+54)*109+x+54]==pixel(frame,cx+x,cy+y));
    }
   }
   // 图标固定，双向拖动仅改变黑白像素；松手重绘无变化且不越出脏区。

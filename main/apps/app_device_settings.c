@@ -108,6 +108,7 @@
 #include "memory_inventory.h"
 
 static void fit_value(char *value, int width);
+static void settings_prepare_profile(void);
 static void settings_card(uint8_t *fb, EpdRect rect, int radius, uint8_t fill, uint8_t edge);
 static char s_notice[96];
 // 主页刷新模式只列出普通与水波纹；快刷已撤下，旧设置加载时回落普通。
@@ -126,8 +127,10 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_NETWORK, SETTINGS_TIME,
                SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH,
                SETTINGS_MEMORY,
+               SETTINGS_QUICK_BAR,
                SETTINGS_LOCK_PIN, SETTINGS_PIN_ENTRY, SETTINGS_TEXT_EDIT } settings_page_t;
 static settings_page_t s_page;
+static char s_quick_notice[96];
 // 快捷栏长按蓝牙或震动圆键的待定子页；on_enter 消费一次后回到主列表。
 // Pending sub-page from a quick-bar Bluetooth or haptics hold; on_enter consumes it once and returns to the main list.
 static settings_page_t s_enter_page;
@@ -409,7 +412,7 @@ static int settings_main_row_height(void) {
 }
 #define SETTINGS_ROW_H settings_main_row_height()
 #define SETTINGS_DISPLAY_ROWS 6
-#define SETTINGS_PERSONAL_ROWS 7
+#define SETTINGS_PERSONAL_ROWS 8
 // BOOT 刷机入口已按用户要求从设置列表撤下；页面代码保留，恢复入口只需加回一行。
 // The BOOT flashing entry is hidden per the user's request; the page stays, re-adding one row restores it.
 #define SETTINGS_MAINTENANCE_ROWS 3
@@ -973,6 +976,75 @@ static void memory_render_content(uint8_t *fb) {
     ui_text_fixed_vc(fb, 342, 1070, 17, status, EPD_DRAW_ALIGN_CENTER, false);
 }
 
+enum { QUICK_SETTINGS_TOP = 300, QUICK_SETTINGS_ROW_H = 76 };
+static void quick_settings_render(uint8_t *fb) {
+    static const char *const labels[APP_QUICK_ITEM_COUNT] = {
+        "WiFi", "蓝牙", "全屏刷新", "前光", "移动网络", "旋转锁定", "触摸震动", "内存清理", "锁屏"};
+    const app_quick_layout_t *layout = app_settings_quick_layout();
+    back_header(fb, "快捷栏管理");
+    char summary[64];
+    snprintf(summary, sizeof(summary), "已选 %u / %u · 最多两排，每排四个", layout->count, APP_QUICK_MAX_VISIBLE);
+    ui_text_fixed(fb, 36, 214, 22, summary, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed(fb, 36, 252, 20, s_quick_notice[0] ? s_quick_notice : "点按名称显示或隐藏，右侧箭头调整位置", EPD_DRAW_ALIGN_LEFT, false);
+    for (unsigned i = 0; i < APP_QUICK_ITEM_COUNT; ++i) {
+        const int cy = QUICK_SETTINGS_TOP + (int)i * QUICK_SETTINGS_ROW_H + QUICK_SETTINGS_ROW_H / 2;
+        const bool visible = i < layout->count;
+        settings_card(fb, (EpdRect){36, cy - 34, 612, 68}, 14, visible ? 0xe0 : UI_GRAY_WHITE, 0x90);
+        ui_draw_round_rect(fb, (EpdRect){62, cy - 14, 28, 28}, 5, UI_GRAY_BLACK);
+        if (visible) ui_draw_icon(fb, 76, cy, 24, UI_ICON_CHECK, UI_GRAY_BLACK);
+        ui_text_fixed_vc(fb, 112, cy, 26, labels[layout->order[i]], EPD_DRAW_ALIGN_LEFT, false);
+        char position[24];
+        if (visible) snprintf(position, sizeof(position), "%u-%u", i / 4 + 1, i % 4 + 1);
+        else snprintf(position, sizeof(position), "隐藏");
+        ui_text_fixed_vc(fb, 426, cy, 20, position, EPD_DRAW_ALIGN_CENTER, false);
+        ui_draw_icon(fb, 516, cy, 30, UI_ICON_CHEVRON_UP, visible && i > 0 ? UI_GRAY_BLACK : 0xc0);
+        ui_draw_icon(fb, 596, cy, 30, UI_ICON_CHEVRON_DOWN, visible && i + 1 < layout->count ? UI_GRAY_BLACK : 0xc0);
+    }
+    settings_card(fb, (EpdRect){36, 1006, 612, 64}, 16, UI_GRAY_WHITE, 0x70);
+    ui_text_fixed_vc(fb, 342, 1038, 24, "恢复默认", EPD_DRAW_ALIGN_CENTER, false);
+}
+
+static app_redraw_t quick_settings_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    int tab = ui_nav_hit(ev->x0, ev->y0);
+    if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+    if (ev->y0 < 190) {
+        s_page = SETTINGS_MAIN;
+        settings_prepare_profile();
+        return APP_REDRAW_PAGE;
+    }
+    app_quick_layout_t layout = *app_settings_quick_layout();
+    s_quick_notice[0] = 0;
+    if (ui_rect_hit((EpdRect){36, 1006, 612, 64}, ev->x0, ev->y0)) {
+        layout = (app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
+    } else {
+        if (ev->x0 < 36 || ev->x0 >= 648 || ev->y0 < QUICK_SETTINGS_TOP ||
+            ev->y0 >= QUICK_SETTINGS_TOP + APP_QUICK_ITEM_COUNT * QUICK_SETTINGS_ROW_H)
+            return APP_REDRAW_NONE;
+        unsigned index = (ev->y0 - QUICK_SETTINGS_TOP) / QUICK_SETTINGS_ROW_H;
+        uint8_t item = layout.order[index];
+        if (ev->x0 >= 476) {
+            int next = (int)index + (ev->x0 < 556 ? -1 : 1);
+            if (index >= layout.count || next < 0 || next >= layout.count) return APP_REDRAW_NONE;
+            layout.order[index] = layout.order[next];
+            layout.order[next] = item;
+        } else if (index < layout.count) {
+            memmove(&layout.order[index], &layout.order[index + 1], layout.count - index - 1);
+            layout.order[--layout.count] = item;
+        } else {
+            if (layout.count == APP_QUICK_MAX_VISIBLE) {
+                snprintf(s_quick_notice, sizeof(s_quick_notice), "最多显示八个按钮，请先隐藏一个");
+                return APP_REDRAW_PAGE;
+            }
+            memmove(&layout.order[layout.count + 1], &layout.order[layout.count], index - layout.count);
+            layout.order[layout.count++] = item;
+        }
+    }
+    if (!app_settings_set_quick_layout(&layout))
+        snprintf(s_quick_notice, sizeof(s_quick_notice), "保存失败，请重试");
+    return APP_REDRAW_PAGE;
+}
+
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
@@ -981,6 +1053,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     // 保留 ui_clear_page 的白底，灰阶只由头像、卡片与字形生成。
     // Keep ui_clear_page's white background; avatars, cards and glyphs alone generate grays.
     ui_nav_status(fb);
+    if (s_page == SETTINGS_QUICK_BAR) {
+        quick_settings_render(fb);
+        ui_nav_draw(fb, 3);
+        return;
+    }
     if (s_page == SETTINGS_MEMORY) {
         back_header(fb, "内存管理");
         memory_render_content(fb);
@@ -1502,7 +1579,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     setting_group(fb,SETTINGS_DISPLAY_Y-49,"显示",SETTINGS_DISPLAY_Y,
                   display_icons,display_labels,display_values,SETTINGS_DISPLAY_ROWS);
     snprintf(signature,sizeof(signature),"%s",app_settings_status_signature()[0]?app_settings_status_signature():"未设置");
-    const char *personal_labels[]={"书架样式","锁屏样式","锁屏密码","状态栏签名","触摸震动","阅读背景","组件库"};
+    const char *personal_labels[]={"书架样式","锁屏样式","锁屏密码","状态栏签名","触摸震动","阅读背景","组件库","快捷栏管理"};
     char haptic_value[24];
     if(!haptics_available())snprintf(haptic_value,sizeof(haptic_value),"不支持");
     else if(!app_settings_touch_haptics())snprintf(haptic_value,sizeof(haptic_value),"关闭");
@@ -1516,8 +1593,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         background_path[0]?(background_base?background_base+1:background_path):"无");
     const char *personal_values[]={app_settings_shelf_style()==5?"列表书架":app_settings_shelf_style()==1?"深色书轨":"亚克力书架",
         app_settings_lock_style()==APP_LOCK_STYLE_CLOCK?"简约时钟":app_settings_lock_style()==4?"日历":app_settings_lock_style()==3?"透明书封":app_settings_lock_style()==2?"书架拼贴":app_settings_lock_style()==1?"壁纸":"阅读票根",
-        lock_pin_enabled()?"已开启":"已关闭",signature,haptic_value,background_value,""};
-    const int personal_icons[]={4,5,16,10,18,19,21};
+        lock_pin_enabled()?"已开启":"已关闭",signature,haptic_value,background_value,"","显示与排序"};
+    const int personal_icons[]={4,5,16,10,18,19,21,15};
     setting_group(fb,SETTINGS_PERSONAL_Y-49,"个性化功能",SETTINGS_PERSONAL_Y,
                   personal_icons,personal_labels,personal_values,SETTINGS_PERSONAL_ROWS);
     const char *maintenance_labels[]={"保存与恢复","屏幕修复","系统升级"};
@@ -1868,6 +1945,7 @@ static app_redraw_t scroll_gesture(const ui_gesture_event_t *ev, int *offset, in
 }
 
 static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_page == SETTINGS_QUICK_BAR) return quick_settings_gesture(ctx, ev);
     if (s_page == SETTINGS_LOCK_STYLE) {
         if (ev->type==UI_GESTURE_TAP) {
             int tab=ui_nav_hit(ev->x0,ev->y0);
@@ -2398,6 +2476,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             s_page=SETTINGS_READING_BG;
         }
         else if(row==6){app_components_open(ctx,false);return APP_REDRAW_NONE;}
+        else if(row==7){s_page=SETTINGS_QUICK_BAR;s_quick_notice[0]=0;}
         return APP_REDRAW_PAGE;
     }
     if(y>=SETTINGS_MAINTENANCE_Y && y<SETTINGS_MAINTENANCE_Y+SETTINGS_MAINTENANCE_ROWS*SETTINGS_ROW_H) {

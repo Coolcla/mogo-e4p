@@ -312,6 +312,11 @@ void ble_pt_reconnect_recent(void) {assert(ble_enabled);++quick_recent_requests;
 void ble_pt_cancel_recent(void) {assert(!ble_enabled);}
 bool app_settings_ble_turner(void) {return ble_enabled;}
 void app_settings_set_ble_turner(bool enabled) {ble_enabled=enabled;}
+static app_quick_layout_t saved_quick_layout = APP_QUICK_LAYOUT_DEFAULT;
+const app_quick_layout_t *app_settings_quick_layout(void) { return &saved_quick_layout; }
+bool ui_quick_menu_draw_notice(uint8_t *buffer, const ui_quick_menu_t *menu, EpdRect *dirty) {
+    (void)buffer; (void)menu; *dirty = (EpdRect){40, 350, 604, 32}; return true;
+}
 bool app_settings_frontlight_on(void) {return fl_on;}
 void app_settings_set_frontlight_on(bool on) {fl_on=on;}
 uint8_t app_settings_frontlight_brightness(void) {return fl_bri;}

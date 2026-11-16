@@ -5,8 +5,8 @@ Feature ID: `F-ORIENTATION`. Local implementation from 2026-11-08, entered throu
 
 ## 使用 / Use
 
-- 阅读 TXT、EPUB 或受支持的传统 MOBI 时，从当前画面顶部下拉快捷栏。第二排左侧的旋转锁定圆钮控制自动旋转，图标为环形箭头围住锁头：灰底开锁表示自动旋转，白底闭锁表示锁定。竖屏第一排保持原来的四枚圆钮；前光滑杆在第二排下方展开。横屏采用左右分区：左侧四键紧凑排在首行，旋转锁定留在第二行；右侧亮度、色温滑杆分别对齐这两行。横屏阅读快捷层高度为404px，展开前光不再向下叠加面板。
-  While reading TXT, EPUB or supported traditional MOBI, pull down from the current screen's top edge. The rotation-lock circle at the left of row two uses a circular arrow around a lock: gray with an open lock means automatic rotation, white with a closed lock means locked. In portrait, keep the four original circles in row one and expand frontlight sliders below row two. Landscape uses two columns: four compact keys on the first left row, rotation lock on the second, and brightness/temperature tracks aligned with those rows on the right. The landscape reader layer stays 404px tall when frontlight controls expand.
+- 阅读 TXT、EPUB 或受支持的传统 MOBI 时，从当前画面顶部下拉快捷栏，旋转锁定圆钮控制自动旋转。图标为环形箭头围住锁头：灰底开锁表示自动旋转，白底闭锁表示锁定。该按钮默认在所有页面显示，非阅读正文点按提示「仅阅读正文支持自动旋转」。设置 → 个性化功能 → 快捷栏管理可选择显隐和顺序，最多两排、每排四个。竖屏前光滑杆在按钮下方展开，横屏按钮在左、两条滑杆在右，横屏面板高度为404px。
+  While reading TXT, EPUB or supported traditional MOBI, pull down quick controls and tap the rotation-lock circle. A circular arrow surrounds the lock: gray/open enables automatic rotation; white/closed locks it. The button appears on all pages by default; outside the reader body it shows an unavailable notice. Settings → Personalization → Quick Bar Management controls visibility/order with up to two rows of four. Portrait sliders expand below the keys; landscape keeps keys left, sliders right and the layer 404px tall.
 - 默认锁定正常竖屏。点一次开启重力自动旋转，收起快捷栏后把设备立起并转向；连续稳定约半秒后，在正竖屏、倒竖屏和两个横屏之间切换。再次点按锁定当前显示方向，后续转动设备保持不变。
   Each opening starts locked in normal portrait. Tap once to enable gravity rotation, dismiss the quick layer and turn the upright device. About half a second of stability selects normal/inverted portrait or either landscape. Tap again to lock the displayed orientation.
 - 平放、持触、拖选、字典、快捷栏和其他弹层期间保持当前正文方向；抬手后还有600ms静默期。自动模式与锁定方向只属于当前开书会话，不写入设置或配置备份。

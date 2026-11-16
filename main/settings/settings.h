@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include "esp_err.h"
 #include "../services/network_policy.h"
+#include "../app/app_quick_items.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -28,6 +29,9 @@ typedef enum {
 } app_sleep_mode_t;
 
 void app_settings_init(void);
+/// 快捷栏显隐与顺序；保存失败时保留原值。/ Quick-bar visibility/order; a failed save retains the previous value.
+const app_quick_layout_t *app_settings_quick_layout(void);
+bool app_settings_set_quick_layout(const app_quick_layout_t *layout);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
 const char* app_sleep_mode_name(app_sleep_mode_t mode);

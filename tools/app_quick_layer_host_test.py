@@ -3,6 +3,7 @@
 from pathlib import Path
 import subprocess
 import tempfile
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 with tempfile.TemporaryDirectory(prefix="app-quick-") as directory:
@@ -19,3 +20,4 @@ with tempfile.TemporaryDirectory(prefix="app-quick-") as directory:
         "tools/refresh_loop_test_boundary.c", "-o", str(binary),
     ], cwd=ROOT, check=True)
     subprocess.run([str(binary)], cwd=ROOT, check=True)
+subprocess.run([sys.executable, "tools/quick_bar_settings_host_test.py"], cwd=ROOT, check=True)

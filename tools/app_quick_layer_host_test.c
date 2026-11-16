@@ -19,7 +19,8 @@ static void record(unsigned tag, unsigned value) {
 static bool available = true, saved_on = true, hw_on, ble, online, usb, hold_gray;
 static bool motor_available, saved_haptics = true;
 static unsigned haptics_writes, haptics_pulses, setup_haptics;
-static bool shown_haptics;
+static bool shown_haptics, shown_rotation_notice;
+static ui_quick_menu_t shown_menu;
 static bool memory_busy;
 static unsigned memory_requests, memory_accepted, setup_memory;
 static uint8_t saved_bri = 40, saved_cct = 50, hw_bri, hw_cct;
@@ -57,6 +58,11 @@ const app_desc_t app_transfer = {.render = render, .on_enter = enter, .on_exit =
 const app_desc_t app_device_settings = {.render = render, .on_enter = enter, .on_exit = leave};
 static const app_desc_t *current = &page;
 
+static app_quick_layout_t saved_quick_layout = APP_QUICK_LAYOUT_DEFAULT;
+const app_quick_layout_t *app_settings_quick_layout(void) { return &saved_quick_layout; }
+bool ui_quick_menu_draw_notice(uint8_t *buffer, const ui_quick_menu_t *menu, EpdRect *dirty) {
+    (void)buffer; shown_rotation_notice = menu->rotation_notice; *dirty = (EpdRect){40, ui_quick_menu_height(menu) - 50, 604, 32}; return true;
+}
 bool app_settings_frontlight_on(void) {return saved_on;}
 uint8_t app_settings_frontlight_brightness(void) {return saved_bri;}
 uint8_t app_settings_frontlight_cct(void) {return saved_cct;}
@@ -115,7 +121,7 @@ const EpdWaveform *display_normalize_waveform(bool hold) {
 }
 void ui_quick_menu_draw(uint8_t *buffer, const ui_quick_menu_t *m, bool wifi, bool bluetooth) {
     assert(buffer == fb); record(23, m->fl_on); record(24, wifi); record(25, bluetooth);
-    shown_haptics = m->haptics_enabled;
+    shown_haptics = m->haptics_enabled; shown_menu = *m;
 }
 void ui_quick_menu_end(void) {record(26, 0);}
 void ui_quick_menu_draw_status(uint8_t *buffer) {assert(buffer == fb); record(27, 0);}
@@ -269,7 +275,10 @@ int main(void) {
     // Without frontlight the fourth key remains lock; the controller closes and
     // restores the layer before handing the request to the loop.
     available = false; app_quick_layer_init(); open_layer();
-    p = renders; assert(tap_xy(598, 156) && !app_quick_layer_is_open() && renders == p + 1);
+    ui_quick_menu_t no_light = {0};
+    int lock_button = ui_quick_menu_lock_button(&no_light);
+    p = renders; assert(tap_xy(ui_quick_menu_button_x(&no_light, lock_button, 684),
+        ui_quick_menu_button_y(&no_light, lock_button)) && !app_quick_layer_is_open() && renders == p + 1);
     available = true; app_quick_layer_init(); open_layer();
     hold_gray = true; tap(3); p = renders; usb = true;
     release(); assert(!app_quick_layer_is_open() && renders == p + 1);
@@ -347,9 +356,9 @@ int main(void) {
     assert(shown_haptics);
     unsigned hwrites = haptics_writes, pulses = haptics_pulses;
     for (int enabled = 0; enabled < 2; ++enabled) {
-        (void)frame(true, true, false, 85, 296, 10, false);
+        (void)frame(true, true, false, 256, 296, 10, false);
         app_quick_layer_present_buttons(&ctx, current);
-        (void)frame(false, false, true, 85, 296, 10, false);
+        (void)frame(false, false, true, 256, 296, 10, false);
         app_quick_layer_sync_status(&ctx, current);
         assert(saved_haptics == (bool)enabled && shown_haptics == (bool)enabled);
         assert(haptics_writes == ++hwrites && app_quick_layer_is_open() && !ctx.request_app);
@@ -360,7 +369,7 @@ int main(void) {
     for (int source = 0; source < 3; ++source) {
         open_layer(); current = source == 0 ? &page : source == 1 ? &app_device_settings : &reader_page;
         rotate_available = source == 2;
-        int x = source == 2 ? 256 : 85;
+        int x = 256;
         unsigned c = captures, e = enters, h = setup_haptics;
         (void)frame(true, true, false, x, 296, 10, false);
         (void)frame(true, false, false, x, 296, 500, false);
@@ -391,6 +400,27 @@ int main(void) {
         release();assert(memory_requests==requested);
     }
     puts("PASS: memory cleanup follows underlay restoration, rejects duplicate busy taps, and settings holds preserve origin without cleaning on release");
+    open_layer(); current = &page;
+    int rotation_key = ui_quick_menu_rotation_button(&shown_menu);
+    unsigned old_toggles = rotate_toggles;
+    assert(rotation_key >= 0);
+    tap_xy(ui_quick_menu_button_x(&shown_menu, rotation_key, 684), ui_quick_menu_button_y(&shown_menu, rotation_key));
+    assert(shown_rotation_notice && rotate_toggles == old_toggles && app_quick_layer_is_open());
+    ctx.now_ms += 2200; app_quick_layer_sync_status(&ctx, current); assert(!shown_rotation_notice);
+    saved_quick_layout = (app_quick_layout_t){.count=3,.order={APP_QUICK_LOCK,APP_QUICK_FRONTLIGHT,APP_QUICK_WIFI,
+        APP_QUICK_BLUETOOTH,APP_QUICK_CELLULAR,APP_QUICK_ROTATION,APP_QUICK_HAPTICS,APP_QUICK_MEMORY,APP_QUICK_FULL}};
+    open_layer(); assert(ui_quick_menu_button_count(&shown_menu)==3);
+    int light_key=ui_quick_menu_find_button(&shown_menu, APP_QUICK_FRONTLIGHT);
+    bool old_light=saved_on;
+    tap_xy(ui_quick_menu_button_x(&shown_menu,light_key,684),ui_quick_menu_button_y(&shown_menu,light_key));
+    assert(saved_on!=old_light&&app_quick_layer_is_open());
+    int wifi_key=ui_quick_menu_find_button(&shown_menu,APP_QUICK_WIFI);
+    unsigned old_setup=setup_wifi;
+    int wx=ui_quick_menu_button_x(&shown_menu,wifi_key,684),wy=ui_quick_menu_button_y(&shown_menu,wifi_key);
+    frame(true,true,false,wx,wy,10,false);frame(true,false,false,wx,wy,500,false);
+    assert(setup_wifi==old_setup+1&&!app_quick_layer_is_open());release();
+    saved_quick_layout=(app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
+    puts("PASS: resident rotation notice expires without toggling, custom ordering drives actual light/WiFi-hold actions");
     printf("QUICK_TRACE %016" PRIx64 " applies=%u rows=%u pushes=%u failures=%u\n", trace, applies, rows, pushes, failures);
     return 0;
 }
