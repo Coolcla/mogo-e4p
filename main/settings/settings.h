@@ -379,6 +379,10 @@ void app_settings_set_reader_vertical_turn(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);
+/// 按只读书库身份保存稳定分类ID；未保存时返回UINT32_MAX（全部），不随设置备份迁移。
+/// Persist a stable category ID per read-only library identity; missing values return UINT32_MAX (all), outside settings backups.
+uint32_t app_settings_shelf_category(const char *library);
+bool app_settings_set_shelf_category(const char *library, uint32_t category);
 /// 蓝牙翻页器：启用 BLE HID 主机，好让蓝牙翻页器连上并翻页；默认关闭。
 /// 关掉会把整个 BLE 栈拆掉，把 NimBLE 占的内存还回去。
 /// Bluetooth page-turner: bring up the BLE HID host so a remote can pair and turn pages; off

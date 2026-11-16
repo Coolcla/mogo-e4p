@@ -187,9 +187,31 @@ static bool face_write_fails, face_open_fails;
 static int durable_up = -1, pending_up = -1;
 static int loaded_network_route = -1, loaded_network_priority = -1;
 static bool regions_write_fails, progress_write_fails, touch_write_fails;
+static struct { char key[12]; uint8_t data[44]; size_t size; } shelf_preferences[4];
+static uint8_t pending_shelf_data[44];
+static int pending_shelf_slot=-1;
+static bool shelf_write_fails;
+esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *out,size_t *size) {
+    (void)h;
+    for (int i=0;i<4;++i) if (!strcmp(shelf_preferences[i].key,key)) {
+        if (*size<shelf_preferences[i].size) return ESP_FAIL;
+        memcpy(out,shelf_preferences[i].data,shelf_preferences[i].size);*size=shelf_preferences[i].size;return ESP_OK;
+    }
+    return ESP_ERR_NVS_NOT_FOUND;
+}
+esp_err_t nvs_set_blob(nvs_handle_t h,const char *key,const void *data,size_t size) {
+    (void)h;assert(flash_depth && size==44 && strlen(key)==11 && !strncmp(key,"sc_",3));
+    if (shelf_write_fails) return ESP_FAIL;
+    int slot=-1;
+    for (int i=0;i<4;++i) if (!strcmp(shelf_preferences[i].key,key)) slot=i;
+    if (slot<0) for (int i=0;i<4;++i) if (!shelf_preferences[i].key[0]) {slot=i;break;}
+    assert(slot>=0);strlcpy(shelf_preferences[slot].key,key,sizeof(shelf_preferences[slot].key));
+    memcpy(pending_shelf_data,data,size);pending_shelf_slot=slot;return ESP_OK;
+}
 esp_err_t backup_nvs_open(const char *ns, int mode, nvs_handle_t *h) {
     assert(!strcmp(ns, "read_pico"));
     pending_tap[0] = 0;
+    pending_shelf_slot=-1;
     pending_quick[0] = 0;
     pending_regions = -1;
     pending_chrome = -1;
@@ -204,7 +226,7 @@ esp_err_t backup_nvs_open(const char *ns, int mode, nvs_handle_t *h) {
     pending_up = -1;
     return nvs_open(ns, mode, h);
 }
-void backup_nvs_close(nvs_handle_t h) { pending_quick[0]=0; pending_chrome=-1; pending_tap[0]=0; pending_regions = pending_progress = pending_styles = pending_touch = pending_up = pending_ticket = pending_face = -1; pending_chrome_visible[0] = pending_chrome_visible[1] = -1; nvs_close(h); }
+void backup_nvs_close(nvs_handle_t h) { pending_shelf_slot=-1; pending_quick[0]=0; pending_chrome=-1; pending_tap[0]=0; pending_regions = pending_progress = pending_styles = pending_touch = pending_up = pending_ticket = pending_face = -1; pending_chrome_visible[0] = pending_chrome_visible[1] = -1; nvs_close(h); }
 esp_err_t backup_nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) {
     if (!strcmp(key, NVS_KEY_CHROME_VISIBLE)) {
         if (durable_chrome < 0) return ESP_ERR_NVS_NOT_FOUND;
@@ -314,6 +336,10 @@ esp_err_t backup_nvs_set_str(nvs_handle_t h,const char *key,const char *value) {
 }
 esp_err_t backup_nvs_commit(nvs_handle_t h) {
     esp_err_t err = nvs_commit(h);
+    if (err == ESP_OK && pending_shelf_slot>=0) {
+        memcpy(shelf_preferences[pending_shelf_slot].data,pending_shelf_data,sizeof(pending_shelf_data));
+        shelf_preferences[pending_shelf_slot].size=sizeof(pending_shelf_data);
+    }
     if (err == ESP_OK && pending_chrome >= 0) durable_chrome = pending_chrome;
     for (unsigned bar = 0; bar < 2; ++bar)
         if (err == ESP_OK && pending_chrome_visible[bar] >= 0)
@@ -1530,6 +1556,31 @@ static void test_quick_bar_layout(void) {
 }
 
 int main(void) {
+    // 重新读取持久记录模拟重启；同名ID在不同书库间隔离，失败不覆盖原选择。
+    // Re-read durable records as after a reboot; isolate equal IDs across libraries and retain choices after failures.
+    assert(app_settings_shelf_category("card-a")==UINT32_MAX);
+    assert(app_settings_set_shelf_category("card-a",42));
+    assert(app_settings_set_shelf_category("card-b",7));
+    assert(app_settings_set_shelf_category("builtin",0));
+    assert(app_settings_shelf_category("card-a")==42 && app_settings_shelf_category("card-b")==7);
+    assert(app_settings_shelf_category("builtin")==0);
+    int preference_commits=commit_count;
+    assert(app_settings_set_shelf_category("card-a",42) && commit_count==preference_commits);
+    for (int failure=0;failure<4;++failure) {
+        shelf_write_fails=failure==0;commit_fails=failure==1;flash_failure=failure==2;face_open_fails=failure==3;
+        assert(!app_settings_set_shelf_category("card-a",UINT32_MAX) && !flash_depth);
+        assert(app_settings_shelf_category("card-a")==42);
+        shelf_write_fails=commit_fails=flash_failure=face_open_fails=false;
+    }
+    assert(app_settings_set_shelf_category("card-a",UINT32_MAX));
+    assert(app_settings_shelf_category("card-a")==UINT32_MAX);
+    shelf_preferences[1].data[4]='x';
+    assert(app_settings_shelf_category("card-b")==UINT32_MAX);
+    assert(app_settings_set_shelf_category("card-b",7));
+    shelf_preferences[1].size=43;
+    assert(app_settings_shelf_category("card-b")==UINT32_MAX);
+    assert(!app_settings_set_shelf_category("",3) && !app_settings_set_shelf_category(NULL,3));
+    assert(!app_settings_set_shelf_category("1234567890123456789012345678901234567890",3));
     assert(!strcmp(app_settings_device_name(), "mogo"));
     flash_failure = true;
     nvs_handle_t rejected = 0;

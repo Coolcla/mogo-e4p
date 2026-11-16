@@ -66,6 +66,7 @@ static bool s_recent_sort;
 static book_shelf_query_t shelf_query(void){return book_shelf_categories_query(&s_shelf_categories,0,s_recent_sort);}
 static void invalidate_covers(void){book_shelf_covers_cancel(&s_shelf_covers);book_shelf_covers_release(&s_shelf_covers);}
 static bool shelf_collection_load(bool retry){(void)retry;return s_collection.ready;}
+static void shelf_category_selection_save(void){}
 static bool shelf_collection_sync(bool complete){(void)complete;if(binding_fail)return false;
     bool ok=book_shelf_categories_bind(&s_shelf_categories,&s_collection);if(ok)s_collection_bound_generation=s_collection.generation;return ok;}
 static void shelf_categories_recount(void){book_collection_apply(&s_collection,s_shelf,s_count);book_shelf_categories_recount(&s_shelf_categories,s_shelf,s_count);}

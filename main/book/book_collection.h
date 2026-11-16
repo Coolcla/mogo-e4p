@@ -41,6 +41,11 @@ bool book_collection_name(const char *input, char out[BOOK_COLLECTION_NAME_BYTES
 esp_err_t book_collection_sync(book_collection_t *state, const char *root,
                                const char *const *folders, size_t folder_count,
                                book_shelf_entry_t *books, int count, bool complete);
+/// 显式重扫补入缺失的目录分类，仅为新导入目录中尚未归类的书补归属；不覆盖已有归类。
+/// Explicit rescans import missing folder categories and their unclassified books without replacing existing assignments.
+esp_err_t book_collection_rescan(book_collection_t *state, const char *root,
+                                 const char *const *folders, size_t folder_count,
+                                 book_shelf_entry_t *books, int count, bool complete);
 /// 同一事务可新建分类并归入既有选择；失败保留原分类和勾选。/ Create and optionally classify the existing selection in one transaction; failure preserves categories and selection.
 esp_err_t book_collection_create(book_collection_t *state, const char *name,
                                  const book_shelf_entry_t *books, int count, bool selected,

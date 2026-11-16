@@ -1,5 +1,5 @@
-/* 中文：书架逻辑分类的事务、一次迁移与版本化双副本；不调用文件移动或阅读记录接口。
- * English: Logical shelf transactions, one-time migration and versioned dual copies; no file-move or reading-record calls. */
+/* 中文：书架逻辑分类的事务、首次迁移、显式重扫补入与版本化双副本；不调用文件移动或阅读记录接口。
+ * English: Logical shelf transactions, initial migration, explicit folder imports and versioned dual copies; no file-move or reading-record calls. */
 #include "book_collection.h"
 #include "book_shelf_categories.h"
 #include "esp_heap_caps.h"
@@ -257,10 +257,14 @@ static esp_err_t commit(book_collection_t *s,book_collection_data_t *next) {
 void book_collection_apply(const book_collection_t *s,book_shelf_entry_t *books,int count){
     for(int i=0;i<count;++i)books[i].category_id=book_collection_assignment(s,books[i].path);
 }
-static esp_err_t legacy_source(book_collection_data_t *d,const char *name) {
+static esp_err_t legacy_source(book_collection_data_t *d,const char *name,bool imported[BOOK_COLLECTION_CATEGORIES]) {
     if(!name || !*name || strlen(name)>=BOOK_STORE_PATH_MAX || strchr(name,'/'))return ESP_ERR_INVALID_ARG;
     for(int i=0;i<d->count;++i)if(!strcmp(d->categories[i].legacy_name,name))return ESP_OK;
+    for(int i=0;i<d->count;++i)if(!d->categories[i].legacy_name[0] && !strcmp(d->categories[i].name,name)){
+        memcpy(d->categories[i].legacy_name,name,strlen(name)+1);imported[i]=true;return ESP_OK;
+    }
     if(d->count==BOOK_COLLECTION_CATEGORIES || !d->next_id || d->next_id==BOOK_COLLECTION_ALL)return ESP_ERR_INVALID_SIZE;
+    imported[d->count]=true;
     book_collection_category_t *category=&d->categories[d->count++];
     memset(category,0,sizeof(*category));category->id=d->next_id++;
     memcpy(category->legacy_name,name,strlen(name)+1);return ESP_OK;
@@ -269,7 +273,10 @@ static void legacy_names(book_collection_data_t *d) {
     // 先保留所有合法原名，再分配有界别名，避免与尚未处理的原名冲突。
     // Reserve every valid original name before assigning bounded aliases, including collisions with later originals.
     for(int i=0;i<d->count;++i){char clean[BOOK_COLLECTION_NAME_BYTES];
-        if(book_collection_name(d->categories[i].legacy_name,clean) && !strcmp(clean,d->categories[i].legacy_name))
+        if(d->categories[i].name[0])continue;
+        bool used=false;
+        for(int j=0;j<d->count;++j)if(!strcmp(d->categories[j].name,d->categories[i].legacy_name)){used=true;break;}
+        if(!used && book_collection_name(d->categories[i].legacy_name,clean) && !strcmp(clean,d->categories[i].legacy_name))
             memcpy(d->categories[i].name,clean,strlen(clean)+1);
     }
     for(int i=0;i<d->count;++i){
@@ -290,34 +297,46 @@ static void legacy_names(book_collection_data_t *d) {
         }
     }
 }
-esp_err_t book_collection_sync(book_collection_t *s,const char *root,const char *const *folders,size_t folder_count,
-                               book_shelf_entry_t *books,int count,bool complete) {
+static esp_err_t collection_sync(book_collection_t *s,const char *root,const char *const *folders,size_t folder_count,
+                                 book_shelf_entry_t *books,int count,bool complete,bool import_folders) {
     if(!s || !s->ready || s->blocked)return ESP_ERR_INVALID_STATE;
     if(!root || count<0 || (count && !books) || (folder_count && !folders))return ESP_ERR_INVALID_ARG;
     book_collection_apply(s,books,count);
     if(!complete)return ESP_OK;
     bool migrate=!s->data->migrated,changed=migrate;
     for(int i=0;i<count;++i){books[i].new_book=!migrate && !books[i].removed && record_index(s->data,books[i].path)<0;if(books[i].new_book)changed=true;}
-    if(!changed)return ESP_OK;
+    if(!changed && !import_folders)return ESP_OK;
     book_collection_data_t *next=clone(s->data);if(!next)return ESP_ERR_NO_MEM;esp_err_t err=ESP_OK;
-    if(migrate)for(size_t i=0;i<folder_count && err==ESP_OK;++i){
+    bool imported[BOOK_COLLECTION_CATEGORIES]={0};
+    if(migrate || import_folders)for(size_t i=0;i<folder_count && err==ESP_OK;++i){
         if(!valid_path(folders[i])){err=ESP_ERR_INVALID_ARG;break;}
-        const char *base=strrchr(folders[i],'/');err=legacy_source(next,base?base+1:folders[i]);}
-    if(migrate && err==ESP_OK){
+        const char *base=strrchr(folders[i],'/');err=legacy_source(next,base?base+1:folders[i],imported);}
+    if((migrate || import_folders) && err==ESP_OK){
         for(int i=0;i<count && err==ESP_OK;++i){char child[BOOK_STORE_PATH_MAX];
-            if(!books[i].removed && book_shelf_child(root,books[i].path,child,sizeof(child)))err=legacy_source(next,child);
+            if(!books[i].removed && book_shelf_child(root,books[i].path,child,sizeof(child)))err=legacy_source(next,child,imported);
         }
         if(err==ESP_OK)legacy_names(next);
     }
+    for(int i=0;i<next->count;++i)if(imported[i])changed=true;
     for(int i=0;i<count && err==ESP_OK;++i){
-        if(books[i].removed || record_index(next,books[i].path)>=0)continue;
+        int record=record_index(next,books[i].path);
+        if(books[i].removed || (record>=0 && (!import_folders || next->books[record].category)))continue;
         uint32_t id=0;char child[BOOK_STORE_PATH_MAX];
-        if(migrate && book_shelf_child(root,books[i].path,child,sizeof(child)))
-            for(int j=0;j<next->count;++j)if(!strcmp(next->categories[j].legacy_name,child)){id=next->categories[j].id;break;}
-        if(err==ESP_OK)err=set_record(next,books[i].path,id);
+        if((migrate || import_folders) && book_shelf_child(root,books[i].path,child,sizeof(child)))
+            for(int j=0;j<next->count;++j)if(!strcmp(next->categories[j].legacy_name,child) && (record<0 || imported[j])){id=next->categories[j].id;break;}
+        if(record<0 || id){err=set_record(next,books[i].path,id);changed=true;}
     }
     if(err!=ESP_OK){release(next);return err;}next->migrated=true;
+    if(!changed){release(next);return ESP_OK;}
     err=commit(s,next);if(err==ESP_OK)book_collection_apply(s,books,count);return err;
+}
+esp_err_t book_collection_sync(book_collection_t *s,const char *root,const char *const *folders,size_t folder_count,
+                               book_shelf_entry_t *books,int count,bool complete) {
+    return collection_sync(s,root,folders,folder_count,books,count,complete,false);
+}
+esp_err_t book_collection_rescan(book_collection_t *s,const char *root,const char *const *folders,size_t folder_count,
+                                 book_shelf_entry_t *books,int count,bool complete) {
+    return collection_sync(s,root,folders,folder_count,books,count,complete,true);
 }
 static esp_err_t assign_to(book_collection_data_t *d,const book_shelf_entry_t *books,int count,bool selected,uint32_t id,unsigned *changed){
     *changed=0;if(count<0 || (count && !books) || (id && category_index(d,id)<0))return ESP_ERR_INVALID_ARG;

@@ -1566,6 +1566,46 @@ void app_settings_set_shelf_recent_sort(bool on) {
     s_shelf_recent_sort = on;
     nvs_put_u8(NVS_KEY_SHELF_RECENT, on ? 1 : 0);
 }
+static bool shelf_category_key(const char *library, char key[12]) {
+    if (!library || !library[0] || strnlen(library, 40) >= 40) return false;
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char *p = (const unsigned char *)library; *p; ++p)
+        hash = (hash ^ *p) * UINT32_C(16777619);
+    snprintf(key, 12, "sc_%08lx", (unsigned long)hash);
+    return true;
+}
+static bool shelf_category_read(const char *library, const char *key, uint32_t *category) {
+    nvs_handle_t h;
+    if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return false;
+    uint8_t record[44]; size_t size = sizeof(record);
+    esp_err_t err = nvs_get_blob(h, key, record, &size);
+    nvs_close(h);
+    // 校验完整身份，哈希碰撞不能恢复另一张卡的分类。/ Verify the full identity so hash collisions cannot select another card's category.
+    if (err != ESP_OK || size != sizeof(record) || !memchr(record + 4, 0, 40) ||
+        strcmp((const char *)record + 4, library)) return false;
+    *category = (uint32_t)record[0] | (uint32_t)record[1] << 8 | (uint32_t)record[2] << 16 | (uint32_t)record[3] << 24;
+    return true;
+}
+uint32_t app_settings_shelf_category(const char *library) {
+    char key[12]; uint32_t category = UINT32_MAX;
+    if (shelf_category_key(library, key)) (void)shelf_category_read(library, key, &category);
+    return category;
+}
+bool app_settings_set_shelf_category(const char *library, uint32_t category) {
+    char key[12];
+    if (!shelf_category_key(library, key)) return false;
+    uint32_t saved;
+    if (shelf_category_read(library, key, &saved) && saved == category) return true;
+    uint8_t record[44] = {0};
+    for (unsigned i = 0; i < 4; ++i) record[i] = (uint8_t)(category >> (8 * i));
+    memcpy(record + 4, library, strlen(library) + 1);
+    nvs_handle_t h;
+    if (settings_write_open(&h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_blob(h, key, record, sizeof(record));
+    if (err == ESP_OK) err = nvs_commit(h);
+    settings_write_close(h);
+    return err == ESP_OK;
+}
 uint8_t app_settings_book_tracking(void) { return s_book_tracking; }
 void app_settings_set_book_tracking(uint8_t index) {
     if (index >= APP_BOOK_TRACK_COUNT || index == s_book_tracking) return;

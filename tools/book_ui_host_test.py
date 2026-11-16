@@ -503,6 +503,8 @@ static book_shelf_categories_t s_shelf_categories;
 static book_shelf_categories_t s_legacy_categories;
 static book_collection_t s_collection;
 static bool shelf_collection_sync(bool complete){(void)complete;return true;}
+static void scan_shelf(app_ctx_t *ctx);
+static void rescan_shelf(app_ctx_t *ctx){scan_shelf(ctx);}
 static bool legacy_category_recover(void){return true;}
 """
 unit += "static bool reader_orientation_portrait(void){return false;}\nstatic bool reader_orientation_sync(void){return false;}\n"

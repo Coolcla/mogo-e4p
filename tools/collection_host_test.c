@@ -180,10 +180,62 @@ int main(void) {
     generation = s.generation;
     assert(book_collection_sync(&s, root, legacy_folders, 6, legacy_books, 6, true) == ESP_OK && s.generation == generation);
     book_collection_close(&s);
+    // 初次空扫描后出现目录：普通扫描保留未分类，显式重扫补入且不改变已有手工归属。
+    // Folders arriving after an empty migration need an explicit import, retaining existing manual assignments.
+    char rescan_prefix[288], late[288], empty[288];
+    snprintf(rescan_prefix,sizeof(rescan_prefix),"%s/rescan",directory);
+    snprintf(late,sizeof(late),"%s/后来目录",root);snprintf(empty,sizeof(empty),"%s/空目录",root);
+    const char *late_folders[]={late,empty};
+    book_shelf_entry_t late_books[3];
+    book(&late_books[0],root,"后来目录/one.txt");book(&late_books[1],root,"后来目录/two.txt");book(&late_books[2],root,"root.txt");
+    assert(book_collection_open(&s,rescan_prefix)==ESP_OK);
+    assert(book_collection_sync(&s,root,NULL,0,NULL,0,true)==ESP_OK && book_collection_migrated(&s));
+    assert(book_collection_sync(&s,root,late_folders,2,late_books,3,true)==ESP_OK && !book_collection_count(&s));
+    late_books[1].selected=true;
+    assert(book_collection_create(&s,"手工分类",late_books,3,true,&id,&changed)==ESP_OK && changed==1);
+    generation=s.generation;
+    assert(book_collection_rescan(&s,root,late_folders,2,late_books,3,false)==ESP_OK && s.generation==generation);
+    for(int failure=0;failure<3;++failure){
+        write_fail=failure==0;sync_fail=failure==1;allocation_fail=failure==2?0:-1;
+        assert(book_collection_rescan(&s,root,late_folders,2,late_books,3,true)!=ESP_OK && s.generation==generation);
+        write_fail=sync_fail=0;allocation_fail=-1;
+        assert(book_collection_count(&s)==1 && !book_collection_assignment(&s,late_books[0].path));
+        assert(book_collection_assignment(&s,late_books[1].path)==id);
+    }
+    assert(book_collection_rescan(&s,root,late_folders,2,late_books,3,true)==ESP_OK && book_collection_count(&s)==3);
+    uint32_t imported=late_books[0].category_id;
+    assert(imported && late_books[1].category_id==id && !late_books[2].category_id);
+    assert(book_collection_rename(&s,imported,"改名保留")==ESP_OK);
+    late_books[0].selected=true;late_books[1].selected=false;
+    assert(book_collection_assign(&s,late_books,3,true,0,&changed)==ESP_OK && changed==1);
+    generation=s.generation;
+    assert(book_collection_rescan(&s,root,late_folders,2,late_books,3,true)==ESP_OK && s.generation==generation);
+    assert(!late_books[0].category_id && late_books[1].category_id==id);
+    assert(!strcmp(book_collection_find(&s,imported)->name,"改名保留"));
+    book_collection_close(&s);assert(book_collection_open(&s,rescan_prefix)==ESP_OK);
+    assert(book_collection_legacy_id(&s,"后来目录")==imported && book_collection_assignment(&s,late_books[1].path)==id);
+    assert(book_collection_remove(&s,imported)==ESP_OK);
+    assert(book_collection_rescan(&s,root,late_folders,2,late_books,3,true)==ESP_OK);
+    assert(late_books[0].category_id>imported && late_books[1].category_id==id);
+    uint32_t renamed=late_books[0].category_id;
+    assert(book_collection_rename(&s,renamed,"冲突目录")==ESP_OK);
+    char collision_folder[288], matching_folder[288];
+    snprintf(collision_folder,sizeof(collision_folder),"%s/冲突目录",root);
+    snprintf(matching_folder,sizeof(matching_folder),"%s/手工分类",root);
+    const char *extra_folders[]={collision_folder,matching_folder};
+    book_shelf_entry_t extra_books[2];book(&extra_books[0],root,"冲突目录/new.txt");book(&extra_books[1],root,"手工分类/new.txt");
+    assert(book_collection_sync(&s,root,extra_folders,2,extra_books,2,true)==ESP_OK);
+    assert(book_collection_rescan(&s,root,extra_folders,2,extra_books,2,true)==ESP_OK);
+    assert(extra_books[0].category_id && extra_books[0].category_id!=renamed && extra_books[1].category_id==id);
+    assert(!strcmp(book_collection_find(&s,renamed)->name,"冲突目录"));
+    assert(strcmp(book_collection_find(&s,extra_books[0].category_id)->name,"冲突目录"));
+    generation=s.generation;
+    assert(book_collection_rescan(&s,root,extra_folders,2,extra_books,2,true)==ESP_OK && s.generation==generation);
+    book_collection_close(&s);
     original = fopen(books[0].path, "rb"); assert(original); char content[32]; assert(fgets(content, sizeof(content), original));
     assert(!strcmp(content, "original book\n") && !fclose(original));
     assert(!unlink(books[0].path) && !rmdir(folder) && !rmdir(root));
-    for (int slot = 0; slot < 2; ++slot) { char path[320]; snprintf(path, sizeof(path), "%s.%d", prefix, slot); unlink(path); snprintf(path, sizeof(path), "%s.%d", second, slot); unlink(path); snprintf(path, sizeof(path), "%s.%d", migration_prefix, slot); unlink(path); }
+    for (int slot = 0; slot < 2; ++slot) { char path[320]; snprintf(path, sizeof(path), "%s.%d", prefix, slot); unlink(path); snprintf(path, sizeof(path), "%s.%d", second, slot); unlink(path); snprintf(path, sizeof(path), "%s.%d", migration_prefix, slot); unlink(path); snprintf(path, sizeof(path), "%s.%d", rescan_prefix, slot); unlink(path); }
     assert(!rmdir(directory));
     puts("logical collections: PASS (migration, stable IDs, same filenames, internal books, persistent removal, no file mutations, failed-batch rollback, card isolation, corrupt copies, UTF-8 and allocation/write failures)");
 }

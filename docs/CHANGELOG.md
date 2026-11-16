@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.2 · 本地测试 / Local testing · 2026-11-16
 
+- 书架按TF卡身份保存上次选择的分类，关机重启后恢复；分类不存在时回到全部书籍。/ Persist the last shelf category per card across restarts, falling back to all books when it no longer exists.
+- 管理书架的「重新扫描」重试分类读取，并补入缺失的一级目录分类及其中未归类的书；保留已有手工归类、分类改名和已有分类的移出结果，扫描或保存失败不覆盖原索引。/ Explicit shelf rescans retry category reads and import missing first-level folders and their unclassified books, retaining manual assignments, renamed categories and prior unclassifications; failed scans or writes retain the index.
 - 快捷栏旋转锁定默认在各页面显示，不支持旋转时给出提示；设置新增「快捷栏管理」，可选择按钮并调整顺序，最多两排八个，支持重启保存与配置备份恢复。/ Show rotation lock across pages with an unavailable notice; add Settings quick-bar visibility and ordering for up to eight buttons in two rows, persisted across restarts and settings backups.
 - 修复纯联网 Wi-Fi 持续重置无操作计时、导致阅读等页面无法自动锁屏的问题；保留文件传书、USB 读卡及联网 OTA 期间的锁屏保护。/ Fix network-only Wi-Fi continually resetting idle time and preventing automatic lock in the reader and other pages; retain protection during file transfers, USB storage and online OTA.
 
