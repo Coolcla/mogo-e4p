@@ -3,6 +3,10 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## v1.1.2 · 本地测试 / Local testing · 2026-11-16
+
+- 修复纯联网 Wi-Fi 持续重置无操作计时、导致阅读等页面无法自动锁屏的问题；保留文件传书、USB 读卡及联网 OTA 期间的锁屏保护。/ Fix network-only Wi-Fi continually resetting idle time and preventing automatic lock in the reader and other pages; retain protection during file transfers, USB storage and online OTA.
+
 ## v1.1.2 · 本地测试 / Local testing · 2026-11-15
 
 - 书架与首页扫描复用按 TF 卡身份隔离的稳定条目缓存，并按路径、大小和修改时间校验；完整扫描失败时不提交缓存。网格书架延后作者元数据读取，书目容量从 64 条起步动态扩展，已加入 300 本压力回归。

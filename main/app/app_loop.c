@@ -1177,7 +1177,10 @@ void app_loop_run(const app_loop_config_t* config) {
         uint32_t ble_input = ble_pt_input_serial();
         if (ble_input != last_ble_input) { last_ble_input = ble_input; last_input_ms = ctx.now_ms; }
         unsigned requested_idle = app_settings_auto_lock_minutes();
-        bool idle_blocked = usb_storage_active() || wifi_busy || current == &app_transfer ||
+        // 纯联网不续期无操作计时；文件传书会话与联网 OTA 仍阻止自动锁屏。
+        // Network-only WiFi must not renew idle time; file sessions and online OTA still block automatic lock.
+        const bool transfer_busy = transfer.state != WIFI_TRANSFER_STOPPED && !transfer.network_only;
+        bool idle_blocked = usb_storage_active() || transfer_busy || pico_online_busy() || current == &app_transfer ||
             current->holds_pmu || power_dialog_open || touch.touched ||
             ctx.request_app || ctx.request_menu || ctx.request_return;
         if (idle_blocked || requested_idle != idle_minutes) last_input_ms = ctx.now_ms;

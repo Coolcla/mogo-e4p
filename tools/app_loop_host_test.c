@@ -327,7 +327,7 @@ bool ble_pt_pop_key(ble_pt_event_t *e) {(void)e;return false;}
 bool ble_pt_pop_raw(ble_pt_raw_t *e) {(void)e;return false;}
 void wifi_transfer_get_status(wifi_transfer_status_t *s) {*s=transfer_status;}
 int wifi_transfer_get_saved_wifi(char *ssid,bool *configured) {strcpy(ssid,"saved");*configured=saved_wifi;return ESP_OK;}
-int wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {assert(cfg->mode==WIFI_TRANSFER_MODE_STA&&cfg->network_only);++wifi_starts;transfer_status.mode=cfg->mode;transfer_status.state=1;return ESP_OK;}
+int wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {assert(cfg->mode==WIFI_TRANSFER_MODE_STA&&cfg->network_only);++wifi_starts;transfer_status.mode=cfg->mode;transfer_status.network_only=cfg->network_only;transfer_status.state=WIFI_TRANSFER_STARTING;return ESP_OK;}
 bool wifi_transfer_try_stop_if_idle(void) {if(upload_busy)return false;++wifi_stops;transfer_status.state=0;return true;}
 void ui_click_feedback_reset(void) {click_active=false;}
 void ui_click_feedback_begin(uint8_t *fb) {(void)fb;click_active=false;}
@@ -705,7 +705,65 @@ static void test_screen_touch_lock(void) {
     assert(idle_locks==1&&!power_open_draws);
     puts("PASS: live/replayed reader touch lock blocks screen/quick gestures and screen-to-key drags, retains three keys, quarantines unlock contact");
 }
+static void test_auto_lock_network_sessions(void) {
+    const uint8_t minutes[] = {1, 5, 10};
+    const int states[] = {WIFI_TRANSFER_STARTING, WIFI_TRANSFER_READY, WIFI_TRANSFER_ERROR};
+    // 阅读和普通页面的纯联网不能续期；分别验证到期前及恰好到期。
+    // Network-only sessions must not renew reader/page idle time; check before and at the deadline.
+    for (unsigned reader = 0; reader < 2; ++reader) {
+        for (unsigned m = 0; m < sizeof(minutes) / sizeof(minutes[0]); ++m) {
+            for (unsigned s = 0; s < sizeof(states) / sizeof(states[0]); ++s) {
+                for (unsigned due = 0; due < 2; ++due) {
+                    reset();
+                    start_book = reader_body = reader != 0;
+                    first.on_before_lock = before_lock;
+                    idle_minutes = minutes[m];
+                    time_step = 60000000;
+                    transfer_status = (wifi_transfer_status_t){
+                        .state = states[s], .mode = WIFI_TRANSFER_MODE_STA,
+                        .network_ready = states[s] == WIFI_TRANSFER_READY, .network_only = true,
+                    };
+                    for (unsigned i = 0; i < minutes[m] + due; ++i) add(0, 0, 0, 0);
+                    run();
+                    assert(idle_locks == (int)due && wake_clean_requests == (int)due);
+                    assert(before_locks == (reader ? 0 : (int)due));
+                }
+            }
+        }
+    }
+    // AP/STA 传书会话（含等待、上传与错误）以及联网 OTA 仍阻止自动锁屏。
+    // AP/STA file sessions (waiting, uploading, errors) and online OTA still block automatic lock.
+    const int transfer_states[] = {
+        WIFI_TRANSFER_STARTING, WIFI_TRANSFER_READY, WIFI_TRANSFER_UPLOADING, WIFI_TRANSFER_ERROR,
+    };
+    const int modes[] = {WIFI_TRANSFER_MODE_AP, WIFI_TRANSFER_MODE_STA};
+    for (unsigned mode = 0; mode < sizeof(modes) / sizeof(modes[0]); ++mode) {
+        for (unsigned s = 0; s < sizeof(transfer_states) / sizeof(transfer_states[0]); ++s) {
+            reset();
+            idle_minutes = 1;
+            time_step = 600000000;
+            transfer_status = (wifi_transfer_status_t){.state = transfer_states[s], .mode = modes[mode]};
+            add(0, 0, 0, 0); add(0, 0, 0, 0);
+            run();
+            assert(!idle_locks);
+        }
+    }
+    reset();
+    idle_minutes = 1;
+    time_step = 600000000;
+    online_busy = true;
+    transfer_status = (wifi_transfer_status_t){
+        .state = WIFI_TRANSFER_READY, .mode = WIFI_TRANSFER_MODE_STA,
+        .network_ready = true, .network_only = true,
+    };
+    add(0, 0, 0, 0); add(0, 0, 0, 0);
+    run();
+    assert(!idle_locks);
+    puts("PASS: network-only WiFi preserves 1/5/10-minute reader/page lock deadlines; file sessions and OTA remain protected");
+}
+
 int main(void) {
+    test_auto_lock_network_sessions();
     test_panel_key_replay();
     test_screen_touch_lock();
     // 自动提示沿真实导航保留正文恢复点；手势和已有导航请求优先。
