@@ -8,6 +8,10 @@ on:
         description: Existing version tag to retry without moving it
         required: true
         type: string
+      validation_commit:
+        description: Optional exact commit with tools-only host-test repairs
+        required: false
+        type: string
 permissions:
   contents: read
 jobs:
@@ -16,6 +20,7 @@ jobs:
     container: espressif/idf:v6.1
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_VALIDATION_COMMIT: ${{ inputs.validation_commit }}
       PLATFORM_URL: ${{ vars.MOGO_PLATFORM_URL }}
       PLATFORM_TOKEN: ${{ secrets.MOGO_FIRMWARE_SUBMISSION_TOKEN }}
     steps:
@@ -80,9 +85,20 @@ jobs:
           cp build/host-compiler/cc build/host-compiler/gcc
           echo "$PWD/build/host-compiler" >> "$GITHUB_PATH"
           echo "CC=$PWD/build/host-compiler/cc" >> "$GITHUB_ENV"
+      - name: Prepare immutable release validation
+        shell: bash
+        run: |
+          set -eu
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          git show "$GITHUB_SHA:tools/prepare_release_validation.py" > "$RUNNER_TEMP/prepare_release_validation.py"
+          git show "$GITHUB_SHA:tools/test_release_validation.py" > "$RUNNER_TEMP/test_release_validation.py"
+          python3 "$RUNNER_TEMP/test_release_validation.py"
+          python3 "$RUNNER_TEMP/prepare_release_validation.py" --source "$PWD" \
+            --validation-commit "$RELEASE_VALIDATION_COMMIT"
       - name: Host regression tests with build dependencies
         shell: bash
         run: |
+          cd "$HOST_VALIDATION_ROOT"
           . "$IDF_PATH/export.sh"
           mkdir -p build/book-tests
           python3 tools/run_reader_baseline.py
@@ -100,6 +116,7 @@ jobs:
         shell: bash
         run: |
           set -eu
+          python3 "$RUNNER_TEMP/prepare_release_validation.py" --source "$PWD" --verify
           release_source_commit=$(git -c safe.directory="$PWD" rev-parse HEAD)
           test "${#release_source_commit}" -eq 40
           GITHUB_REF_NAME="$RELEASE_TAG" GITHUB_SHA="$release_source_commit" python3 tools/prepare_platform_submission.py
@@ -118,6 +135,8 @@ jobs:
             build/flasher_args.json
             build/flash_args
             build/platform-submission.json
+            build/validation-provenance.json
+            build/host-validation-patch.diff
       - name: Preserve LGPL relinking inputs
         uses: actions/upload-artifact@v4
         with:

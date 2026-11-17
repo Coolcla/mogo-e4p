@@ -6,6 +6,9 @@
 4. 在网站后台检查版本、来源、文件、更新说明和最低基础版本后手动发布。第一次使用联网升级的设备可能需要先通过网页或 TF 卡安装包含升级入口和正确分区布局的引导版本。
 5. 在真实设备上验证升级、断网恢复、数据保留后再宣布可用。更换密钥时同步更新网站和 GitHub Secret。不要把密钥提交到仓库。
 
+既有标签的宿主测试夹具失效时，可从当前工作流手动重试原标签，并将 `validation_commit` 指定为已提交修复的完整 SHA。入口拒绝该提交在 `tools/` 以外的任何差异；正式构建仍使用原标签的干净源码，完整宿主回归在独立检出中运行。验证前后核对应用摘要与两份源码身份，保存验证提交、差异补丁和 `validation-provenance.json`。不得借此改变产品实现或移动标签。
+When only the tagged host harness needs repair, retry the unchanged tag with an exact committed `validation_commit`. Reject every difference outside `tools/`, build clean tagged sources and run the full host suite in a separate checkout. Verify source identities and the application digest afterward, preserving the validation commit, patch and provenance. This cannot change product implementation or move a tag.
+
 ## 发布附件与 LGPL / Release assets and LGPL
 
 正式标签工作流保留两组同源产物：`firmware-<tag>-<run>` 用于 USB、TF 与 OTA；`lgpl-relink-<tag>-<run>` 保存静态库、应用入口目标文件、链接脚本、工具链响应文件与 specs、原始链接命令、工具链标识与实际使用的托管组件源码。工作流先执行原链接命令并逐字节比较 ELF；不通过就不提交 OTA 草稿。
