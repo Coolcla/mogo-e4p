@@ -106,6 +106,18 @@ class ReleaseValidationTest(unittest.TestCase):
         (Path(result["validationRoot"]) / "tools/test.py").write_text("uncommitted test\n")
         self.assertIn("must be clean", self.run_helper("--verify", expected=1).stderr)
 
+    @unittest.skipUnless(hasattr(os, "geteuid") and os.geteuid() == 0,
+                         "Ownership fixture requires container root")
+    def test_container_checkout_with_different_owner(self):
+        target = self.repaired_commit()
+        os.chown(self.root, 1001, 1001)
+        os.chown(self.root / ".git", 1001, 1001)
+        plain = subprocess.run(["git", "-C", str(self.root), "rev-parse", "HEAD"],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        self.assertNotEqual(plain.returncode, 0)
+        self.run_helper("--validation-commit", target)
+        self.assertTrue(self.run_helper("--verify")["verifiedAfterTests"])
+
 
 if __name__ == "__main__":
     unittest.main()

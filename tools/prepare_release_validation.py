@@ -12,8 +12,12 @@ import subprocess
 import tempfile
 
 
+def git_command(root: Path, *args: str) -> list[str]:
+    return ["git", "-c", f"safe.directory={root}", "-C", str(root), *args]
+
+
 def git(root: Path, *args: str) -> str:
-    return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+    return subprocess.check_output(git_command(root, *args), text=True).strip()
 
 
 def unchanged(root: Path) -> None:
@@ -35,23 +39,23 @@ def prepare(root: Path, validation: str, output: Path) -> dict:
         if not re.fullmatch(r"[0-9a-f]{40}", validation):
             raise ValueError("Validation commit must be an exact lowercase 40-digit SHA")
         available = subprocess.run(
-            ["git", "-C", str(root), "cat-file", "-e", validation + "^{commit}"],
+            git_command(root, "cat-file", "-e", validation + "^{commit}"),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if available.returncode:
-            subprocess.run(["git", "-C", str(root), "fetch", "--no-tags",
-                            "--depth=1", "origin", validation], check=True)
+            subprocess.run(git_command(root, "fetch", "--no-tags",
+                                       "--depth=1", "origin", validation), check=True)
         target = git(root, "rev-parse", validation + "^{commit}")
         changes = subprocess.check_output(
-            ["git", "-C", str(root), "diff", "--no-renames", "--name-only",
-             "-z", source, target]).decode().split("\0")
+            git_command(root, "diff", "--no-renames", "--name-only",
+                        "-z", source, target)).decode().split("\0")
         changed = [path for path in changes if path]
         if any(not path.startswith("tools/") for path in changed):
             raise ValueError("Validation commit changes files outside tools/")
         if target != source:
             validation_root = Path(tempfile.mkdtemp(
                 prefix="release-host-validation-", dir=os.environ.get("RUNNER_TEMP")))
-            subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach",
-                            str(validation_root), target], check=True)
+            subprocess.run(git_command(root, "worktree", "add", "--detach",
+                                       str(validation_root), target), check=True)
             for name in ("build", "managed_components", "sdkconfig"):
                 original = root / name
                 if original.exists():
@@ -61,7 +65,7 @@ def prepare(root: Path, validation: str, output: Path) -> dict:
     output.parent.mkdir(parents=True, exist_ok=True)
     patch = output.with_name("host-validation-patch.diff")
     patch.write_bytes(subprocess.check_output(
-        ["git", "-C", str(root), "diff", "--binary", source, target, "--", "tools/"]))
+        git_command(root, "diff", "--binary", source, target, "--", "tools/")))
     result = {
         "schema": 1, "sourceCommit": source, "validationCommit": target,
         "workflowCommit": os.environ.get("GITHUB_SHA", source),
