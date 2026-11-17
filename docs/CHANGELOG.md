@@ -3,6 +3,10 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## v1.1.3 · 本地测试 / Local testing · 2026-11-17
+
+- 撤回本次新增的 TXT 标题样式和 EPUB 内部章节题头独立分页，恢复此前排版行为；更早的 EPUB/MOBI 题头样式保留。/ Revert the added TXT heading styles and separate styled pages for internal EPUB chapters, restoring prior layout while retaining earlier EPUB/MOBI heading styles.
+
 ## v1.1.3 · 2026-11-17
 
 - 新增内存管理。

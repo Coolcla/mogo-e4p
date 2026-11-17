@@ -495,21 +495,15 @@ int main(void) {
     };
     EpdRect chapter_rect = {0, 0, 300, 120};
     assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
-    // 已确认的章首必须独占新页，且正文绘制跳过交给页面题头的标题块。
-    // Verified chapter starts own a new page, and body drawing skips the title blocks painted by chrome.
-    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 0 &&
-           book_layout_page_start_offset(1) == 10);
-    assert(book_layout_page_for_offset(10) == 1 && book_layout_page_for_offset(14) == 1);
-    char page_title[16];
-    assert(book_layout_page_chapter_title(0, page_title, sizeof(page_title)) && !strcmp(page_title, "One"));
-    assert(book_layout_page_chapter_title(1, page_title, sizeof(page_title)) && !strcmp(page_title, "Two"));
+    // PR9 不包含后来追加的块级 chapter_start 强制分页；这里验证其原始流式行为。
+    // PR9 excludes the later block-level forced chapter break; verify its original flow.
+    assert(book_layout_page_count() == 1 && book_layout_page_start_offset(0) == 0);
+    assert(book_layout_page_for_offset(10) == 0 && book_layout_page_for_offset(14) == 0);
     drawn[0] = 0; book_layout_draw_page(&fb, 0, chapter_rect, 10);
-    book_layout_draw_page(&fb, 1, chapter_rect, 10);
-    assert(!strcmp(drawn, "alphabeta"));
+    assert(!strcmp(drawn, "OnealphaTwobeta"));
     book_layout_set_chapter_lead(4, 30);
     assert(book_layout_build_blocks(chapters, strlen(chapters), chapter_blocks, 4, chapter_rect, 10));
-    assert(book_layout_page_count() == 2 && book_layout_page_start_offset(0) == 4 &&
-           book_layout_page_start_offset(1) == 10);
+    assert(book_layout_page_count() == 1 && book_layout_page_start_offset(0) == 4);
     book_layout_set_chapter_lead(0, 0);
     const char illustrated[] = "IMG\nAA\nIMG\nBB";
     blk_t illustrated_blocks[] = {
@@ -1046,11 +1040,7 @@ int main(void) {
     book_layout_set_images_visible(true);
     composed.blocks[3].chapter_start=true;
     assert(book_layout_build_blocks(composed.utf8,composed.len,composed.blocks,composed.count,mixed_box,10));
-    assert(book_layout_page_count()==2 &&
-           book_layout_page_start_offset(1) == composed.blocks[3].offset);
-    assert(book_layout_page_chapter_title(1, page_title, sizeof(page_title)) && !strcmp(page_title, "乙"));
-    drawn[0]=0; for (size_t i=0; i<2; ++i) book_layout_draw_page(&fb, i, mixed_box, 10);
-    assert(!strcmp(drawn, "甲"));
+    assert(book_layout_page_count()==1);
     html_text_free(&composed);
     const char *large="<img src='big.png'/>";
     assert(html_to_blocks(large,strlen(large),&composed)==ESP_OK);

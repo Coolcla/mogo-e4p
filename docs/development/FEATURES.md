@@ -8,6 +8,8 @@ Implemented/pending means code and repeatable entries exist, not device acceptan
 
 ## 当前能力 / Current Capabilities
 
+2026-11-17局部核对：TXT 不应用装饰题头，EPUB 同一内容文件内的章节标题恢复随正文排版；更早的 EPUB/MOBI 章首题头样式保留。13组相关宿主回归、S31构建及刷入启动通过，问题书籍的排版效果待用户确认；其他功能的验证状态不变。/ Checked locally on 2026-11-17: TXT uses body text without decorative headings, internal EPUB chapter headings flow with body text, and earlier EPUB/MOBI chapter-opening styles remain. Thirteen host suites, S31 build and flashed boot passed; layout of the reported books awaits user confirmation, without extending evidence for other features.
+
 阅读方向于2026-11-08局部核对，宿主回归与S31构建通过，真机待验收；不更新其他功能的验证结论。/ Reader orientation was checked separately on 2026-11-08 with host regressions and an S31 build; hardware acceptance is pending and other feature evidence is unchanged.
 
 共享图标、日历数字和拼音索引于2026-11-11完成无损压缩；`compact_assets`、`icon_generator`、`search`、相关UI宿主回归及S31产品构建通过，原像素和全部Unicode查询映射保持一致，真机显示与耗时待验收。/ Shared icons, calendar digits and the pinyin index were compacted on 2026-11-11; exact pixels, all Unicode lookup mappings, relevant UI host regressions and the S31 product build passed. Device rendering and timing remain pending.
