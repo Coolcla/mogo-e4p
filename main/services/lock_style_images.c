@@ -8,6 +8,7 @@
 #include "book_lock_bookmark.h"
 #include <dirent.h>
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,7 @@
 #define DISK_SLOTS 128
 #define CACHE_VERSION 2
 #define CACHE_MAGIC UINT32_C(0x4c544831)
+#define LOCK_SCAN_INITIAL_CAPACITY 64u
 typedef struct {
     uint32_t magic, version, width, height, bookmark, bytes;
     uint64_t key, checksum;
@@ -135,28 +137,42 @@ static int compare_items(const void *a,const void *b) {
     const lock_image_item_t *x=a,*y=b;
     int order=strcasecmp(x->name,y->name);return order?order:strcmp(x->path,y->path);
 }
+static bool scan_grow(lock_image_item_t **items,size_t *capacity,int count) {
+    if ((size_t)count<*capacity) return true;
+    if (count==INT32_MAX||*capacity>SIZE_MAX/(2u*sizeof(**items))) return false;
+    size_t next=*capacity*2u;
+    lock_image_item_t *grown=heap_caps_realloc(*items,next*sizeof(**items),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    if (!grown) return false;
+    memset(grown+*capacity,0,(next-*capacity)*sizeof(*grown));
+    *items=grown;*capacity=next;return true;
+}
 static lock_image_item_t *scan_images(unsigned generation,int *count) {
     *count=0;
-    lock_image_item_t *items=heap_caps_calloc(LOCK_IMAGES_MAX,sizeof(*items),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+    size_t capacity=LOCK_SCAN_INITIAL_CAPACITY;
+    lock_image_item_t *items=heap_caps_calloc(capacity,sizeof(*items),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
     if(!items)return NULL;
     const char *roots[]={"/sdcard/pictures","/sdcard/images","/sdcard"};
     for(unsigned r=0;r<3&&!cancelled(&generation);++r){
         DIR *dir=opendir(roots[r]);if(!dir)continue;
         struct dirent *e;
-        while(*count<LOCK_IMAGES_MAX&&!cancelled(&generation)&&(e=readdir(dir))){
+        bool complete=true;
+        while(!cancelled(&generation)&&(e=readdir(dir))){
             const char *ext=strrchr(e->d_name,'.');
             if(e->d_name[0]=='.'||!ext||(strcasecmp(ext,".png")&&strcasecmp(ext,".jpg")&&strcasecmp(ext,".jpeg")))continue;
-            lock_image_item_t *item=&items[*count];
-            if(snprintf(item->path,sizeof(item->path),"%s/%s",roots[r],e->d_name)>=(int)sizeof(item->path))continue;
+            lock_image_item_t candidate={0};
+            if(snprintf(candidate.path,sizeof(candidate.path),"%s/%s",roots[r],e->d_name)>=(int)sizeof(candidate.path))continue;
             struct stat st;
-            if(stat(item->path,&st)||!S_ISREG(st.st_mode)||st.st_size<=0||(uint64_t)st.st_size>BOOK_IMAGE_FILE_MAX)continue;
-            item->key=source_key(item->path,&st);
-            snprintf(item->name,sizeof(item->name),"%.*s",(int)sizeof(item->name)-1,e->d_name);
-            size_t length=strlen(item->name);
-            if(strlen(e->d_name)>length){while(length&&((unsigned char)e->d_name[length]&0xc0)==0x80)--length;item->name[length]=0;}
+            if(stat(candidate.path,&st)||!S_ISREG(st.st_mode)||st.st_size<=0||(uint64_t)st.st_size>BOOK_IMAGE_FILE_MAX)continue;
+            candidate.key=source_key(candidate.path,&st);
+            snprintf(candidate.name,sizeof(candidate.name),"%.*s",(int)sizeof(candidate.name)-1,e->d_name);
+            size_t length=strlen(candidate.name);
+            if(strlen(e->d_name)>length){while(length&&((unsigned char)e->d_name[length]&0xc0)==0x80)--length;candidate.name[length]=0;}
+            if(!scan_grow(&items,&capacity,*count)){complete=false;break;}
+            items[*count]=candidate;
             ++*count;
         }
         closedir(dir);
+        if(!complete)break;
     }
     qsort(items,*count,sizeof(*items),compare_items);
     return items;

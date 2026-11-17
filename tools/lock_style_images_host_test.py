@@ -40,6 +40,7 @@ static int64_t now_us;
 static size_t live,peak;
 static void *heap_caps_malloc(size_t n,int caps){(void)caps;if(alloc_fail)return NULL;size_t *p=malloc(n+sizeof(size_t));assert(p);*p=n;live+=n;if(live>peak)peak=live;return p+1;}
 static void *heap_caps_calloc(size_t n,size_t s,int caps){void *p=heap_caps_malloc(n*s,caps);if(p)memset(p,0,n*s);return p;}
+static void *heap_caps_realloc(void *ptr,size_t n,int caps){(void)caps;if(!ptr)return heap_caps_malloc(n,caps);if(alloc_fail)return NULL;size_t *old=(size_t *)ptr-1;size_t old_size=*old;size_t *next=realloc(old,n+sizeof(size_t));assert(next);*next=n;live+=n-old_size;if(live>peak)peak=live;return next+1;}
 static void release(void *p){if(p){size_t *n=(size_t *)p-1;live-=*n;free(n);}}
 static int xTaskCreate(void (*fn)(void *),const char *name,int stack,void *arg,int priority,void *handle){(void)name;(void)stack;(void)arg;(void)priority;(void)handle;assert(!scheduled);if(task_fail)return 0;scheduled=fn;++tasks;return pdPASS;}
 static void vTaskDelete(void *p){assert(!p&&!in_lock);}
@@ -118,7 +119,7 @@ int main(void){
  task_fail=1;lock_images_open();int count;bool finished;assert(!lock_images_catalogue(&count,&finished)&&finished);ask(a);assert(!lock_images_pixels(a,false,false,&state)&&state==LOCK_IMAGE_FAILED);lock_images_close();assert(!live);task_fail=0;
  // 超过目录与内存容量时有界淘汰，保留最近使用项。 / Populate beyond RAM and catalogue capacity; eviction is bounded and recently used slots survive.
  for(int i=0;i<80;++i){char file[80];snprintf(file,sizeof(file),"card/pictures/extra%02d.jpg",i);create(file,i+1);}
- lock_images_open();run();lock_image_item_t *items=lock_images_catalogue(&count,&finished);assert(finished&&items&&count==LOCK_IMAGES_MAX);free(items);
+ lock_images_open();run();lock_image_item_t *items=lock_images_catalogue(&count,&finished);assert(finished&&items&&count==83);free(items);
  for(int i=0;i<30;++i){char path[80];snprintf(path,sizeof(path),"/sdcard/pictures/extra%02d.jpg",i);ask(path);run();ready(path);assert(live<=RAM_SLOTS*LOCK_THUMB_BYTES);}
  before=decodes;io=reads;ask("/sdcard/pictures/extra29.jpg");run();assert(decodes==before&&reads==io);
  ask("/sdcard/pictures/extra00.jpg");run();ready("/sdcard/pictures/extra00.jpg");assert(reads>io);

@@ -155,13 +155,37 @@ static void text_fit(char *text, int px, int width) {
         text[n] = 0;
     }
 }
+static bool cover_load_list_cache(const char *path, const char *title, const char *author,
+                                  uint8_t gray[BOOK_COVER_W * BOOK_COVER_H]) {
+    unsigned width = 0, height = 0;
+    // 列表缓存已经是灰阶封面；票根只把它居中放回固定画布，不触发 EPUB 解码。
+    // The list cache is already grayscale; center it on the fixed ticket canvas without decoding the EPUB.
+    if (!book_cover_load_list_gray(path, title, author, gray, false, NULL, &width, &height) ||
+        !width || !height || width > BOOK_COVER_W || height > BOOK_COVER_H) return false;
+    if (width == BOOK_COVER_W && height == BOOK_COVER_H) return true;
+    const unsigned left = (BOOK_COVER_W - width) / 2u;
+    const unsigned top = (BOOK_COVER_H - height) / 2u;
+    for (unsigned y = height; y-- > 0;) {
+        memmove(gray + (top + y) * BOOK_COVER_W + left, gray + y * width, width);
+    }
+    for (unsigned y = 0; y < BOOK_COVER_H; ++y) {
+        uint8_t *row = gray + y * BOOK_COVER_W;
+        if (y < top || y >= top + height) memset(row, UI_GRAY_WHITE, BOOK_COVER_W);
+        else {
+            memset(row, UI_GRAY_WHITE, left);
+            memset(row + left + width, UI_GRAY_WHITE, BOOK_COVER_W - left - width);
+        }
+    }
+    return true;
+}
 static uint8_t *cover_load(const char *path, const char *title, const char *author) {
     uint8_t *gray = heap_caps_malloc(BOOK_COVER_W * BOOK_COVER_H,
                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     // The lock screen must not decode a potentially large EPUB while the
     // power key is being handled; use the shelf's cover cache when available.
     // 处理电源键时只读书架封面缓存，不在锁屏路径解码大 EPUB。
-    if (gray && !book_cover_load_gray(path, title, author, gray, false, NULL)) {
+    if (gray && !book_cover_load_gray(path, title, author, gray, false, NULL) &&
+        !cover_load_list_cache(path, title, author, gray)) {
         free(gray);
         gray = NULL;
     }
