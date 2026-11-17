@@ -1,0 +1,42 @@
+# 持久化与备份 / Persistence And Backup
+
+适用基线：2026-11-17，`2e2b9b9` 的源码、`partitions_16M.csv` 和当前文档工作区。以下是读写、备份字段与写入范围的静态核对，未执行擦除、格式化、迁移或设备恢复验收。
+Scope: source and partition layout at `2e2b9b9`, statically checked on 2026-11-17. Retention follows code and write ranges; destructive operations and device restoration were not tested.
+
+## 数据覆盖 / Data Coverage
+
+设备的 16 MiB flash 不等于单个固件容量：`ota_0`、`ota_1` 各为 `0x500000`（5 MiB），分别位于 `0x10000`、`0x510000`；`storage` 是 `0xA10000` 起的 `0x5E8000` 内部 FAT，`nvs` 是 `0xFF8000` 起的 32 KiB。这些是布局事实，活动槽必须当次读取。
+The device has 16 MiB of flash but each OTA slot holds 5 MiB. Internal FAT and tail NVS are separate data partitions; the active slot must be read for each operation.
+
+| 数据及所有者 / Data And Owner | 实际存储 / Storage | 现有备份与恢复 / Export And Restore | 兼容与源码依据 / Contract And Source |
+| --- | --- | --- | --- |
+| 系统/阅读偏好、首页布局、快捷栏 / Settings, Home, quick controls | NVS `read_pico`；布局 `home_regions`、`quick_layout` 等 / NVS keys | 设置 → 升级和恢复 → 保存与恢复；TF 根目录 `Pico-settings.backup`；含已定义字段和书籍记录，不是整份 NVS / Defined fields only | [settings.c](../../../main/settings/settings.c) 的保存/恢复字段，当前 v45；旧备份迁移，旧固件不能恢复新版 / Field-defined v45, legacy import |
+| 默认 WiFi 与移动网络路由 / Preferred WiFi and cellular policy | WiFi NVS `rp_wifi/profiles`，兼容 `credentials`；路由在 `read_pico` / Versioned profiles and settings | 仅默认 WiFi 一组（含明文密码）及移动网络设置；恢复一组保留其他网络，空 WiFi 记录清空所有网络 / One WiFi profile only | [WiFi 实现](../../../components/wifi_transfer/wifi_transfer.c)、settings 的 WiFi/network 尾块；最多八组不会全部导出 / Not all eight profiles |
+| 阅读进度、时长、票根汇总、书签、收藏、书名、移出书架 / Book records | NVS `rp_books`、`rp_ticket`、`rp_marks`、`rp_favs`、`rp_titles`、`rp_shelf` | 随设置备份中的 book history 流导出/恢复；按校验和允许字段处理 / Checked history stream | [book_history_backup.c](../../../main/book/book_history_backup.c) 的六命名空间白名单；不是手账明细 / Six namespaces, separate from journal |
+| 阅读手账、打卡与插画选择 / Journal, streak and scene | 内部 FAT `/flash/reading-journal-0.bin`、`-1.bin`，交替校验快照 / Dual snapshots | **不支持用户导出/恢复**，不在设置或书籍备份内 / No supported export | [reading_journal.c](../../../main/services/reading_journal.c)、[口径](READING_JOURNAL.md)；当月明细与跨月连续摘要不同 / Monthly detail and cross-month summary |
+| 分类名称、顺序与归属 / Shelf categories | 内部 FAT `/flash/.mogo-shelf-<书库身份>.0/.1` / Identity-scoped dual files | **不支持用户导出/恢复**；重扫只从仍存在的目录补入，不能重建纯手工分类 / Rescan is not restore | [app_book.c](../../../main/apps/app_book.c) 设置 prefix，[book_collection.c](../../../main/book/book_collection.c) 双副本事务 / Dual-copy transactions |
+| 上次分类 / Last category | NVS `read_pico/sc_<身份哈希>`，blob 校验完整书库身份 / Identity-checked blob | 不在设置备份中；内部 FAT 与 NVS 独立，丢失分类文件时选择值不能还原归属 / Excluded from backup | [settings.c](../../../main/settings/settings.c) 的 `app_settings_shelf_category` / Selection storage |
+| 天气城市、偏好与缓存 / Weather | NVS `kiiko_weather/prefs`、`cache` | 不包含；换机重新选择城市，缓存可重新联网获取 / Excluded; reselect/refetch | [weather_service.c](../../../main/services/weather_service.c)、[天气](WEATHER.md) |
+| PIN、启动检查点、自动 OTA 偏好 / PIN, resume, auto OTA | `pico_lock/credential`、`pico_startup/state`、`read_pico/auto_ota` | 普通配置不导出/覆盖 PIN；检查点和自动 OTA 偏好不随备份迁移 / Excluded | [lock_pin.c](../../../main/lock/lock_pin.c)、[boot_state.c](../../../main/boot/boot_state.c)、settings；PIN 不是卡文件加密 / PIN is not card encryption |
+| 书籍、字体、图片、词库与原始文件 / Content | TF `/sdcard` 的 `books`、`fonts`、`pictures`、`dictionaries` 及其他原目录；内部书库 `/flash/books` | 配置仅保存路径；TF 用电脑/USB 复制实际文件（含隐藏文件）。内部书库不随配置导出，重要原书另留副本 / Copy real files separately | [book_store.c](../../../main/book/book_store.c)、[词库](READER_DICTIONARY.md)；路径、大小或内容变化可能无法关联原记录 / Identity changes affect records |
+| 封面、分页/书摘、锁图与扫描缓存、日志 / Caches and logs | TF `.readpico/`（如 `covers`、`index`、`locks`）、内部 `/flash/.mogo-shelf-catalog-*.bin`、TF `batt.log` | 不在配置备份；TF 可单独复制。可重建缓存不等于手工分类；旧书摘可能无法原样重现 / Separate file copy; caches differ from authored data | [book_index_cache.c](../../../main/book/book_index_cache.c)、[book_shelf_cache.c](../../../main/book/book_shelf_cache.c)、[book_cover.c](../../../main/book/book_cover.c) |
+| BLE 开关、已配对设备与按键学习 / BLE state and bindings | 开关在 `read_pico`；组件独立 `rp_blestate`、`rp_blebond`、`rp_blebind` / Component namespaces | 设置可保存蓝牙开关，配对/学习记录不在六类 book history 或设置字段流中；需重新配对学习 / Pairing and learning excluded | [ble_page_turner.c](../../../components/ble_page_turner/src/ble_page_turner.c)、[蓝牙](BLUETOOTH.md) |
+| 对时、OTA 尝试、电量及诊断检查点 / Service checkpoints | `kiiko_clock/last_ntp`、`ota_auto/last_try`、`pmu/soc` 与 `soc_ver`、`battlog/checkpoint`、`sleep_diag` / NVS namespaces | 不在普通配置备份；重新对时/采样或按模块校验恢复，不作为用户记录迁移 / Excluded from ordinary backup | [时间](../../../main/time/time_service.c)、[自动升级](../../../main/ota/ota_auto.c)、[电源](../../../components/device_power/device_power_metalio.c)、[睡眠](../../../main/power/sleep.c) |
+| 面板 VCOM 标定 / Panel VCOM calibration | S31 的 ESP NVS `panel/vcom`；启动加载，仅出厂标定流程可保存，产品页不可修改 / Loaded at boot; factory-only writes | 不在设置备份内；擦除 NVS 会丢失标定，须重新出厂标定 / Excluded from settings backup; NVS erase requires factory calibration again | [电源后端](../../../components/device_power/device_power_metalio.c)、[出厂流程](../../../main/factory/vcom_setup.c)、[组件契约](../../../components/device_power/README.md)、[硬约束](../../../AGENTS.md) |
+| 触控固件 / Touch firmware | 独立触控芯片 / Separate touch controller | 不在 ESP 设置备份；ESP 固件回退不回退触控固件 / Independent of ESP backup/rollback | [驱动契约](../../../components/cst836u/README.md) |
+
+## 操作影响 / Operation Effects
+
+| 操作 / Operation | NVS / 内部 FAT | TF 文件 / Card Files | 边界与依据 / Limits |
+| --- | --- | --- | --- |
+| 常规联网 OTA / Online OTA | 同布局时仅写未使用应用槽并更新 otadata，通常保留数据 / Retained in the same layout | 不主动删除 / Not deleted | [ota_online.c](../../../main/ota/ota_online.c)、[ota_update.c](../../../main/ota/ota_update.c)；启动迁移和存储错误仍有独立风险 / Startup migrations and faults remain separate |
+| 官方完整 USB 包或网页非全擦除 / Non-erasing full package | **仅同布局、实际写入区间不重叠时**通常保留尾部 NVS/FAT；不能只凭 full.bin 名称保证 / Conditional on actual ranges | 不主动删除 / Not deleted | [package_flash.py](../../../tools/package_flash.py)、分区表与同版包 README；本仓库旧站点目录缺失，未核验线上刷写行为 / Live website behavior not verified |
+| 本地 flash_fast 应用分区写入 / Local app-only helper | 当次识别活动槽，不改数据分区 / Reads the actual slot | 不写卡 / No card writes | [flash_fast.py](../../../tools/flash_fast.py)；需独立刷机授权，完整校验与启动是不同步骤 / Authorization, verification and boot are separate |
+| 全片擦除 / Full chip erase | NVS 与 FAT 全失，包括无导出的手账、分类和 PIN / All internal data lost | 独立 TF 不随芯片擦除 / Separate card retained | 配置备份只能恢复上述覆盖字段；当前没有承诺导出全部用户数据的入口 / Backup coverage is limited |
+| TF 格式化 / Card format | 不直接擦内部卷；内部路径引用可能失效 / References may become stale | 书籍、资源、词库、缓存与卡上备份全失 / Card data lost | 格式化前复制原文件；卡初始化失败不等于必须格式化 / Preserve files; init failure is not proof of corruption |
+| 内部 FAT 格式化或损坏 / Internal FAT loss | 丢失内部书库、手账、分类等；NVS 可仍在 / FAT data lost independently | TF 原文件仍在 / Card originals remain | `book_store_prepare_data` 不格式化，但内部书库路径 `flash_root` 的挂载允许失败后格式化；不承诺所有启动路径无格式化 / Data-only and library mounts differ |
+| 从旧头部 NVS/旧 storage 布局迁移 / Legacy layout migration | 连续整机镜像会用 FF 填充头部空洞，旧 NVS 可能被覆盖；storage 几何变化可能导致格式化 / Old head NVS and FAT geometry at risk | TF 文件仍需独立保留 / Preserve card separately | [partitions_16M.csv](../../../partitions_16M.csv) 的布局/磨损均衡约束；不是当前布局内普通升级 / Not a same-layout upgrade |
+| 配置恢复或降级 / Config restore or downgrade | 覆盖支持字段，不回滚所有数据；旧固件可能拒绝新格式或忽略新字段 / Limited field restore | 要保留相同原路径与内容 / Keep originals | settings 和 history 恢复实现；未执行故障注入或跨版设备恢复 / Device/fault restoration untested |
+
+没有支持的导出入口的数据，不建议用“先备份全部数据”代替说明。若必须保留这些数据，先避免全擦除、内部格式化和未经核验的布局迁移；配置备份文件本身也要另存到电脑。
+For data without supported export, avoid destructive operations until retention is established. Keep the configuration backup off-device as well; it is not a complete device image.

@@ -1,6 +1,6 @@
 # mogo
 
-本地开发版支持正文长按选字、拖选词语，松手打开离线字典；释义、读音及按钮全部跟随当前阅读字体，不使用界面内置字库补字。词语未收录时点「逐字」，长内容用「上一屏 / 下一屏」查看。正文与留白长按不再打开目录，目录保留在阅读工具栏。未安装时点「下载安装」，通过已保存的 WiFi 从官网下载并校验后自动安装到 TF 卡，完成后继续查询；关闭卡片可取消。也可将 `chinese.mgdict` 手工放入 TF 卡 `dictionaries/` 目录；来源、许可、字体限制和转换方法见[阅读字典](docs/development/guides/READER_DICTIONARY.md)。本地代码与宿主验证不代表已发布或已通过实屏验收。
+本地开发版支持正文长按选字、拖选词语，松手打开离线字典；释义、读音及按钮全部跟随当前阅读字体，不使用界面内置字库补字。词语未收录时点「逐字」，长内容用「上一屏 / 下一屏」查看。正文与留白长按不再打开目录，目录保留在阅读工具栏。未安装时用电脑从官网说明书下载完整 ZIP，将整个 `dictionaries` 目录复制到 TF 卡根目录，保留来源、署名与完整许可，至少预留 80 MB；设备不下载或自动安装词库。来源、许可、字体限制和转换方法见[阅读字典](docs/development/guides/READER_DICTIONARY.md)。本地代码与宿主验证不代表已发布或已通过实屏验收。
 
 > 当前仓库目标为 Metalio E-INK4 Plus（ESP32-S31）。开发请读[上手指南](docs/ONBOARDING.md)、[代码结构](docs/ARCHITECTURE.md)和[测试工具](tools/README.md)；以下上游旧板介绍不作为当前硬件或构建参数。
 
@@ -10,13 +10,13 @@
 
 > **使用与授权：** 今后明确标注适用[个人学习许可](licenses/kiikoread-Personal-Study-1.0.txt)的新增原创内容，允许个人学习，未经单独书面授权不得商用。**此政策不重新许可 rc93 及以前的代码或固件，不撤销既有 Apache-2.0 授权，也不覆盖第三方许可。** 完整范围见 [LICENSE](LICENSE)。
 
-项目对外名称统一为 **mogo**，网页对设备使用「墨水屏」。保留原 GitHub 仓库网址、升级地址与备份文件名；固件界面也统一使用 mogo。纯白官网包含界面预览、功能介绍、版本选择、网页刷机、Bin 下载和[在线使用说明](flash/manual.html)。运行 `python3 tools/stage_public_flash.py _site` 生成公开网站，GitHub Pages 或 Cloudflare Pages 均可使用 `_site` 作为发布目录。说明书从 `docs/user-manual.zh-CN.json` 同源生成，运行 `tools/build_user_manual.py --font /path/to/a/static-CJK.ttf` 可更新 HTML 与 PDF（需要 Python ReportLab）。
+项目对外名称统一为 **mogo**，网页对设备使用「墨水屏」。保留原 GitHub 仓库网址、升级地址与备份文件名；固件界面也统一使用 mogo。纯白官网包含界面预览、功能介绍、版本选择、网页刷机、Bin 下载和[在线使用说明](https://mogo.mantake.shop/docs/firmware/manual/)。本 checkout 不含旧 `flash/` 站点输入，不能直接运行旧站点打包。两份说明书 JSON 及生成器的现行范围和缺少前提见[说明书维护](docs/development/guides/MANUAL.md)。
 正式固件 Bin 发布到当前远端仓库的 [GitHub Releases](https://github.com/chopper1026/mogo-e4p/releases)。版本标签推送后，构建将同一批固件提交到 OTA 平台草稿，须经管理员审核后上线。设备仅从 `https://mogo.mantake.shop/api/v2/ota/devices/mogo-e4p/update.json` 读取升级清单，连接失败或清单无效时直接提示失败；清单中的镜像仍只接受平台 `/files/firmware/ota/` 下的 HTTPS 镜像及已有 GitHub 来源。已发布的固定下载与升级地址保留；天气接口也使用 `https://mogo.mantake.shop`。
 
 
 [English](README.md) · [日本語](README.ja-JP.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
-这是为 **MindReset RDP-G01-W** 墨水屏开发板制作的独立阅读固件，源码公开，许可按上述范围分别适用。项目基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
+这是为 **Metalio E-INK4 Plus（ESP32-S31）** 制作的独立阅读固件，源码公开，许可按上述范围分别适用。项目基于 [MindReset 官方示例固件](https://github.com/MindReset/read_pico_firmware) 开发，**并非 MindReset 官方发布**。
 
 界面包括首页、书架、文件管理和设置；可阅读 TF 卡中的 EPUB、TXT，保存阅读进度，并通过 WiFi、设备热点或 USB 传输文件。
 
@@ -117,19 +117,19 @@ WiFi 设置可保存最多 8 个网络，原来保存的网络自动兼容。「
 
 系统升级页提供联网 OTA，TF 卡升级入口已隐藏；首次安装或修复仍通过官网完整刷机。
 
-每次发布运行 `python3 tools/package_flash.py build/版本号 flash`，从同一编译输出生成全量包、TF Bin 和 OTA 清单；网页部署前再次核对设备型号、双槽布局、基础包版本与能力、Bin 大小及 SHA256。分区或基础升级能力不符合要求时拒绝发布，需重新生成兼容基础包。
+正式发布的唯一交付规则见[发布契约](docs/development/guides/RELEASE.md)，平台草稿操作见[平台 OTA](docs/development/guides/PLATFORM_OTA.md)；本地包留在忽略的构建目录，不写旧发布目录。
 
 ## 在线网页刷机
 
-连接按钮上方可选择最新正式版或原发布的 **rc86 / rc85**，发布时间与 TF 升级 Bin 下载跟随选择。所有版本默认保留设备数据。
+在官网选择适配本机的正式版，核对版本、发布时间、说明和校验值；旧上游 rc 号不能证明 S31 兼容。同布局且不全擦除时通常保留内部数据；旧布局迁移、内部卷格式化和全擦除存在丢失风险，详见[持久化与备份](docs/development/guides/PERSISTENCE.md)。
 
-打开 [HTTPS 在线刷机页](https://wegooo-cell.github.io/read-pico-reader/)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **RDP-G01-W 墨水屏**，选择设备串口并按提示刷入。**刷机前确认型号。**普通刷机保留设备设置、阅读记录和 TF 卡内容；固件不附带书籍或预设的阅读记录。
+打开 [HTTPS 在线刷机页](https://mogo.mantake.shop/flash)。在电脑端 Chrome 或 Edge 中，用支持数据传输的 USB 线连接 **Metalio E-INK4 Plus / ESP32-S31**，选择设备串口并按提示刷入。**刷机前确认型号。**同布局且不全擦除时通常保留内部数据，旧布局迁移和格式化例外见数据清单；固件不附带书籍或预设的阅读记录。
 
 如果运行本固件的设备无法自动进入下载模式，请按住机身的 **BOOT 键**再上电，等电脑重新识别串口后再用网页刷机。
 
 刷机页现有图文新手指南：**连接 mogo → 选择串口 → 确认安装并等待完成**。页面下方也介绍了首页、书架、文件管理和设置，以及常见问题。
 
-刷机清单为 [`flash/manifest.json`](flash/manifest.json)，写入引导程序、分区表、应用程序和 OTA 数据分区；不会覆盖现有 NVS 设置与内置书籍分区。网页由 [Pages 工作流](.github/workflows/pages.yml) 按明确的文件清单部署，不上传本机书籍、备份或额外字体包。[查看更新日志](docs/CHANGELOG.md)。
+当前 checkout 不含旧 `flash/manifest.json` 站点输出；官网交付独立维护。本仓库 [Pages 工作流](.github/workflows/pages.yml) 仍调用旧 `stage_public_flash.py` 发布站点；因其源目录缺失，不能视为当前可构建或已经上线。完整 USB 包以同版 README、分区表与校验清单为准；同布局且无全擦除时通常不覆盖尾部 NVS 和内部 FAT，旧布局迁移例外见[数据风险](docs/development/guides/PERSISTENCE.md)。[查看更新日志](docs/CHANGELOG.md)。
 
 设置 → 个性化功能 → 阅读背景，先打开 TF 卡 `pictures` 图片目录，过滤 Mac `._` 和其他隐藏文件。点选 JPG/JPEG/PNG 进入预览，上下滑动切换，点预览图弹确认框后生效；「关闭阅读背景 · 恢复白底」一键清除。交互与壁纸选择一致，解码在后台分步完成。背景固定铺满整屏，不随边距和信息栏显隐变化，文字叠加其上。按屏幕原尺寸保留原图灰度和细节，不强制淡化；预览和实际阅读使用同一份16灰阶缓存，翻页直接复用。推荐 **684×1216** 竖屏、不透明浅色非交错8位灰阶PNG或普通JPG，建议1MiB以内以缩短加载。缺失、解码失败或内存不足时回退白底。
 
@@ -161,7 +161,7 @@ All main controls fit on one sheet, with each visibility switch beside its heigh
 
 ## 自行编译
 
-需要 ESP-IDF **v6.1**，目标芯片为 ESP32-S3：
+需要 ESP-IDF **v6.1**，目标芯片为 ESP32-S31：
 
 ```sh
 idf.py --preview set-target esp32s31
@@ -255,3 +255,5 @@ EPUB 正文每章从新页开始，章节标题与正文开头同页；同一正
 
 头像首次裁切后会将原比例灰阶成品存到 TF 卡缓存；首页与资料卡按各自尺寸直接读取，不重解原图。更换或删除源图、缓存损坏时自动重建或回退默认头像。
 字重面板用横向胶囊的减/加按钮，每次微调 1/16 像素覆盖率，范围 −2 到 +2 像素，共 65 档；0 保留原始笔画。
+
+安装、全擦除、格式化与换机前请核对[持久化与备份覆盖](docs/development/guides/PERSISTENCE.md)。配置文件不包含手账/打卡/插画、分类/上次分类、天气、PIN、自动 OTA 检查偏好；WiFi 只含默认网络。

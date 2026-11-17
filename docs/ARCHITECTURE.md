@@ -3,8 +3,11 @@
 本项目的产品目标是 Metalio E-INK4 Plus（ESP32-S31）。构建入口是根目录与 main 的 CMakeLists.txt；页面以 app_registry.c 和 app_desc_t 为准。
 The product targets Metalio E-INK4 Plus (ESP32-S31). Root/main CMakeLists.txt define the build; app_registry.c and app_desc_t define pages.
 
-最近静态核对：2026-11-04（Asia/Shanghai），范围为当前工作区的构建与页面入口、主要服务边界及持久化接口，不代表全功能重新验收。[功能全景](development/FEATURES.md)维护当前能力与证据边界，[开发入口](development/INDEX.md)维护资料权威。
-Last statically checked on 2026-11-04 (Asia/Shanghai) for current build/page entries, major service boundaries and persistence interfaces, not complete functional reacceptance. The feature inventory owns current capability/evidence scope; the development index owns document authority.
+首次静态盘点基线：2026-11-04（Asia/Shanghai），范围为当前工作区的构建与页面入口、主要服务边界及持久化接口，不代表全功能重新验收。[功能全景](development/FEATURES.md)维护当前能力与证据边界，[开发入口](development/INDEX.md)维护资料权威。
+Initial static inventory on 2026-11-04 (Asia/Shanghai) for current build/page entries, major service boundaries and persistence interfaces, not complete functional reacceptance. The feature inventory owns current capability/evidence scope; the development index owns document authority.
+
+2026-11-17在 `2e2b9b9` 与文档工作区局部复核构建/注册入口和存储所有权；未重新执行产品测试、构建或设备验收。各模块历史验证仍以[功能全景](development/FEATURES.md)的日期、快照和覆盖为限。
+A scoped static review on 2026-11-17 covered build/registry and persistence ownership at `2e2b9b9` plus documentation edits. No new product execution; feature evidence retains its original snapshot and coverage.
 
 ## 系统与主路径 / System And Main Flows
 
@@ -33,10 +36,14 @@ The Bluetooth helper owns subviews, visible peer snapshots and layout; Device Se
 | 系统与阅读偏好 / System and reader settings | `main/settings` 持有 NVS 与备份协议；原键、备份文件名及旧格式兼容独立于源码目录。票根背景使用独立 `ticket_bg` 键，v37 备份追加校验尾块，旧备份回落透明；壁纸显示方式使用 `wall_mode`，锁屏图缓存身份包含壁纸与显示方式。`lock_face` 单字节原子编码主样式及日历子样式，缺省读取旧 `lock_ui`；备份 profile 位6记录壁纸显示方式，旧固件忽略该位。/ Settings owns NVS/backup contracts; keys, filenames and compatibility do not follow source moves. Ticket backgrounds use `ticket_bg` and a checked v37 tail, defaulting legacy backups to transparent; wallpaper fit uses `wall_mode`, and lock-art identities include both wallpaper and fit. The backup profile bit 6 records wallpaper fit while older firmware ignores it. A single atomic `lock_face` byte packs the active style/calendar variant, falling back to legacy `lock_ui` when absent. |
 | WiFi 凭据 / WiFi credentials | `wifi_transfer` 在 `rp_wifi/profiles` 的版本化 blob 保存最多八组，缺少新键时兼容旧 `credentials`；最近选择的网络为默认，公开快照不含密码。现有 TF 备份只导出默认网络；单网络恢复保留其他项，空记录清空全部。/ A versioned blob holds eight profiles with legacy fallback only when the new key is absent. The latest selection is preferred and public snapshots exclude passwords. Existing TF backups export only that network; restoring one retains others, while an empty record clears all. |
 | 首页布局与天气 / Home and weather | `read_pico/home_regions` 一次保存上下布局及迷你书库模式，保留旧两位编码并扩展v2字节，沿用v33起的校验尾块；`kiiko_weather` 独立保存城市、偏好和有期限的缓存，不纳入设置/书籍备份。/ Atomic Home layout and mini-library mode share the checked backup tail introduced in v33, with legacy and v2 byte encodings; standalone weather state/cache does not. |
+| 分类与上次选择 / Categories and selection | `book_collection` 持有内部 FAT 的身份双副本；上次选择另在 settings 的 NVS 身份 blob，两者不纳入配置备份。/ Internal dual files and a separate identity-checked NVS selection are excluded from backup. |
 | 阅读手账与打卡 / Journal and streak | UI任务服务将当月逐书明细、跨月七日时长/此前连续天数和共享插画写入内置卷双快照；KJR2兼容读取KJR1，非格式化挂载、不依赖TF卡；不纳入设置/书籍备份，未知历史不补造。/ The UI-thread service owns internal dual snapshots of monthly rows, cross-month seven-day totals/preceding run and scenes; KJR2 reads KJR1 without formatting or SD dependency. Excluded from backups, with no invented history. |
 | 书籍、字体、图片与缓存 / Content and caches | TF/内部书籍库由 `book_store` 与媒体/USB 服务交接；`.readpico` 缓存、进度、书签及资源借用保留既有标识。/ Content stores coordinate with media/USB; retain cache/progress/bookmark identities and borrowing contracts. |
 | 恢复与升级 / Resume and updates | `main/boot` 保存恢复检查点；OTA 模块校验清单、镜像和槽位，Flash 写入与显示供电保护互斥。/ Boot owns resume checkpoints; OTA validates feeds/images/slots and coordinates flash writes with display guards. |
 | 网站与平台 / Website and platform | 后端凭据、供应商许可、管理员发布、官网部署不由固件构建证明；不把草稿提交当成上线。/ Firmware builds do not establish credentials, provider permissions, administrator publication or deployment. |
+
+完整数据位置、导出/恢复支持与布局迁移风险见[持久化与备份](development/guides/PERSISTENCE.md)；本节只维护所有权。
+See the persistence matrix for actual paths, backup support and layout risks; this section owns module boundaries.
 
 ## 目录职责 / Ownership
 
@@ -76,6 +83,18 @@ After frontlight and radios stop, board sleep cuts the P14 Bluetooth/amplifier s
 
 网络承载由 `main/services/network_service` 统一管理，日期、天气与 OTA 通过租约使用用户选择的 Wi-Fi、4G 或自动路由；租约期间不能关闭对应无线。`main/services/cellular` 负责运行时 NT26 探测、固定内置 SIM、注册/IP 就绪及休眠交接；未检测到模块时隐藏移动网络入口，固件与 OTA 身份不拆分。见 [NETWORK.md](development/guides/NETWORK.md)。
 `main/services/network_service` owns Wi-Fi/cellular/Auto routing and radio-protecting leases for time, weather and OTA. `main/services/cellular` owns runtime NT26 detection, internal-SIM configuration, registration/IP readiness and sleep handoff. Hide mobile controls when hardware is absent and retain one firmware/OTA identity.
+
+### 自有组件入口 / First-party Component Entries
+
+| 路径 / Path | 职责 / Role |
+| --- | --- |
+| `components/board_support/` | 板级 BSP：I2C、EPD 板定义与扫描时序、TF 卡、蜂鸣器、flash HPM。/ Board BSP. |
+| `components/book_search/` | 离线拼音/首字母/英文书名匹配，设备和网页共用；字表由工具生成。/ Shared offline pinyin, initials and English matching with a generated table. |
+| `components/device_power/` | 电量、充电、RTC 与电源键接口；S31 选 Metalio 后端，旧 CW32 线格式在 `pmu_protocol.h`。/ Battery, charging, RTC and power keys; S31 selects Metalio, with the legacy CW32 wire format in `pmu_protocol.h`. |
+| `components/wifi_transfer/` | 热点与已有 WiFi 传书、配网和校时会话。/ AP/STA book transfer, provisioning and time-sync sessions. |
+| `components/epdiy/` | 上游裁剪 fork（LCD 路径）。改动清单在其 LICENSE。不要为注释去改它。/ Trimmed upstream fork. Leave it alone for comment work. |
+| `components/cst836u/` `sc7a20h/` `fca9555/` | 当前触摸、加速度计及扩展口驱动；旧名称包含 FT6336U/TCA9555 适配。/ Current touch, accelerometer and expander drivers, including FT6336U/TCA9555 adaptations under legacy names. |
+| `components/e0470_epaper_waveform/` | 面板波形与裁剪。`waveforms/*.h` 是数据表。/ Panel waveforms. |
 
 ## 依赖规则 / Dependency rules
 
@@ -141,8 +160,8 @@ idf.py --preview build
 结构检查覆盖根目录归属、跨目录头文件依赖、私有头搜索路径、产品源文件登记和既有测试入口；阅读回归执行真实模块及对应宿主替身，并保留 ASan/UBSan。构建和宿主测试不能替代设备显示、睡眠、触摸与存储验收。
 Structural checks cover root ownership, header boundaries and private search paths, product source registration and existing test entry points. Reader regressions run real modules with host doubles and ASan/UBSan. Builds and host tests do not replace device display, sleep, input or storage acceptance.
 
-GitHub 构建入口为 `.github/workflows/build.yml`，正式标签的同源固件、交付物与 OTA 草稿入口为 `.github/workflows/ota-submit.yml`。发布授权、Release 命名、不可覆盖附件和官网/TF/OTA 一致性以 AGENTS 为准；本地治理不触发这些操作。
-GitHub build and official-tag artifacts/OTA drafts enter through the build and OTA workflows. AGENTS governs publication authority, naming, immutable assets and website/TF/OTA consistency; local governance triggers none of them.
+GitHub 构建入口为 `.github/workflows/build.yml`，正式标签的同源固件、交付物与 OTA 草稿入口为 `.github/workflows/ota-submit.yml`。发布授权、Release 命名、不可覆盖附件和官网/TF/OTA 一致性以[正式发布契约](development/guides/RELEASE.md)为准；本地治理不触发这些操作。
+GitHub build and official-tag artifacts/OTA drafts enter through the build and OTA workflows. The release contract governs publication authority, naming, immutable assets and website/TF/OTA consistency; local governance triggers none of them.
 
 旧移植评估、rc68/rc69 和旧官网维护资料保留当时事实，不覆盖当前 S31 源码。本 checkout 不含旧 `flash/` 站点目录；仍在仓库的说明书输入和生成器不代表站点可直接构建或已经部署。具体能力、证据缺口与适用测试见功能全景。
 Historical port/S3/site documents do not override current S31 code. This checkout lacks the old flash-site directory; retained manual inputs/generators do not establish a buildable or deployed site. See the feature inventory for capability/evidence gaps.

@@ -47,7 +47,7 @@ mogo 是面向 **Metalio E-INK4 Plus（ESP32-S31）** 的独立阅读固件，�
 
 ### 1. 安装固件
 
-确认设备是 **Metalio E-INK4 Plus / ESP32-S31**。在电脑端 Chrome 或 Edge 中打开[网页刷机页](https://mogo.mantake.shop/flash)，连接 USB 数据线，核对所选固件的设备型号后按页面提示操作。刷写前先备份重要设置与阅读记录。
+确认设备是 **Metalio E-INK4 Plus / ESP32-S31**。在电脑端 Chrome 或 Edge 中打开[网页刷机页](https://mogo.mantake.shop/flash)，连接 USB 数据线，核对所选固件的设备型号后按页面提示操作。刷写前保存可导出的配置并另行复制 TF 卡文件；手账、打卡和分类等没有现成导出入口，先核对[备份覆盖与数据风险](docs/development/guides/PERSISTENCE.md)。
 
 也可以在 [GitHub Releases](https://github.com/chopper1026/mogo-e4p/releases/latest) 下载完整 USB 刷机包，按包内 `README.txt` 操作，并用 `SHA256SUMS` 核对文件。
 
@@ -97,7 +97,7 @@ mogo 是面向 **Metalio E-INK4 Plus（ESP32-S31）** 的独立阅读固件，�
 
 正文长按约半秒选字，拖动可扩选词语，松手打开离线释义卡片；长按两端圆点可调整选区，未收录的词语可点「逐字」查询。卡片全部文字使用当前阅读字体，缺字会提示；「上一屏 / 下一屏」查看完整读音、释义和例句。目录统一从底部工具栏进入，正文与留白长按不再打开目录。
 
-未安装词库时，点卡片中的「下载安装」，设备通过已保存的 WiFi 从官网下载词库、来源和许可，校验后自动安装到 TF 卡并继续查词。请退出 USB 读卡模式并预留足够空间（当前包约 72 MB）；关闭卡片可取消，失败可重试。也可手工将 `chinese.mgdict` 放入 TF 卡根目录的 `dictionaries/`。安装后离线查询，释义覆盖取决于词库，生僻字显示取决于阅读字体。触摸、实屏和真实网络/TF 卡安装待验收；详见[阅读字典](docs/development/guides/READER_DICTIONARY.md)。
+词库需在电脑打开官网说明书下载完整 ZIP，解压后把整个 `dictionaries` 目录复制到 TF 卡根目录，保留来源、署名及完整许可；核心文件为 `dictionaries/chinese.mgdict`。设备只离线查询，不提供词库下载安装按钮。复制前退出阅读及 USB 独占冲突，预留至少 80 MB（另存旧词库需额外空间），完成后安全弹出。手工文件优先，兼容旧安装目录；缺库或损坏会提示重新下载。实际触摸、实屏及 TF 冷热查询待验收；详见[阅读字典](docs/development/guides/READER_DICTIONARY.md)。
 
 ### MOBI 支持范围
 

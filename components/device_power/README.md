@@ -17,7 +17,7 @@ The local component is `device_power`, derived from `mindreset/read_pico_pmu`; r
 - `device_power_cmd()`：支持 RTC 读时与同步；未实现的旧命令返回 `ESP_ERR_NOT_SUPPORTED`。/ Supports RTC reads and sync; unimplemented legacy commands return `ESP_ERR_NOT_SUPPORTED`.
 - 电源键：TCA9555 P17 采样，去抖后提供短按、长按和唤醒消费接口。/ Samples TCA9555 P17 and exposes debounced short/long press and wake-consumption APIs.
 - 电源交接：`device_power_report_sleep()` 返回不支持，由应用按当前板路径转入关机；`device_power_power_off()` 发送关机脉冲，耗尽重试后进入 ESP 深睡。/ Soft sleep reports not supported so the application escalates along the current board's power-off path; power-off sends the pulse train and falls back to ESP deep sleep after its retry limit.
-- 面板 VCOM：启动读取已有标定值，写入接口仅供出厂流程使用。/ Reads existing calibration at boot; the write API is reserved for factory setup.
+- 面板 VCOM：S31 后端将标定值保存在 ESP NVS `panel/vcom`，启动时加载；`device_power_vcom_set()` 仅供出厂标定流程保存，产品页不提供修改入口。该值不在设置备份内，擦除 NVS 后须重新出厂标定；板级上电应用电压与持久化存储是不同步骤。/ The S31 backend stores calibration in ESP NVS `panel/vcom` and loads it at boot. `device_power_vcom_set()` is reserved for factory calibration; product pages provide no editing entry. Settings backups exclude it, so erasing NVS requires factory calibration again. Applying voltage during panel power-on is separate from persistence.
 
 ## 电量显示 / Battery display
 
