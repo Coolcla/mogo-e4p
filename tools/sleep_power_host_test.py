@@ -56,6 +56,7 @@ static int step, fault, clears;
 static bool buzzer, acc_on, transfer_ok = true, cellular_ok = true, ota;
 static bool cover_ok = true, avatar_ok = true;
 static bool book_cover_jobs_quiesce(unsigned ms) { assert(ms == 2000); return cover_ok; }
+static bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 static bool ui_avatar_quiesce(unsigned ms) { assert(ms == 2000); return avatar_ok; }
 static int tp_mode, touch_wakes, acc_ups, acc_downs, cpu_requests;
@@ -277,6 +278,7 @@ settings_header = (ROOT / 'main/settings/settings.h').read_text()
 style_start = settings_header.index('typedef enum {', settings_header.index('/// 锁屏睡眠方式'))
 style_enum = settings_header[style_start:settings_header.index('} app_shutdown_style_t;', style_start) + len('} app_shutdown_style_t;')]
 timed_unit = r'''
+#include <stdlib.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -292,7 +294,15 @@ static unsigned waits, saves, marks, offs;
 static bool save_ok, off_success;
 static app_wake_source_t next_wake;
 static jmp_buf powered_off;
-static uint8_t framebuffer[1];
+static uint8_t framebuffer[684u*1216u/2u];
+#define MALLOC_CAP_SPIRAM 1
+#define MALLOC_CAP_8BIT 2
+static void *power_original;
+static void *heap_caps_malloc(size_t n,int caps){(void)caps;power_original=malloc(n);return power_original;}
+static unsigned shutdown_paints,lock_restores;
+static bool app_shutdown_present(EpdiyHighlevelState *hl){assert(hl);++shutdown_paints;framebuffer[0]=0xa5;return true;}
+static void restore_lock_after_shutdown(EpdiyHighlevelState *hl,const uint8_t *saved){assert(hl&&saved&&saved[0]==0x37);memcpy(framebuffer,saved,sizeof(framebuffer));++lock_restores;}
+static void epd_poweroff(void){}
 static int64_t esp_timer_get_time(void){return now_us;}
 static uint8_t *epd_hl_get_framebuffer(EpdiyHighlevelState *hl){assert(hl);return framebuffer;}
 static bool lock_screen_save(const uint8_t *fb){assert(fb==framebuffer&&waits==1);++saves;return save_ok;}
@@ -327,12 +337,13 @@ int main(void){
     }
     for(unsigned style=3;style<=5;++style)for(unsigned cache=0;cache<2;++cache)for(unsigned success=0;success<2;++success){
         s_shutdown_style=(app_shutdown_style_t)style;next_wake=APP_WAKE_TIMEOUT;
-        save_ok=cache;off_success=success;waits=saves=marks=offs=0;
+        save_ok=cache;off_success=success;waits=saves=marks=offs=shutdown_paints=lock_restores=0;framebuffer[0]=0x37;
         if(!setjmp(powered_off)){
             assert(app_lock_sleep_wait(&hl,NULL)==APP_WAKE_KEY&&!success);
             assert(waits==2&&seen_deadline==0);
         }else assert(success&&waits==1);
-        assert(saves==1&&offs==1&&marks==cache);
+        assert(saves==1&&offs==1&&marks==cache&&shutdown_paints==1&&lock_restores==!success);
+        if(success)free(power_original);else assert(framebuffer[0]==0x37);
     }
     puts("PASS: actual 10/30/60 shutdown policy, early wake/reset, lock cache, full-off success and failed-off locked wait");
 }

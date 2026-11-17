@@ -50,6 +50,52 @@
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
+#define NVS_KEY_OFF_ART "off_art"
+#define OFF_CONFIG_BYTES 301
+static app_shutdown_wallpaper_t s_off_art = {.show_hint = 1};
+
+bool app_settings_shutdown_wallpaper_valid(const app_shutdown_wallpaper_t *value) {
+    if (!value || value->style > APP_OFF_CALENDAR || value->style == 2 || value->fit > 1 || value->show_hint > 1 ||
+        value->ticket_background > 1 || value->calendar_style > 1 ||
+        value->slot > 1 || strnlen(value->path, sizeof(value->path)) >= sizeof(value->path)) return false;
+    if (!value->path[0]) return value->style != APP_OFF_CUSTOM && !value->image_id;
+    const char *ext = strrchr(value->path, '.');
+    return value->image_id && !strncmp(value->path, "/sdcard/", 8) && ext &&
+        (!strcasecmp(ext, ".png") || !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg"));
+}
+static void off_art_encode(const app_shutdown_wallpaper_t *value, char encoded[OFF_CONFIG_BYTES]) {
+    encoded[0] = (char)('0' + value->style);
+    encoded[1] = (char)('0' + value->fit + 2u * value->ticket_background + 4u * value->calendar_style);
+    encoded[2] = (char)('0' + value->show_hint); encoded[3] = (char)('0' + value->slot);
+    snprintf(encoded + 4, 9, "%08x", (unsigned)value->image_id);
+    encoded[12] = '|';
+    strlcpy(encoded + 13, value->path, 288);
+}
+static bool off_art_decode(const char *encoded, app_shutdown_wallpaper_t *value) {
+    size_t length = strnlen(encoded, OFF_CONFIG_BYTES);
+    if (length < 13 || length >= OFF_CONFIG_BYTES || encoded[12] != '|') return false;
+    unsigned options = (unsigned)(encoded[1] - '0');
+    if (options > 7) return false;
+    app_shutdown_wallpaper_t candidate = {.style = (uint8_t)(encoded[0] - '0'),
+        .fit = options & 1u, .ticket_background = (options >> 1u) & 1u,
+        .calendar_style = (options >> 2u) & 1u, .show_hint = (uint8_t)(encoded[2] - '0'),
+        .slot = (uint8_t)(encoded[3] - '0')};
+    // 已移除的留白迁移为系统默认，保留此前保存的图片身份。
+    // Migrate retired white to the built-in face while retaining the saved image identity.
+    if (candidate.style == 2) candidate.style = APP_OFF_SYSTEM;
+    uint32_t id = 0;
+    for (unsigned i = 4; i < 12; ++i) {
+        unsigned char c = (unsigned char)encoded[i];
+        unsigned digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : 16;
+        if (digit > 15) return false;
+        id = (id << 4) | digit;
+    }
+    candidate.image_id = id;
+    strlcpy(candidate.path, encoded + 13, sizeof(candidate.path));
+    if (!app_settings_shutdown_wallpaper_valid(&candidate)) return false;
+    *value = candidate;
+    return true;
+}
 #define NVS_KEY_SCREEN_OFFSET "screen_offset"
 static int s_screen_x, s_screen_y;
 #define NVS_KEY_QUICK_LAYOUT "quick_layout"
@@ -79,6 +125,20 @@ static esp_err_t settings_write_open(nvs_handle_t *handle) {
 static void settings_write_close(nvs_handle_t handle) {
     nvs_close(handle);
     epd_flash_end();
+}
+
+const app_shutdown_wallpaper_t *app_settings_shutdown_wallpaper(void) { return &s_off_art; }
+bool app_settings_set_shutdown_wallpaper(const app_shutdown_wallpaper_t *value) {
+    if (!app_settings_shutdown_wallpaper_valid(value)) return false;
+    char encoded[OFF_CONFIG_BYTES];
+    off_art_encode(value, encoded);
+    nvs_handle_t handle;
+    if (settings_write_open(&handle) != ESP_OK) return false;
+    esp_err_t err = nvs_set_str(handle, NVS_KEY_OFF_ART, encoded);
+    if (err == ESP_OK) err = nvs_commit(handle);
+    settings_write_close(handle);
+    if (err == ESP_OK) s_off_art = *value;
+    return err == ESP_OK;
 }
 
 void app_settings_screen_offset(int *x, int *y) { *x = s_screen_x; *y = s_screen_y; }
@@ -557,6 +617,11 @@ void app_settings_init(void) {
     s_ticket_background = nvs_get_u8(h, NVS_KEY_TICKET_BACKGROUND, &ticket_background) == ESP_OK &&
                           ticket_background <= APP_TICKET_BACKGROUND_COVER
         ? (app_ticket_background_t)ticket_background : APP_TICKET_BACKGROUND_TRANSPARENT;
+    s_off_art = (app_shutdown_wallpaper_t){.show_hint = 1};
+    char off_encoded[OFF_CONFIG_BYTES] = {0};
+    size_t off_size = sizeof(off_encoded);
+    if (nvs_get_str(h, NVS_KEY_OFF_ART, off_encoded, &off_size) == ESP_OK)
+        (void)off_art_decode(off_encoded, &s_off_art);
     size_t wallpaper_len = sizeof(s_wallpaper);
     if (nvs_get_str(h, NVS_KEY_WALLPAPER, s_wallpaper, &wallpaper_len) != ESP_OK ||
         strncmp(s_wallpaper, "/sdcard/", 8)) s_wallpaper[0] = 0;
@@ -2103,7 +2168,21 @@ static unsigned backup_version(const settings_backup_v1_t *backup) {
     // a/b/c/d append touch lock, ticket backgrounds, calendar variants and tap grids; e accepts clocks, f packs guide style in bits 0–1 and text-follow in bit 2 without new tails.
     // j 追加 v45 快捷栏排列。A-F 为旧版；G/H 为 rc9x；K 为上游 rc96/97；L 为本地旧布局；M/N/O/P/Q 为本合并格式；R 追加 v27；S 追加 v28；T 追加 v29；U 追加 v30；V 追加 v31；g 追加 v42 网络设置；h 追加 v43 页眉页脚显隐；i 改为 v44 独立显隐语义。
     // j appends v45 quick-bar ordering. A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : 0;
+    // k追加v46关机配置；l扩展v47票根/日历，复用取景字节的位，图片像素不备份。
+    // k adds v46 shutdown config; l extends v47 ticket/calendar options in the framing byte, excluding pixels.
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : 0;
+}
+
+typedef struct { char encoded[OFF_CONFIG_BYTES]; uint8_t checksum[4]; } settings_backup_off_art_t;
+static uint32_t backup_off_art_checksum(const settings_backup_off_art_t *art) {
+    uint32_t hash = 2166136261u;
+    for (unsigned i = 0; i < sizeof(art->encoded); ++i) hash = (hash ^ (uint8_t)art->encoded[i]) * 16777619u;
+    return hash;
+}
+static bool backup_off_art_valid(const settings_backup_off_art_t *art, app_shutdown_wallpaper_t *value) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)art->checksum[i] << (8u * i);
+    return stored == backup_off_art_checksum(art) && off_art_decode(art->encoded, value);
 }
 
 static void backup_erase_secret(void *ptr, size_t size) {
@@ -2222,7 +2301,7 @@ esp_err_t app_settings_backup_save(void) {
     // v40：主样式增加时钟5，沿用v39尾块布局。/ V40 accepts clock style 5 with the v39 tail layout.
     // v42：追加移动网络开关及业务路由；v43 追加页眉页脚独立显隐。
     // V42 appends cellular and business-route settings; V43 appends independent chrome visibility.
-    memcpy(backup.magic, "PICOSETj", sizeof(backup.magic));
+    memcpy(backup.magic, "PICOSETl", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -2429,6 +2508,11 @@ esp_err_t app_settings_backup_save(void) {
     uint32_t quick_hash = backup_quick_checksum(&quick);
     for (unsigned i = 0; i < 4; ++i) quick.checksum[i] = (uint8_t)(quick_hash >> (8 * i));
     if (ok) ok = fwrite(&quick, 1, sizeof(quick), file) == sizeof(quick);
+    settings_backup_off_art_t off_art = {0};
+    off_art_encode(&s_off_art, off_art.encoded);
+    uint32_t off_hash = backup_off_art_checksum(&off_art);
+    for (unsigned i = 0; i < 4; ++i) off_art.checksum[i] = (uint8_t)(off_hash >> (8u * i));
+    if (ok) ok = fwrite(&off_art, 1, sizeof(off_art), file) == sizeof(off_art);
     backup_erase_secret(&wifi, sizeof(wifi));
     if (ok) ok = book_history_backup_write(file) == ESP_OK;
     if (ok) ok = fflush(file) == 0;
@@ -2544,6 +2628,8 @@ esp_err_t app_settings_backup_restore(void) {
         .header = APP_READER_HEADER_HEIGHT_DEFAULT, .footer = APP_READER_FOOTER_HEIGHT_DEFAULT};
     settings_backup_chrome_visibility_t visibility = {.header = 1, .footer = 1};
     settings_backup_quick_t quick = {.layout = APP_QUICK_LAYOUT_DEFAULT};
+    settings_backup_off_art_t off_art = {0};
+    app_shutdown_wallpaper_t restored_off_art = {.show_hint = 1};
     settings_backup_chrome_t chrome = {.items = {
         APP_READER_SLOT_TITLE, APP_READER_SLOT_CLOCK, APP_READER_SLOT_ICON_BATTERY,
         APP_READER_SLOT_CHAPTER, APP_READER_SLOT_BLANK, APP_READER_SLOT_PAGE_PROGRESS}};
@@ -2654,6 +2740,10 @@ esp_err_t app_settings_backup_restore(void) {
     if (ok && version >= 42) ok = fread(&network, 1, sizeof(network), file) == sizeof(network) && backup_network_valid(&network);
     if (ok && version >= 43) ok = fread(&visibility, 1, sizeof(visibility), file) == sizeof(visibility) && backup_chrome_visibility_valid(&visibility);
     if (ok && version >= 45) ok = fread(&quick, 1, sizeof(quick), file) == sizeof(quick) && backup_quick_valid(&quick);
+    if (ok && version >= 46) ok = fread(&off_art, 1, sizeof(off_art), file) == sizeof(off_art) &&
+        backup_off_art_valid(&off_art, &restored_off_art) &&
+        (version >= 47 || (off_art.encoded[0] >= '0' && off_art.encoded[0] <= '2' &&
+                           off_art.encoded[1] >= '0' && off_art.encoded[1] <= '1'));
     if (version < 39) tap.mode = (profile.home_full_refresh & 32) ? APP_READER_TAP_VERTICAL : APP_READER_TAP_HORIZONTAL;
     // 旧备份没有本块：chrome 保持默认值并照常写回，与其他设置的恢复语义一致。
     // Older backups lack the block: chrome keeps its defaults and is written back like every other setting.
@@ -2833,6 +2923,9 @@ esp_err_t app_settings_backup_restore(void) {
     if(err==ESP_OK)err=nvs_set_u8(h,NVS_KEY_LOCK_STYLE,backup.flags[BK_LOCK]);
     if(err==ESP_OK)err=nvs_set_u8(h,NVS_KEY_LOCK_FACE,(uint8_t)(backup.flags[BK_LOCK]*2+calendar_style.on));
     BACKUP_SET_STR(NVS_KEY_WALLPAPER, backup.wallpaper);
+    char off_encoded[OFF_CONFIG_BYTES];
+    off_art_encode(&restored_off_art, off_encoded);
+    if (err == ESP_OK) err = nvs_set_str(h, NVS_KEY_OFF_ART, off_encoded);
     BACKUP_SET_STR(NVS_KEY_BOOKS_DIR, backup.books_dir);
     BACKUP_SET_STR(NVS_KEY_FONTS_DIR, backup.fonts_dir);
 #undef BACKUP_SET_U8
@@ -2873,6 +2966,7 @@ esp_err_t app_settings_backup_restore(void) {
     memcpy(s_reader_tap_actions, tap.actions, sizeof(s_reader_tap_actions));
     s_home_full_refresh = (profile.home_full_refresh & 1) != 0;
     s_wallpaper_mode = restored_wallpaper_mode;
+    s_off_art = restored_off_art;
     s_main_refresh = main_refresh;
     s_reader_hide_images = (profile.home_full_refresh & 2) != 0;
     s_shelf_recent_sort = (profile.home_full_refresh & 4) != 0;

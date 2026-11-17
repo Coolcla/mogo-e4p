@@ -41,11 +41,11 @@ bool app_settings_set_quick_layout(const app_quick_layout_t *layout);
 app_sleep_mode_t app_settings_sleep_mode(void);
 void app_settings_set_sleep_mode(app_sleep_mode_t mode);
 const char* app_sleep_mode_name(app_sleep_mode_t mode);
-/// 锁屏睡眠方式，默认仅浅睡。彻底关机：锁屏出图后立即按原厂脉冲彻底断电，长按电源键约 1 秒冷开机；仅浅睡：锁屏浅睡永不断电，按键/拿起返回关机前页面。
+/// 锁屏睡眠方式，默认仅浅睡。彻底关机：显示独立关机画面后按原厂脉冲断电，长按电源键约 1 秒冷开机；仅浅睡：显示锁屏且不断电，按键/拿起返回原页面。
 /// 电源菜单「关机」固定立即断电，与本设置无关。
 /// APP_SHUTDOWN_FULL 是旧档位：仅为 NVS/备份兼容保留编号，读取时并入彻底关机，界面不再提供。
 /// 定时档在每次锁屏浅睡开始后计时，唤醒取消本轮计时；到时彻底关机，长按电源键约 1 秒开机。
-/// Lock sleep style, light-only by default. Full off: the lock pulses off factory-style right after the lock art (a one-second power-key hold cold-boots); light-only: lock sleeps forever without powering off, key/pickup returns.
+/// Lock sleep style, light-only by default. Full off: show independent shutdown art then pulse off (a one-second hold cold-boots); light-only keeps the lock until key/pickup wake.
 /// The power menu's 关机 always powers off immediately and ignores this setting.
 /// APP_SHUTDOWN_FULL is a legacy value kept for NVS/backup compatibility; loads merge into full off and the UI no longer offers it.
 /// Timed styles count from each locked light-sleep entry; waking cancels that countdown. Expiry powers off fully, requiring a one-second power-key hold to boot.
@@ -155,6 +155,27 @@ void app_settings_set_system_contrast(uint8_t percent);
 enum { APP_LOCK_STYLE_CLOCK = 5 };
 uint8_t app_settings_lock_style(void);
 void app_settings_set_lock_style(uint8_t style);
+typedef enum {
+    APP_OFF_SYSTEM = 0, ///< 系统关机画面 / Built-in shutdown face
+    APP_OFF_CUSTOM,     ///< 独立关机壁纸 / Independent shutdown wallpaper
+    APP_OFF_TICKET = 3, ///< 阅读票根；编号2为已移除的留白 / Reading ticket; retired white uses ID 2
+    APP_OFF_COLLAGE,    ///< 书架拼贴 / Library collage
+    APP_OFF_CALENDAR,   ///< 日历 / Calendar
+} app_off_style_t;
+typedef struct app_shutdown_wallpaper {
+    uint8_t style;      ///< 关机样式 / Shutdown style
+    uint8_t fit;        ///< 0裁剪、1完整显示 / Crop (0), contain (1)
+    uint8_t show_hint;  ///< 非默认关机画面上的开机提示 / Boot hint over non-default shutdown art
+    uint8_t slot;       ///< TF双槽之一 / SD cache slot
+    uint8_t ticket_background; ///< 关机票根背景，独立记忆 / Independently remembered shutdown ticket background
+    uint8_t calendar_style; ///< 关机日历版式，独立记忆 / Independently remembered shutdown calendar face
+    uint32_t image_id;  ///< 已保存像素身份 / Saved pixel identity
+    char path[288];    ///< 原始图片路径，用于重新选择 / Original path for reselection
+} app_shutdown_wallpaper_t;
+/// 与浅睡锁屏独立；单键提交成功后才更新内存值。/ Independent from light-sleep art; publish only after a single-key commit.
+const app_shutdown_wallpaper_t *app_settings_shutdown_wallpaper(void);
+bool app_settings_shutdown_wallpaper_valid(const app_shutdown_wallpaper_t *value);
+bool app_settings_set_shutdown_wallpaper(const app_shutdown_wallpaper_t *value);
 /// 阅读票根背景独立记忆，默认透明；仅在持久化成功后更新。/ Remember ticket backgrounds independently; default transparent and publish only after persistence.
 typedef enum {
     APP_TICKET_BACKGROUND_TRANSPARENT = 0,

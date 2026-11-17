@@ -1672,7 +1672,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     setting_group(fb,SETTINGS_DISPLAY_Y-49,"显示",SETTINGS_DISPLAY_Y,
                   display_icons,display_labels,display_values,SETTINGS_DISPLAY_ROWS);
     snprintf(signature,sizeof(signature),"%s",app_settings_status_signature()[0]?app_settings_status_signature():"未设置");
-    const char *personal_labels[]={"书架样式","锁屏样式","锁屏密码","状态栏签名","触摸震动","阅读背景","组件库","快捷栏管理"};
+    const char *personal_labels[]={"书架样式","壁纸","锁屏密码","状态栏签名","触摸震动","阅读背景","组件库","快捷栏管理"};
     char haptic_value[24];
     if(!haptics_available())snprintf(haptic_value,sizeof(haptic_value),"不支持");
     else if(!app_settings_touch_haptics())snprintf(haptic_value,sizeof(haptic_value),"关闭");

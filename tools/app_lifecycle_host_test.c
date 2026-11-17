@@ -51,6 +51,7 @@ esp_err_t pico_boot_save_resume(const pico_resume_t *resume) {
 void app_time_service_cancel(void) { event('T'); }
 void pico_ota_auto_cancel(void) { event('U'); }
 bool pico_online_busy(void) { event('O'); return ota; }
+bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms) { assert(timeout_ms==2000 || timeout_ms == 250); event('G'); return images_ok; }
 bool book_cover_jobs_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('C'); return cover_ok; }
 bool ui_avatar_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('A'); return avatar_ok; }

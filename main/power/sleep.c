@@ -26,8 +26,10 @@
  * User revision: the standby style "staged" is renamed "full off" and locks pulse off factory-style (f326902) right after the lock art with no ten-minute stage; booting afterwards takes a one-second power-key hold.
  * 用户 2026-11-02 新增：独立的 10/30/60 分钟浅睡后关机档，不改变仅浅睡与立即关机；提前唤醒取消本轮倒计时。
  * User addition of 2026-11-02: separate 10/30/60-minute light-sleep-then-off styles preserve light-only and immediate off; an early wake cancels this countdown.
- * 冻结：沿用实际后缓冲，不把圆锁当白色；不增加帧副本，自动休眠/其他样式/失败回退保留原流程。
- * Frozen: Retain true history including the badge, add no frame copy and preserve idle/other-style/failure recovery.
+ * 用户2026-11-17确认：关机使用独立静态画面；定时浅睡到期切换关机图，下电失败恢复锁屏和密码保护。
+ * User-approved 2026-11-17: power-off uses independent static art; timed sleep switches at expiry and failed handoff restores the protected lock.
+ * 冻结：主动拼贴反馈沿用真实圆锁后缓冲，不为该反馈增加帧副本；定时关机可暂存原锁屏用于失败恢复。
+ * Frozen: Manual collage feedback uses the true badge history without its own frame copy; timed shutdown may retain the lock frame for failure recovery.
  */
 #include "app_lifecycle.h"
 #include "ui_builtin_image.h"
@@ -91,6 +93,7 @@
 #include "ui_image_dither.h"
 #include "ui_wallpaper.h"
 #include "ui_lock_feedback.h"
+#include "ui_power_dialog.h"
 
 static const char* TAG = "read_pico";
 static bool s_lock_feedback_visible;
@@ -614,13 +617,44 @@ app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
     return light_sleep_wait_until(acc, 0, NULL);
 }
 
+bool app_shutdown_present(EpdiyHighlevelState *hl) {
+    app_lock_font_t saved = {0};
+    app_font_begin_lock(&saved);
+    ui_power_shutdown_prepare(epd_hl_get_framebuffer(hl));
+    enum EpdDrawError result = update_display_full(hl);
+    guard_draw_result(hl, result);
+    app_font_end_lock(&saved);
+    return result == EPD_DRAW_SUCCESS;
+}
+
+static void restore_lock_after_shutdown(EpdiyHighlevelState *hl, const uint8_t *original) {
+    uint8_t *fb = epd_hl_get_framebuffer(hl);
+    if (original) memcpy(fb, original, 684u * 1216u / 2u);
+    else if (app_settings_lock_style() == APP_LOCK_STYLE_CLOCK) (void)lock_clock_draw(fb);
+    else if (!lock_screen_restore(fb)) {
+        epd_hl_set_all_white(hl);
+        (void)ui_builtin_image_draw(fb, UI_BUILTIN_IMAGE_LOCK);
+    }
+    enum EpdDrawError result = update_display_full(hl);
+    guard_draw_result(hl, result);
+    if (app_settings_lock_style() == APP_LOCK_STYLE_CLOCK) lock_clock_presented(result == EPD_DRAW_SUCCESS);
+    epd_poweroff();
+}
+
 app_wake_source_t app_lock_sleep_wait(EpdiyHighlevelState *hl, sc7a20h_handle_t acc) {
     uint8_t minutes = app_settings_shutdown_minutes();
     int64_t deadline_us = minutes ? esp_timer_get_time() + (int64_t)minutes * 60 * 1000000 : 0;
     app_wake_source_t wake = light_sleep_wait_until(acc, deadline_us, hl);
     if (wake != APP_WAKE_TIMEOUT) return wake;
     if (lock_screen_save(epd_hl_get_framebuffer(hl))) (void)pico_boot_mark_frame_cached();
-    (void)app_enter_host_sleep(APP_SLEEP_OFF);
+    uint8_t *original = heap_caps_malloc(684u * 1216u / 2u, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (original) memcpy(original, epd_hl_get_framebuffer(hl), 684u * 1216u / 2u);
+    if (app_shutdown_present(hl)) {
+        epd_poweroff();
+        (void)app_enter_host_sleep(APP_SLEEP_OFF);
+    }
+    restore_lock_after_shutdown(hl, original);
+    free(original);
     // 下电失败后不反复打脉冲，也不把定时唤醒当解锁；沿用无期限锁屏等待及其故障恢复。
     // Do not repeat failed power pulses or treat timer wakes as unlocks; retain the untimed locked wait and its fault recovery.
     return light_sleep_wait_until(acc, 0, hl);
@@ -732,13 +766,23 @@ void enter_lock_and_sleep(
     const bool key_sampling = device_power_key_sampler_enable(false);
     const int64_t lock_t_prep = esp_timer_get_time();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
+    // 用户2026-11-17确认：关机画面与浅睡独立；立即关机直接出图，失败再恢复锁屏等待。
+    // User-approved 2026-11-17: independent shutdown art; immediate power-off skips lock art and failures restore locked waiting.
+    if (!light_only) {
+        if (app_shutdown_present(hl)) {
+            app_lock_wait_key_idle(800);
+            epd_poweroff();
+            (void)app_enter_host_sleep(APP_SLEEP_OFF);
+        }
+        epd_hl_set_all_white(hl);
+    }
     // 主动拼贴在白底圆锁上准备最终画面；其他入口仍保留旧页面，只改RAM。
     // Prepare manual collages behind the white lock badge; other entries keep their prior page while drawing RAM.
     uint8_t lock_style = app_settings_lock_style();
     // 透明票根和书封保留当前页面；封面票根使用独立底图。不重排正文或读旧阅读快照。
     // Transparent tickets/covers keep the current page; cover tickets paint their own base without reader reflow.
     bool ticket = lock_style == 0;
-    bool overlay = (ticket && app_settings_ticket_background() == APP_TICKET_BACKGROUND_TRANSPARENT) || lock_style == 3;
+    bool overlay = light_only && ((ticket && app_settings_ticket_background() == APP_TICKET_BACKGROUND_TRANSPARENT) || lock_style == 3);
     if (!overlay) epd_hl_set_all_white(hl);
     bool system_lock = ticket || lock_style == 2 || lock_style == 4 || lock_style == APP_LOCK_STYLE_CLOCK || lock_pin_enabled();
     app_lock_font_t lock_font = {0};
@@ -793,26 +837,11 @@ void enter_lock_and_sleep(
         (long long)((lock_t_art - lock_t_font) / 1000), (long long)((lock_t_clear - lock_t_art) / 1000),
         (long long)((lock_t_panel - lock_t_clear) / 1000), (long long)((lock_t_panel - lock_t_art) / 1000),
         (long long)((lock_t_key - lock_t_panel) / 1000), (long long)((lock_t_key - lock_t_start) / 1000));
-    // 彻底关机档锁屏出图后立即断电交接——有 PMU EN 的板走软睡，没有的板自动升级为原厂脉冲断电（长按电源键约 1 秒开机），
-    // 墨水屏保留这张锁屏图，检查点恢复原页面，开机后的密码由启动验证把关；仅浅睡无期限，定时档到时关机。
-    // Full off hands off to power-down right after the lock art--soft sleep with PMU EN, an
-    // automatic factory pulse power-off without it (a one-second power-key hold boots). The
-    // e-paper keeps this lock image, the checkpoint restores the page and cold boots are PIN-gated;
-    // "light-only" has no deadline; timed styles power off after their selected light-sleep interval.
+    // 立即关机已在前方输出独立壁纸；到此只可能是浅睡或关机失败后的受保护锁屏。
+    // Immediate power-off already presented independent art; only light sleep or protected failure recovery reaches this point.
     ESP_LOGI(TAG, "lock LIGHT");
     epd_poweroff();
-    if (!light_only) {
-        if (lock_screen_save(framebuffer)) (void)pico_boot_mark_frame_cached();
-        esp_err_t handoff = app_enter_host_sleep(APP_SLEEP_DEEP);
-        if (handoff != ESP_OK) {
-            // 断电彻底失败（脉冲打满/EN 未掉）：保持锁屏继续无期限浅睡，绝不自行解锁；有密码交回密码层。
-            // Power-down exhausted (pulses spent / EN never dropped): stay locked in a deadline-free
-            // light sleep and hand PIN locks back to the pad; never self-unlock.
-            ESP_LOGW(TAG, "deep sleep unavailable (%s); stay locked", esp_err_to_name(handoff));
-            if (lock_pin_enabled()) lock_screen_authenticate(hl, touch, acc, false);
-            else (void)light_sleep_wait_until(acc, 0, hl);
-        }
-    } else if (lock_pin_enabled()) {
+    if (lock_pin_enabled()) {
         lock_screen_authenticate(hl, touch, acc, false);
     } else {
         (void)app_lock_sleep_wait(hl, acc);

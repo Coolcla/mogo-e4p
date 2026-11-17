@@ -61,6 +61,7 @@ bool device_power_key_sampler_start(void);
 bool device_power_key_sampler_enable(bool);
 typedef enum { DEVICE_POWER_KEY_NONE, DEVICE_POWER_KEY_SHORT, DEVICE_POWER_KEY_LONG } device_power_key_action_t;
 device_power_key_action_t device_power_take_key_action(void);
+bool app_shutdown_present(EpdiyHighlevelState*);
 void enter_lock_and_sleep(EpdiyHighlevelState*, int64_t*, void*, void*, bool, bool);
 void app_lock_feedback(EpdiyHighlevelState*);
 void app_lock_wait_key_idle(int);

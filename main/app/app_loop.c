@@ -396,8 +396,8 @@ static touch_frame_t s_last_frame;
 // Save the current page first, then settle a clock-free static frame so shutdown never leaves a misleading frozen time.
 // 锁屏前先由页面保存进度，再持久化一次恢复上下文；不在翻页或点击时写入。
 // Flush page progress before persisting one lock checkpoint; never write it on page turns or taps.
-// 仅浅睡和定时档先浅睡；只有彻底关机档在锁屏出图后立即断电交接。
-// Light-only and timed styles start with light sleep; only immediate-off hands off right after the lock art.
+// 仅浅睡和定时档先显示锁屏；彻底关机档直接显示独立关机画面并断电。
+// Light-only and timed styles show the lock first; immediate-off presents independent shutdown art and powers down.
 static bool lock_light_only(void) {
     return app_settings_shutdown_style() >= APP_SHUTDOWN_LIGHT;
 }
@@ -407,7 +407,7 @@ static void prepare_lock(app_ctx_t *ctx, const app_desc_t *current, bool feedbac
     // 浅睡期间定时器不再走完，锁屏前必须同步关断马达。
     // / Timers do not finish in light sleep, so cut the motor before the lock face.
     haptics_stop();
-    if (feedback) app_lock_feedback(ctx->hl);
+    if (feedback && lock_light_only()) app_lock_feedback(ctx->hl);
     app_lifecycle_checkpoint(ctx, current);
     // 锁屏前落盘（阅读进度/票根统计/恢复点）在画面之前，单独计时。
     // Pre-lock persistence (progress, ticket stats, resume point) runs before the lock art; time it separately.
@@ -416,8 +416,13 @@ static void prepare_lock(app_ctx_t *ctx, const app_desc_t *current, bool feedbac
 }
 static void run_power_action(app_ctx_t *ctx, const app_desc_t *current, bool restart) {
     prepare_lock(ctx, current, false);
-    ui_power_final_draw(ctx->fb, restart);
-    guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    if (restart) {
+        ui_power_final_draw(ctx->fb, true);
+        guard_draw_result(ctx->hl, update_display_full(ctx->hl));
+    } else if (!app_shutdown_present(ctx->hl)) {
+        app_present(ctx, current, APP_REDRAW_PAGE);
+        return;
+    }
     app_lock_wait_key_idle(800);
     epd_poweroff();
     pico_boot_clear_resume();

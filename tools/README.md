@@ -84,4 +84,6 @@ The three suites cover exhaustive calendar/folk data, actual wrapping of all 123
 
 ### 锁屏选择器与缩略缓存 / Lock-style picker and thumbnail cache
 
-`python3 tools/run_reader_baseline.py lock_style_images lock_style_ui image_stream` 验证真实选择器与缓存工作者、真实大JPEG/PNG流式取消；`lock_style_ui_host_test.py --output build/lock-style-ui` 导出100–200%字号的原生画面，`--assets <host设计图的assets目录>` 可套入已有授权图片样本。旧 `ticket_background_ui_host_test.py` / `calendar_settings_ui_host_test.py` 入口转到同页选择器回归。缓存边界和硬件验证范围见[锁屏选择器](../docs/development/guides/LOCK_STYLE_PICKER.md)。
+`python3 tools/run_reader_baseline.py shutdown_wallpaper lock_style_images lock_style_ui image_stream` 验证真实选择器与缓存工作者、真实大JPEG/PNG流式取消；`lock_style_ui_host_test.py --output build/lock-style-ui` 导出100–200%字号的原生画面，`--assets <host设计图的assets目录>` 可套入已有授权图片样本。旧 `ticket_background_ui_host_test.py` / `calendar_settings_ui_host_test.py` 入口转到同页选择器回归。缓存边界和硬件验证范围见[锁屏选择器](../docs/development/guides/LOCK_STYLE_PICKER.md)。
+
+独立关机图片回归 `shutdown_wallpaper` 编译实际后台服务并注入解码/文件/任务故障，覆盖TF双槽、同卡重启读取/换图、无卡/未挂载/换卡回退、目录错误、TF只读/空间不足、解码中失卡及恢复重试、完整性、取消、内存及写入/同步失败；`settings_backup` 验证独立NVS、五类样式/子选项、v47往返及v46/旧版恢复，`sleep_power`、`lock_style`、`loop`覆盖直接与定时关机及失败恢复，`lock_style_ui`覆盖双页签、五种关机样式及100–200%字号。/ Shutdown tests compile the production worker with deterministic fault injection; settings, sleep, loop and UI suites cover independent persistence, legacy restore, direct/timed handoff, recovery and font scales.

@@ -103,7 +103,7 @@ static app_redraw_t auto_update_return_tick(app_ctx_t *c) {
 }
 static int power_open_draws, power_controls_draws, power_final_draws;
 static int power_trigger_step = -1, shutdowns, restarts;
-static bool staged_shutdown;
+static bool staged_shutdown,light_only_shutdown,shutdown_draw_fails,shutdown_handoff_fails;
 int64_t esp_timer_get_time(void);
 static bool power_tap_during_draw;
 static bool power_drag_during_draw;
@@ -359,6 +359,7 @@ void display_request_full_refresh(void) {++wake_clean_requests;}
 void guard_draw_result(EpdiyHighlevelState* h,enum EpdDrawError e) {(void)h;assert(e==0);}
 enum EpdDrawError update_display_area_with(EpdiyHighlevelState*h,const void*w,int m,EpdRect a) {(void)h;(void)w;last_du_area=a;nav_area_draws+=nav_armed!=NULL;nav_armed=NULL;if(m==MODE_DU)du_areas++;else if(m==MODE_GL16)gl_areas++;return 0;}
 enum EpdDrawError update_display_full(EpdiyHighlevelState*h) {(void)h;fulls++;nav_full_arms+=nav_armed!=NULL;nav_armed=NULL;return 0;}
+bool app_shutdown_present(EpdiyHighlevelState *hl){++power_final_draws;guard_draw_result(hl,update_display_full(hl));return !shutdown_draw_fails;}
 enum EpdDrawError update_display_mode(EpdiyHighlevelState*h,int m) {(void)h;(void)m;mode++;return 0;}
 enum EpdDrawError update_display_mode_diff(EpdiyHighlevelState*h,int m) {(void)h;(void)m;mode++;return 0;}
 enum EpdDrawError update_display_fast_page(EpdiyHighlevelState*h) {(void)h;mode++;nav_draws+=nav_armed!=NULL;nav_armed=NULL;return 0;}
@@ -384,7 +385,7 @@ device_power_key_action_t device_power_take_key_action(void) {
 void enter_lock_and_sleep(EpdiyHighlevelState*h,int64_t*t,void*a,void*tp,bool reader,bool light_only) {(void)tp;(void)h;(void)t;(void)a;(void)reader;(void)light_only;assert(!nav_armed);++idle_locks;lock_due=false;time_offset+=1000000;}
 void app_lock_feedback(EpdiyHighlevelState*h) {(void)h;++lock_feedback_calls;if(feedback_enabled){assert(!before_locks&&!idle_locks);++lock_badges;}}
 void app_lock_wait_key_idle(int ms) {(void)ms;}
-esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {assert(mode==APP_SLEEP_OFF);++shutdowns;longjmp(done,1);}
+esp_err_t app_enter_host_sleep(app_sleep_mode_t mode) {assert(mode==APP_SLEEP_OFF);++shutdowns;if(shutdown_handoff_fails)return ESP_ERR_INVALID_STATE;longjmp(done,1);}
 void app_restart_host(void) {++restarts;longjmp(done,1);}
 void epd_poweroff(void) {}
 const char* app_settings_font_path(void) {return "builtin";}
@@ -393,7 +394,7 @@ bool app_settings_reader_power_turn(void) {return false;}
 // Unbound by default; frontlight regressions inject up-key press/release levels by loop frame.
 app_reader_key_action_t app_settings_reader_up_action(void) {return up_key_bound?APP_READER_KEY_FRONTLIGHT:APP_READER_KEY_NONE;}
 esp_err_t board_read_up_key(bool* pressed) {*pressed=up_key_steps[step];return ESP_OK;}
-app_shutdown_style_t app_settings_shutdown_style(void) {return staged_shutdown ? APP_SHUTDOWN_STAGED : APP_SHUTDOWN_FULL;}
+app_shutdown_style_t app_settings_shutdown_style(void) {return light_only_shutdown ? APP_SHUTDOWN_LIGHT : staged_shutdown ? APP_SHUTDOWN_STAGED : APP_SHUTDOWN_FULL;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
 bool ttf_font_ready(void) {return true;}
 bool ttf_font_is_builtin(void) {return !sd_font;}
@@ -462,7 +463,7 @@ static void reset(void) {
     network_test=false;network_cached=network_shown=false;memset(network_samples,0,sizeof(network_samples));
     battery_refreshes=battery_status_draws=0;memset(battery_samples,0,sizeof(battery_samples));
     quick_button_draws=quick_status_draws=quick_press_draws=quick_recent_requests=base_renders=0;
-    power_open_draws=power_controls_draws=power_final_draws=shutdowns=restarts=0;power_trigger_step=-1;staged_shutdown=false;
+    power_open_draws=power_controls_draws=power_final_draws=shutdowns=restarts=0;power_trigger_step=-1;staged_shutdown=light_only_shutdown=shutdown_draw_fails=shutdown_handoff_fails=false;
     last_du_area=(EpdRect){0};
     ble_enabled=saved_wifi=upload_busy=click_enabled=click_active=false;
     transfer_status=(wifi_transfer_status_t){0};
@@ -1204,7 +1205,7 @@ int main(void) {
     // 反馈必须早于页面保存/后台收尾；下一页与自动休眠不显示主动锁屏徽标。
     // Acknowledgement precedes saves/joins; consumed page turns and idle sleep omit it.
     for(int policy=0;policy<3;++policy){
-        reset();main_fast=policy==1;main_water=policy==2;feedback_enabled=true;
+        reset();main_fast=policy==1;main_water=policy==2;feedback_enabled=true;light_only_shutdown=true;
         first.on_before_lock=before_lock;lock_due=true;time_step=3000000;
         add(0,0,0,0);add(0,0,0,0);run();
         assert(lock_badges==1&&lock_feedback_calls==1&&before_locks==1&&idle_locks==1);
@@ -1221,6 +1222,16 @@ int main(void) {
     reset();power_trigger_step=1;time_step=3000000;staged_shutdown=true;
     add(0,0,0,0);add(0,0,0,0);add(UI_POWER_THUMB_X,UI_POWER_THUMB_Y,1,0);add(UI_POWER_THUMB_X+UI_POWER_SLIDE_RANGE,UI_POWER_THUMB_Y,1,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(power_open_draws==1&&shutdowns==1&&power_final_draws==1&&!restarts&&!idle_locks&&!wake_clean_requests);
+    // 推屏失败不下电；断电失败重新绘制原页并继续响应，不重新退出/打开页面。
+    // Presentation failure blocks off; failed handoff repaints and resumes the same page without reopening it.
+    for(unsigned fault=0;fault<2;++fault){
+        reset();power_trigger_step=1;time_step=3000000;
+        shutdown_draw_fails=fault==0;shutdown_handoff_fails=fault==1;
+        add(0,0,0,0);add(0,0,0,0);add(UI_POWER_THUMB_X,UI_POWER_THUMB_Y,1,0);
+        add(UI_POWER_THUMB_X+UI_POWER_SLIDE_RANGE,UI_POWER_THUMB_Y,1,0);add(0,0,0,0);add(0,0,0,0);run();
+        assert(power_final_draws==1&&shutdowns==(int)fault&&!restarts&&!idle_locks);
+        assert(base_renders==2&&!exits&&enters==1&&ticks>=2);
+    }
     reset();power_trigger_step=1;time_step=3000000;
     add(0,0,0,0);add(0,0,0,0);add(UI_POWER_RESTART_X,UI_POWER_BUTTON_Y,1,0);add(0,0,0,0);run();
     assert(restarts==1&&!shutdowns&&power_final_draws==1);
@@ -1308,6 +1319,7 @@ bool ble_pt_connected(void) { return false; }
 // 调度回归链接真实生命周期服务；失败组合由独立生命周期测试控制。
 // Scheduler regressions link the actual lifecycle service; dedicated lifecycle tests control failure combinations.
 bool wifi_transfer_pause_for_sleep(void) { return true; }
+bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 void lock_images_close(void){}
 bool ui_avatar_quiesce(unsigned timeout) { (void)timeout; return true; }

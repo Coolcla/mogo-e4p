@@ -31,8 +31,11 @@ typedef enum {
 /// 登记常开供电的触摸与加速度计，并准备 CPU 浅睡保持区。/ Bind always-on touch/accelerometer and prepare CPU light-sleep retention.
 void app_sleep_bind(cst836u_handle_t tp, sc7a20h_handle_t acc);
 
-/// light_only 为假时锁屏出图后立即断电交接；为真时按待机设置浅睡，定时档到时彻底关机。
-/// With light_only false, power down after the lock art; true follows the light-sleep setting, powering off at expiry for timed styles.
+/// 使用系统字体定稿独立关机画面，失败时不执行下电。/ Settle independent shutdown art with the system face; a failed present blocks power-off.
+bool app_shutdown_present(EpdiyHighlevelState *hl);
+
+/// light_only 为假时显示独立关机画面后断电；为真时先显示锁屏浅睡，定时到期再切换关机图。
+/// With light_only false, show independent shutdown art before power-off; otherwise show the lock until waking or timed shutdown.
 void enter_lock_and_sleep(
     EpdiyHighlevelState* hl, int64_t* ignore_until_ms, sc7a20h_handle_t acc, cst836u_handle_t touch,
     bool reader_background, bool light_only

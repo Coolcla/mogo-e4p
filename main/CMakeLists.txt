@@ -106,6 +106,7 @@ idf_component_register(
         "services/network_http.c"
         ${cellular_sources}
         "services/lock_style_images.c"
+        "services/shutdown_wallpaper.c"
         "services/weather_model.c"
         "services/weather_service.c"
         "services/reading_journal_model.c"
