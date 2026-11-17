@@ -17,6 +17,7 @@
  */
 
 #include "vcom_setup.h"
+#include "display_orientation.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -283,6 +284,7 @@ void vcom_setup_run(EpdiyHighlevelState* hl, uint8_t* fb, cst836u_handle_t tp) {
             continue;
         }
 
+        display_orientation_touch(&touch.x, &touch.y);
         int hit = vcom_hit(&g, s.confirm, touch.x, touch.y);
         if (s.confirm) {
             if (hit == VCOM_HIT_BACK) {

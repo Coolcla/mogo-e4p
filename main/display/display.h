@@ -56,6 +56,12 @@ void display_present_end(bool held);
 /// 解锁或阅读返回时，下一张完成绘制的画面使用完整48相GC16整屏全像素清理；成功才消费请求。
 /// Clean the next completed unlock/reader-return frame with complete 48-phase full-pixel GC16; consume only on success.
 void display_request_full_refresh(void);
+/// 应用正常竖屏的设备偏移；两次扫描之间调用，下一帧清屏重建真实基准。
+/// Apply device offsets in portrait coordinates between scans; rebuild the physical baseline on the next frame.
+void display_apply_screen_offset(int x, int y);
+/// 校正页按新旧物理坐标做柔和差分，成功才提交后缓冲；正常调整不清屏、不累计周期全刷。
+/// Calibration uses soft differences at old/new physical coordinates, committing back only on success; normal adjustments neither clear nor count toward periodic refreshes.
+enum EpdDrawError update_display_screen_offset(EpdiyHighlevelState* hl, int x, int y);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 /// 普通页面切换使用真实差分 GL16；未变化像素不进入 dirty map。
 /// True differential GL16 for ordinary page transitions; unchanged pixels stay clean.

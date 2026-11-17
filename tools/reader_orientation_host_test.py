@@ -221,7 +221,7 @@ with tempfile.TemporaryDirectory(prefix="reader-orientation-") as directory:
     flags = ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-unused-variable",
              "-g", "-fsanitize=address,undefined", "-Imain/book", "-Imain/display"]
     for name, source, extra in (
-        ("policy", policy, ["-I" + str(stub), "main/display/display_orientation.c", "main/book/reader_orientation.c"]),
+        ("policy", policy, ["-I" + str(stub), "main/display/display_orientation.c", "components/epdiy/src/epd_output_offset.c", "-Icomponents/epdiy/src", "main/book/reader_orientation.c"]),
         ("layout", layout, ["-Itools/book_layout_stubs", "-Itools/book_source_host_stubs", "main/book/reader_session.c",
                             "main/book/book_layout.c", "main/book/html_text.c", "main/book/reader_orientation.c"]),
     ):

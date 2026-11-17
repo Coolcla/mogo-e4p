@@ -9,8 +9,10 @@
  */
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include "display.h"
+#include "epd_output_offset.h"
 #include "app_config.h"
 #include "settings.h"
 #include "e0470_epaper_waveform.h"
@@ -77,6 +79,25 @@ static const EpdWaveform *waveform_at_draw;
 static enum EpdDrawError water_result;
 static int water_calls;
 static EpdRect last_area;
+static uint8_t physical_offset_frame[1216 * 684];
+static int offset_scans, offset_discards;
+void epd_clear_phase_luts(void) {}
+void epd_leading_skip_discard(void) { ++offset_discards; }
+enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t *data, EpdRect crop,
+    enum EpdDrawMode mode, int temperature, const bool *lines,
+    const uint8_t *columns, const EpdWaveform *waveform) {
+    assert(ota_display_depth && !lines && !columns && temperature == 25);
+    assert(mode == (MODE_PACKING_1PPB_DIFFERENCE | MODE_GL16) && waveform == &soft_gray);
+    assert(area.width == 1216 && area.height == 684 && !memcmp(&area, &crop, sizeof(area)));
+    int x, y; epd_get_output_offset(&x, &y); assert(!x && !y);
+    ++offset_scans; assert(offset_scans == offset_discards);
+    for (size_t i = 0; i < sizeof(physical_offset_frame); ++i) {
+        assert((data[i] & 15) == physical_offset_frame[i]);
+        if (next_draw_error == EPD_DRAW_SUCCESS) physical_offset_frame[i] = data[i] >> 4;
+    }
+    enum EpdDrawError result = next_draw_error; next_draw_error = EPD_DRAW_SUCCESS;
+    return result;
+}
 
 enum EpdDrawError e0470_page_turn(EpdiyHighlevelState* hl,EpdRect area,e0470_turn_dir_t dir) {
     (void)hl;(void)area;(void)dir;
@@ -214,6 +235,48 @@ static enum EpdDrawError power_fault_present(EpdiyHighlevelState *hl, unsigned p
         case 15: return update_display_water_turn(hl, area, E0470_TURN_RTL);
         default: return display_panel_repair(hl);
     }
+}
+
+// 直接核对连续平移时的物理差分及真实提交，不依赖逻辑缓冲假装移动成功。
+// Check physical differences and real commits through repeated translations, without treating logical copies as successful movement.
+static void screen_offset_live_test(void) {
+    const size_t bytes = 1216 * 684 / 2;
+    uint8_t *front = malloc(bytes), *back = malloc(bytes), *diff = malloc(2 * bytes);
+    assert(front && back && diff);
+    memset(front, 255, bytes); memset(back, 255, bytes);
+    memset(physical_offset_frame, 15, sizeof(physical_offset_frame));
+    EpdiyHighlevelState hl = {.front_fb=front, .back_fb=back, .difference_fb=diff};
+    epd_set_output_offset(0, 0);
+    int prior_clears = clears;
+    for (size_t i = 0; i < bytes; ++i) front[i] = (uint8_t)(i * 71 + 13);
+    // 左右/上下端点、奇数像素、反向和归零；超过周期计数仍不能清屏。
+    // Cover both axis endpoints, odd pixels, reversals and zero; crossing periodic counts must not clear.
+    const int positions[][2]={{0,0},{1,0},{0,-1},{32,-32},{-32,32},{0,0}};
+    for (unsigned n = 0; n < 30; ++n) {
+        int x = positions[n % 6][0], y = positions[n % 6][1];
+        assert(update_display_screen_offset(&hl,x,y) == EPD_DRAW_SUCCESS);
+        assert(!memcmp(front,back,bytes) && clears == prior_clears && !ota_display_depth);
+        int nx,ny; epd_get_output_offset(&nx,&ny); assert(nx == y && ny == -x);
+        for (int py = 0; py < 684; ++py) for (int px = 0; px < 1216; ++px) {
+            int sx = px - y, sy = py + x; uint8_t expected = 15;
+            if (sx >= 0 && sx < 1216 && sy >= 0 && sy < 684)
+                expected = (front[sy * 608 + sx / 2] >> (4 * (sx % 2))) & 15;
+            assert(physical_offset_frame[py * 1216 + px] == expected);
+        }
+    }
+    int scans = offset_scans;
+    assert(update_display_screen_offset(&hl,0,0) == EPD_DRAW_SUCCESS && offset_scans == scans);
+    assert(update_display_screen_offset(&hl,33,0) == EPD_DRAW_INVALID_CROP && offset_scans == scans);
+    front[100] ^= 0xff;
+    next_draw_error = EPD_DRAW_OTHER_ERROR;
+    assert(update_display_screen_offset(&hl,1,0) == EPD_DRAW_OTHER_ERROR);
+    assert(front[100] != back[100] && clears == prior_clears && !ota_display_depth);
+    // 故障出口继续走既有完整恢复；旧小缓冲替身只验证恢复调用与清屏次数。
+    // Fault output retains the existing full recovery; the small-buffer shim checks its invocation and clear count only.
+    memcpy(target,front,FB_BYTES);
+    assert(update_display_screen_offset(&hl,1,0) == EPD_DRAW_SUCCESS && clears == prior_clears + 1);
+    free(front); free(back); free(diff);
+    puts("screen offset: 30 physical translations without clears, clipped strips erased, no-op, invalid bounds and failed-scan recovery passed");
 }
 
 int main(void) {
@@ -443,7 +506,21 @@ int main(void) {
         assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS);
         assert(clears == before_clears + 2);
     }
+    // 改动偏移必须清除旧位置，失败后重试仍重建完整基准。
+    // Offset changes must erase old positions; retries after failure still rebuild the complete baseline.
+    int prior_clears = clears, nx, ny;
+    display_apply_screen_offset(3, -5); epd_get_output_offset(&nx, &ny); assert(nx == -5 && ny == -3);
+    next_draw_error = EPD_DRAW_OTHER_ERROR;
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_OTHER_ERROR);
+    assert(clears == prior_clears + 1);
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == prior_clears + 2);
+    display_apply_screen_offset(3, -5);
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == prior_clears + 2);
+    display_apply_screen_offset(33, 0); epd_get_output_offset(&nx, &ny); assert(nx == -5 && ny == -3);
+    display_apply_screen_offset(0, 0);
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == prior_clears + 3);
     puts("power recovery: all 17 outputs reject missing rails without committing back; queued retries are bounded and recovery preserves the target until full output succeeds");
+    screen_offset_live_test();
 }
 
 // Continuous state is exercised separately with native-size buffers.

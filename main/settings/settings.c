@@ -50,6 +50,8 @@
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
+#define NVS_KEY_SCREEN_OFFSET "screen_offset"
+static int s_screen_x, s_screen_y;
 #define NVS_KEY_QUICK_LAYOUT "quick_layout"
 static app_quick_layout_t s_quick_layout = APP_QUICK_LAYOUT_DEFAULT;
 
@@ -77,6 +79,21 @@ static esp_err_t settings_write_open(nvs_handle_t *handle) {
 static void settings_write_close(nvs_handle_t handle) {
     nvs_close(handle);
     epd_flash_end();
+}
+
+void app_settings_screen_offset(int *x, int *y) { *x = s_screen_x; *y = s_screen_y; }
+bool app_settings_set_screen_offset(int x, int y) {
+    if (x < -APP_SCREEN_OFFSET_LIMIT || x > APP_SCREEN_OFFSET_LIMIT ||
+        y < -APP_SCREEN_OFFSET_LIMIT || y > APP_SCREEN_OFFSET_LIMIT) return false;
+    if (x == s_screen_x && y == s_screen_y) return true;
+    const uint32_t encoded = UINT32_C(0x534f0000) | (uint32_t)(x + 32) | ((uint32_t)(y + 32) << 8);
+    nvs_handle_t h;
+    if (settings_write_open(&h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u32(h, NVS_KEY_SCREEN_OFFSET, encoded);
+    if (err == ESP_OK) err = nvs_commit(h);
+    settings_write_close(h);
+    if (err == ESP_OK) { s_screen_x = x; s_screen_y = y; }
+    return err == ESP_OK;
 }
 
 const app_quick_layout_t *app_settings_quick_layout(void) { return &s_quick_layout; }
@@ -409,6 +426,7 @@ static void migrate_device_name(char *name, size_t capacity) {
 }
 
 void app_settings_init(void) {
+    s_screen_x = s_screen_y = 0;
     s_quick_layout = (app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
     s_network_route = NETWORK_ROUTE_AUTO;
     s_network_priority = NETWORK_AUTO_WIFI_FIRST;
@@ -422,6 +440,13 @@ void app_settings_init(void) {
 
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
+    uint32_t screen_encoded = 0;
+    if (nvs_get_u32(h, NVS_KEY_SCREEN_OFFSET, &screen_encoded) == ESP_OK &&
+        (screen_encoded & UINT32_C(0xffff0000)) == UINT32_C(0x534f0000) &&
+        (screen_encoded & 255) <= 64 && ((screen_encoded >> 8) & 255) <= 64) {
+        s_screen_x = (int)(screen_encoded & 255) - 32;
+        s_screen_y = (int)((screen_encoded >> 8) & 255) - 32;
+    }
     char quick_encoded[APP_QUICK_ITEM_COUNT + 2] = {0};
     size_t quick_size = sizeof(quick_encoded);
     if (nvs_get_str(h, NVS_KEY_QUICK_LAYOUT, quick_encoded, &quick_size) == ESP_OK &&

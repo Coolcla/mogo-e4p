@@ -17,5 +17,6 @@ typedef enum {
 /// Get/set logical drawing orientation without presenting; callers first join prefetch and rebuild layout.
 display_orientation_t display_orientation_get(void);
 void display_orientation_set(display_orientation_t orientation);
-/// 转换屏内竖屏触点；屏外实体触摸键的坐标原样保留。/ Convert on-panel portrait contacts, preserving off-panel cover-key coordinates.
+/// 屏内触点先抵消面板偏移再旋转；留白触点返回 UINT16_MAX，屏外三键原样保留。
+/// Undo panel offsets before rotating contacts; exposed strips return UINT16_MAX and off-panel cover keys remain unchanged.
 void display_orientation_touch(uint16_t *x, uint16_t *y);

@@ -160,8 +160,22 @@ esp_err_t nvs_get_str(nvs_handle_t h, const char *key, char *value, size_t *size
 }
 /* rc92 引入的时间同步键走 u32；桩按缺省处理即可（恢复时回退 0）。/ rc92's time-sync keys use u32;
    defaulting stubs are enough (restore falls back to zero). */
-esp_err_t nvs_get_u32(nvs_handle_t h, const char *key, uint32_t *value) { (void)h; (void)key; (void)value; return ESP_FAIL; }
-esp_err_t nvs_set_u32(nvs_handle_t h, const char *key, uint32_t value) { (void)h; (void)key; (void)value; return ESP_OK; }
+static uint32_t durable_screen, pending_screen;
+static bool has_screen, screen_pending, screen_write_fails;
+esp_err_t nvs_get_u32(nvs_handle_t h, const char *key, uint32_t *value) {
+    (void)h;
+    if (!strcmp(key, NVS_KEY_SCREEN_OFFSET) && has_screen) { *value = durable_screen; return ESP_OK; }
+    return ESP_FAIL;
+}
+esp_err_t nvs_set_u32(nvs_handle_t h, const char *key, uint32_t value) {
+    (void)h;
+    if (!strcmp(key, NVS_KEY_SCREEN_OFFSET)) {
+        assert(flash_depth);
+        if (screen_write_fails) return ESP_FAIL;
+        pending_screen = value; screen_pending = true;
+    }
+    return ESP_OK;
+}
 esp_err_t nvs_erase_key(nvs_handle_t h, const char *key) { (void)h; (void)key; return ESP_OK; }
 esp_err_t nvs_commit(nvs_handle_t h) { assert(flash_depth); (void)h; ++commit_count; return commit_fails ? ESP_FAIL : ESP_OK; }
 
@@ -210,6 +224,7 @@ esp_err_t nvs_set_blob(nvs_handle_t h,const char *key,const void *data,size_t si
 }
 esp_err_t backup_nvs_open(const char *ns, int mode, nvs_handle_t *h) {
     assert(!strcmp(ns, "read_pico"));
+    screen_pending = false;
     pending_tap[0] = 0;
     pending_shelf_slot=-1;
     pending_quick[0] = 0;
@@ -336,6 +351,7 @@ esp_err_t backup_nvs_set_str(nvs_handle_t h,const char *key,const char *value) {
 }
 esp_err_t backup_nvs_commit(nvs_handle_t h) {
     esp_err_t err = nvs_commit(h);
+    if (err == ESP_OK && screen_pending) { durable_screen = pending_screen; has_screen = true; }
     if (err == ESP_OK && pending_shelf_slot>=0) {
         memcpy(shelf_preferences[pending_shelf_slot].data,pending_shelf_data,sizeof(pending_shelf_data));
         shelf_preferences[pending_shelf_slot].size=sizeof(pending_shelf_data);
@@ -1555,6 +1571,37 @@ static void test_quick_bar_layout(void) {
     puts("PASS: quick-bar selection/order survives reboot and v45 backups; invalid NVS, failed commits, corrupt/truncated tails and v44 default migration are safe");
 }
 
+// 校正属于本机面板；备份恢复不能带入其他设备的公差。
+// Calibration belongs to this panel; restoring settings must not import another device's tolerances.
+static void test_screen_offset(void) {
+    int x, y;
+    has_screen = false; app_settings_init(); app_settings_screen_offset(&x, &y); assert(!x && !y);
+    const uint32_t invalid[] = {0, UINT32_MAX, UINT32_C(0x534f4120), UINT32_C(0x534f2041)};
+    for (unsigned i = 0; i < sizeof(invalid)/sizeof(invalid[0]); ++i) {
+        durable_screen = invalid[i]; has_screen = true; app_settings_init();
+        app_settings_screen_offset(&x, &y); assert(!x && !y);
+    }
+    assert(app_settings_set_screen_offset(-32, 32));
+    app_settings_init(); app_settings_screen_offset(&x, &y); assert(x == -32 && y == 32);
+    int before = commit_count; assert(app_settings_set_screen_offset(-32, 32) && commit_count == before);
+    assert(!app_settings_set_screen_offset(33, 0) && !app_settings_set_screen_offset(0, -33));
+    for (int failure = 0; failure < 4; ++failure) {
+        screen_write_fails = failure == 0; commit_fails = failure == 1;
+        face_open_fails = failure == 2; flash_failure = failure == 3;
+        assert(!app_settings_set_screen_offset(1, -1) && !flash_depth);
+        app_settings_screen_offset(&x, &y); assert(x == -32 && y == 32);
+        screen_write_fails = commit_fails = face_open_fails = flash_failure = false;
+        app_settings_init(); app_settings_screen_offset(&x, &y); assert(x == -32 && y == 32);
+    }
+    assert(app_settings_backup_save() == ESP_OK);
+    assert(app_settings_set_screen_offset(7, -9));
+    assert(app_settings_backup_restore() == ESP_OK);
+    app_settings_init(); app_settings_screen_offset(&x, &y); assert(x == 7 && y == -9);
+    assert(app_settings_set_screen_offset(0, 0)); app_settings_init();
+    app_settings_screen_offset(&x, &y); assert(!x && !y);
+    puts("PASS: local screen calibration persists atomically, rejects invalid values, survives failures and stays outside backups");
+}
+
 int main(void) {
     // 重新读取持久记录模拟重启；同名ID在不同书库间隔离，失败不覆盖原选择。
     // Re-read durable records as after a reboot; isolate equal IDs across libraries and retain choices after failures.
@@ -2683,6 +2730,7 @@ int main(void) {
     test_quick_bar_layout();
     test_chrome_visibility();
     test_unified_reader_migration();
+    test_screen_offset();
     puts("settings backup host test passed (legacy formats, Home regions, 200% sizes, retired shelf migration)");
     return 0;
 }

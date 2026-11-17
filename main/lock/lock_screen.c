@@ -16,6 +16,7 @@
 #include "sleep.h"
 #include "boot_state.h"
 #include "display.h"
+#include "display_orientation.h"
 #include "display_refresh.h"
 #include "device_power.h"
 #include "ble_page_turner.h"
@@ -143,6 +144,7 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
             if(now-last_poll>=40){last_poll=now;(void)device_power_poll();if(device_power_take_key_action()!=DEVICE_POWER_KEY_NONE){cancel=true;break;}}
             if(pad.blocked&&lock_pin_available()&&now>=retry_at){ui_pinpad_reset(&pad,NULL,"请重新输入");ui_pinpad_paint(fb,&pad,ui_pinpad_entry_area());present(hl,ui_pinpad_entry_area());}
             app_touch_t sample={0};esp_err_t error=s31_input_read_touch(touch,&sample);
+            if (error == ESP_OK && sample.touched) display_orientation_touch(&sample.x, &sample.y);
             bool down=error==ESP_OK&&sample.touched;
             if(draining){if(!down&&error==ESP_OK)draining=false;was_down=down;vTaskDelay(pdMS_TO_TICKS(5));continue;}
             if(down)latest=sample;else{latest.touched=false;latest.count=0;}

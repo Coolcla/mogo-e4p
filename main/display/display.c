@@ -35,6 +35,7 @@
  */
 
 #include "display.h"
+#include "epd_output_offset.h"
 #include "display_memory.h"
 #include "board_hardware.h"
 #include "ota_online.h"
@@ -98,6 +99,18 @@ static int s_page_refreshes;
 
 static const void* s_main_armed;
 static bool s_main_fault;
+void display_apply_screen_offset(int x, int y) {
+    if (x < -APP_SCREEN_OFFSET_LIMIT || x > APP_SCREEN_OFFSET_LIMIT ||
+        y < -APP_SCREEN_OFFSET_LIMIT || y > APP_SCREEN_OFFSET_LIMIT) return;
+    int old_x, old_y;
+    epd_get_output_offset(&old_x, &old_y);
+    if (old_x == y && old_y == -x) return;
+    epd_set_output_offset(y, -x);
+    // 平移改变了光学坐标，旧逻辑 back 不能作为新位置的差分基准。
+    // Translation changes optical coordinates; the logical back buffer cannot describe the new positions.
+    s_main_fault = true;
+    display_request_full_refresh();
+}
 static bool s_main_shelf_page;
 static EpdRect s_main_bands[3];
 static unsigned s_main_band_count;
@@ -879,6 +892,52 @@ void display_present_end(bool held) {
 // 连续相位全部完成后，back已是真实黑白画面；不因尚未补灰阶而多做一次整屏GC16。
 // Once continuous phases finish, back is the real binary frame; pending gray restoration alone does not require full GC16.
 static bool display_needs_full(void) { return s_full_refresh_requested || s_power_fault; }
+
+enum EpdDrawError update_display_screen_offset(EpdiyHighlevelState* hl, int x, int y) {
+    if (!hl || !hl->front_fb || !hl->back_fb || !hl->difference_fb ||
+        x < -APP_SCREEN_OFFSET_LIMIT || x > APP_SCREEN_OFFSET_LIMIT ||
+        y < -APP_SCREEN_OFFSET_LIMIT || y > APP_SCREEN_OFFSET_LIMIT) return EPD_DRAW_INVALID_CROP;
+    bool held = display_present_begin();
+    display_main_transition_cancel();
+    enum EpdDrawError result;
+    if (display_needs_full() || s_main_fault) {
+        display_apply_screen_offset(x, y);
+        result = update_display_full_unlocked(hl);
+    } else if (!display_power_ready()) {
+        epd_set_output_offset(y, -x);
+        result = DISPLAY_DRAW_POWER_NOT_READY;
+    } else {
+        int old_x, old_y;
+        epd_get_output_offset(&old_x, &old_y);
+        const int width = epd_width(), height = epd_height();
+        bool changed = epd_output_offset_difference(hl->front_fb, hl->back_fb,
+            hl->difference_fb, width, height, old_x, old_y, y, -x);
+        result = EPD_DRAW_SUCCESS;
+        if (changed) {
+            // 差分已在物理坐标中，临时关闭扫描平移，包含新旧覆盖区和空出的白边。
+            // Differences already use physical coordinates; temporarily disable scan translation, including old/new coverage and exposed white strips.
+            const EpdWaveform *waveform = display_main_normal_waveform();
+            use_scan_for(waveform, MODE_GL16);
+            epd_set_output_offset(0, 0);
+            epd_clear_phase_luts();
+            epd_leading_skip_discard();
+            EpdRect full = epd_full_screen();
+            result = epd_draw_base(full, hl->difference_fb, full,
+                MODE_PACKING_1PPB_DIFFERENCE | MODE_GL16, 25, NULL, NULL, waveform);
+        }
+        epd_set_output_offset(y, -x);
+        if (result == EPD_DRAW_SUCCESS) {
+            memcpy(hl->back_fb, hl->front_fb, (size_t)width * height / 2);
+        } else {
+            // 失败后的光学状态未知，后续输出沿用整屏故障恢复，不能提交未落屏的目标。
+            // Failed scans leave unknown optical state; retain full recovery for subsequent output and never commit an unpresented target.
+            s_main_fault = true;
+            display_request_full_refresh();
+        }
+    }
+    display_present_end(held);
+    return result;
+}
 
 enum EpdDrawError update_display_white_restore(EpdiyHighlevelState* hl, EpdRect area) {
     bool held = display_present_begin();
