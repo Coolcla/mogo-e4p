@@ -131,6 +131,8 @@ jobs:
             build/Read_Pico.map
             build/compile_commands.json
             build/config/
+            build/toolchain/
+            build/specs/
             build/relink-command.sh
             build/relink-environment.txt
             sdkconfig

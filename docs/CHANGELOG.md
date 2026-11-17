@@ -3,18 +3,16 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
-## v1.1.2 · 本地测试 / Local testing · 2026-11-16
+## v1.1.3 · 2026-11-17
 
-- 书架按TF卡身份保存上次选择的分类，关机重启后恢复；分类不存在时回到全部书籍。/ Persist the last shelf category per card across restarts, falling back to all books when it no longer exists.
-- 管理书架的「重新扫描」重试分类读取，并补入缺失的一级目录分类及其中未归类的书；保留已有手工归类、分类改名和已有分类的移出结果，扫描或保存失败不覆盖原索引。/ Explicit shelf rescans retry category reads and import missing first-level folders and their unclassified books, retaining manual assignments, renamed categories and prior unclassifications; failed scans or writes retain the index.
-- 快捷栏旋转锁定默认在各页面显示，不支持旋转时给出提示；设置新增「快捷栏管理」，可选择按钮并调整顺序，最多两排八个，支持重启保存与配置备份恢复。/ Show rotation lock across pages with an unavailable notice; add Settings quick-bar visibility and ordering for up to eight buttons in two rows, persisted across restarts and settings backups.
-- 修复纯联网 Wi-Fi 持续重置无操作计时、导致阅读等页面无法自动锁屏的问题；保留文件传书、USB 读卡及联网 OTA 期间的锁屏保护。/ Fix network-only Wi-Fi continually resetting idle time and preventing automatic lock in the reader and other pages; retain protection during file transfers, USB storage and online OTA.
-
-## v1.1.2 · 本地测试 / Local testing · 2026-11-15
-
-- 书架与首页扫描复用按 TF 卡身份隔离的稳定条目缓存，并按路径、大小和修改时间校验；完整扫描失败时不提交缓存。网格书架延后作者元数据读取，书目容量从 64 条起步动态扩展，已加入 300 本压力回归。
-- 新增统一内存管理：快捷栏内存键短按清理、长按进入管理页；实时显示内部 RAM、PSRAM、最大连续块、历史最低、字体、显示与缓存等资源归属和清理结果，未覆盖用量标为未追踪/外部。/ Add quick-controls tap-to-clean and hold-to-manage, with live RAM/PSRAM, contiguous capacity, low-water marks, font/display/cache ownership and cleanup results; label uncovered usage untracked/external.
-- 阅读预绘加入分池准入与所有权账本，OTA 复用容量检查；内存压力触发限频清理，在主循环安全边界回收预绘、字形及字体文件块缓存，繁忙时保留资源。/ Add pool admission/accounting for reader prefetch and shared OTA checks; throttled pressure cleanup evicts prefetch, glyphs and font blocks at UI safety boundaries while retaining busy resources.
+- 新增内存管理。
+- 新增快捷栏管理，可以自由设置显示哪些按钮以及按钮位置。
+- 新增书架分类记忆功能，默认显示上一次选择的分类。
+- 部分 TXT 格式书籍现已支持标题样式。
+- 修复 Calibre 导出的 EPUB 书籍标题样式不生效的问题。
+- 优化书架性能。
+- 优化 EPUB 图文混排或纯图片页的残影。
+- 修复 Wi-Fi 开启会重置自动锁屏计时的问题。
 
 ## v1.1.2 · 2026-11-14
 
