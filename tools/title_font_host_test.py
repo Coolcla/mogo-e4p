@@ -217,7 +217,9 @@ int main(int argc,char **argv){
   assert(!memcmp(before_trim,pixels,sizeof(pixels))&&opens==initial_opens&&active_fd==1);
   record_coverage=false;
   widths[face]=ttf_text_width_px(40,text);
-  check_font_memory();assert(live-resident<128*1024&&peak<1024*1024);
+  // 暖缓存清理后可能低于起点；直接比较上界，避免无符号减法下溢。
+  // Trimming warm caches may fall below the baseline; compare the cap without unsigned subtraction.
+  check_font_memory();assert(live<resident+128*1024&&peak<1024*1024);
  }
  assert(widths[1]>widths[0]&&max_fd==1);
  ttf_font_unload();assert(!active_fd&&!ttf_font_ready()&&!ttf_font_has_text(text));

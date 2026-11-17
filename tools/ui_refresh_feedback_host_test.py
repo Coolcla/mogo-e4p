@@ -72,7 +72,7 @@ static EpdRect pushed_area;
 static int trace_route[256], trace_mode[256], trace_wave[256];
 static EpdRect trace_area[256];
 static unsigned trace_count;
-enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER,LOCAL_FULL};
+enum {DIFF=1,AREA,FULL,WHOLE,FAST,WATER,READER,LOCAL_FULL,READER_IMAGE_GRAY};
 static int test_style;static bool test_fast;
 static int app_settings_shelf_style(void){return test_style;}
 static bool app_settings_main_fast_refresh(void){return test_fast;}
@@ -183,6 +183,7 @@ static enum EpdDrawError update_display_area_full_with(void *hl,const int *wave,
 static enum EpdDrawError update_display_with(void *hl,const int *wave,enum EpdDrawMode mode){(void)hl;(void)wave;return record(WHOLE,mode,(EpdRect){0});}
 static void display_request_full_refresh(void){}
 static enum EpdDrawError update_display_full(void *hl){(void)hl;return record(FULL,MODE_GC16,(EpdRect){0});}
+static enum EpdDrawError update_display_reader_image_gray(void *hl){(void)hl;return record(READER_IMAGE_GRAY,MODE_GC16,(EpdRect){0});}
 static enum EpdDrawError update_display_fast_page(void *hl){(void)hl;return record(FAST,MODE_GL16,(EpdRect){0});}
 static enum EpdDrawError update_display_mode_diff(void *hl,enum EpdDrawMode mode){(void)hl;return record(READER,mode,(EpdRect){0});}
 static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;assert(test_tick_us==E0470_TURN_FAST_TICK_US);return record(WATER,MODE_GL16,area);}
@@ -292,6 +293,8 @@ int main(void){
  s_chrome_visible[1]=true;s_reader_turn_pending=true;s_reader_image_refresh_pending=true;
  trace_count=0;assert(present(&ctx,APP_REDRAW_AREA));
  assert(trace_count==1&&route==AREA&&pushed_mode==MODE_GC16&&trace_wave[0]==E0470_FULL_WAVEFORM);
+ s_reader_image_refresh_pending=true;trace_count=0;
+ assert(present(&ctx,APP_REDRAW_FULL)&&trace_count==1&&route==READER_IMAGE_GRAY&&pushed_mode==MODE_GC16);
  s_reader_turn_pending=s_water_turn_pending=true;trace_count=0;
  assert(present(&ctx,APP_REDRAW_AREA)&&trace_count==1&&route==WATER);
  // 翻页标志已消费，下一次设置绘制不能误走翻页差分。

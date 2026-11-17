@@ -51,10 +51,12 @@ unit = r'''
 #include <stdlib.h>
 #include "epdiy.h"
 #include "app.h"
+#include "display_geometry.h"
 #include "ui_gesture.h"
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
 enum {SETTINGS_MAIN,SETTINGS_UPGRADE,SETTINGS_SHELF_STYLE,
-      SETTINGS_SYSTEM_FONT,SETTINGS_READING_BG,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT,SETTINGS_PIN_ENTRY};
+      SETTINGS_SYSTEM_FONT,SETTINGS_READING_BG,SETTINGS_AVATAR,SETTINGS_TEXT_EDIT,SETTINGS_PIN_ENTRY,
+      SETTINGS_MEMORY};
 enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #include "ui_nav_layout.h"
 #define UI_LOCK_WIDTH 684
@@ -66,13 +68,16 @@ static int s_page,s_main_scroll,selected_mode,paint_mode;
 static int app_settings_main_refresh_mode(void){return selected_mode;}
 static const EpdWaveform *display_main_normal_waveform(void){return &settings_soft;}
 static bool s_scroll_drag_consumed,s_scroll_present_pending,s_input_layout,s_input_settle;
+static bool s_memory_present_pending;
 static EpdRect s_input_area;
 static int paints,pushes,row_taps;
+static int memory_paints;
+static void memory_render_content(uint8_t *fb){(void)fb;++memory_paints;}
 static EpdRect pushed;
 static enum EpdDrawMode pushed_mode;
 static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++paints;paint_mode=selected_mode;}
 static int update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){
- (void)hl;assert(wave==&E0470_WAVEFORM||wave==&E0470_FOLLOW_WAVEFORM||wave==&settings_soft);if(s_scroll_present_pending==false&&s_page!=SETTINGS_UPGRADE&&s_page!=SETTINGS_TEXT_EDIT&&s_page!=SETTINGS_PIN_ENTRY)assert(wave==(selected_mode==0?&settings_soft:&E0470_WAVEFORM));++pushes;pushed=area;pushed_mode=mode;return 0;
+ (void)hl;assert(wave==&E0470_WAVEFORM||wave==&E0470_FOLLOW_WAVEFORM||wave==&settings_soft);if(s_scroll_present_pending==false&&s_page!=SETTINGS_UPGRADE&&s_page!=SETTINGS_TEXT_EDIT&&s_page!=SETTINGS_PIN_ENTRY&&s_page!=SETTINGS_MEMORY)assert(wave==(selected_mode==0?&settings_soft:&E0470_WAVEFORM));++pushes;pushed=area;pushed_mode=mode;return 0;
 }
 static int update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_diff_with(hl,wave,mode,area);}
 // 主列表滚动走脏区膨胀版本；边界由 display 宿主测试覆盖，这里只转发。
@@ -82,7 +87,7 @@ static void guard_draw_result(void *hl,int status){(void)hl;assert(!status);}
 static void display_main_transition_cancel(void){}
 static EpdRect ui_pinpad_full(void){return(EpdRect){0,0,684,1216};}
 static EpdRect upgrade_progress_area(void){return(EpdRect){52,468,580,64};}
-''' + '\nenum EpdDrawError {EPD_DRAW_SUCCESS};\n' + area_boundary(root) + function('scroll_gesture') + '\n' + function('settings_present')
+''' + '\nenum EpdDrawError {EPD_DRAW_SUCCESS};\n' + area_boundary(root) + function('memory_area_hint') + '\n' + function('scroll_gesture') + '\n' + function('settings_present')
 unit += '\nstatic app_redraw_t event(app_ctx_t *ctx,const ui_gesture_event_t *ev){(void)ctx;'+event_block+'if(ev->type==UI_GESTURE_TAP)++row_taps;return APP_REDRAW_NONE;}\n'
 unit += r'''
 static ui_gesture_t recognizer;
@@ -106,7 +111,7 @@ int main(void){
   assert(feed(300,800,true,true,0)==APP_REDRAW_NONE);
   assert(feed(300,693,true,false,100)==APP_REDRAW_NONE&&s_main_scroll==0);
   assert(feed(300,692,true,false,110)==APP_REDRAW_AREA&&s_main_scroll==204);
-  assert(pushes==before+1&&paints==pushes&&paint_mode==mode&&pushed_mode==MODE_GL16);
+  assert(pushes==before+1&&paints+memory_paints==pushes&&paint_mode==mode&&pushed_mode==MODE_GL16);
   assert(pushed.y==160&&pushed.y+pushed.height==UI_NAV_REFRESH_END);
   for(int i=1;i<=30;++i)assert(feed(300,692-i*10,true,false,110+i*10)==APP_REDRAW_NONE&&s_main_scroll==204);
   assert(feed(300,392,false,false,430)==APP_REDRAW_NONE&&s_main_scroll==204&&pushes==before+1&&row_taps==taps);
@@ -134,6 +139,12 @@ int main(void){
    s_page=pages[i];s_scroll_present_pending=true;assert(settings_present(&ctx,APP_REDRAW_AREA));
    assert(pushed_mode==MODE_GL16&&pushed.y==(s_page==SETTINGS_SHELF_STYLE?242:190)&&pushed.y+pushed.height==UI_NAV_TOP);
   }
+  s_page=SETTINGS_MEMORY;s_memory_present_pending=true;
+  int memory_before=memory_paints;before=pushes;
+  assert(settings_present(&ctx,APP_REDRAW_AREA)&&!s_memory_present_pending);
+  assert(memory_paints==memory_before+1&&pushes==before+1&&pushed_mode==MODE_GL16);
+  assert(pushed.y==218&&pushed.y+pushed.height==UI_NAV_REFRESH_END);
+  assert(!settings_present(&ctx,APP_REDRAW_AREA)&&pushes==before+1);
  }
  s_page=SETTINGS_UPGRADE;assert(settings_present(&ctx,APP_REDRAW_AREA)&&pushed.y==468&&pushed.height==64);
  assert(!settings_present(&ctx,APP_REDRAW_NONE));
@@ -143,5 +154,5 @@ int main(void){
 with tempfile.TemporaryDirectory(prefix='mogo-settings-rollback-') as directory:
     path=Path(directory)/'settings.c';binary=path.with_suffix('');path.write_text(unit)
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
-                    '-I'+str(root/'tools/ui_gesture_stubs'),'-I'+str(root/'main/ui'),str(path),str(root/'main/ui/ui_gesture.c'),'-o',str(binary)],check=True)
+                    '-I'+str(root/'tools/ui_gesture_stubs'),'-I'+str(root/'main/ui'),'-I'+str(root/'main/display'),str(path),str(root/'main/ui/ui_gesture.c'),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)

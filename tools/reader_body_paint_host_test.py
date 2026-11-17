@@ -27,7 +27,8 @@ def function(name, path):
     return text[start.start():at]
 
 
-unit = r'''
+unit = re.search(r'^#define READER_HEADING_TITLE_BYTES[^\n]*',
+                 (ROOT / 'main/ui/ui_reader_heading.h').read_text(), re.M)[0] + '\n' + r'''
 #define READER_WIDTH 684
 #define READER_HEIGHT 1216
 #define READER_BAR_TOP 1096
@@ -75,6 +76,8 @@ static void ui_text_set_system_scale(bool on){(void)on;}
 static void ui_nav_status(uint8_t *fb){(void)fb;++chrome_calls;}
 static void draw_reader_header(uint8_t *fb){(void)fb;++chrome_calls;}
 static void draw_vertical_heading(uint8_t *fb,EpdRect body){(void)fb;(void)body;++chrome_calls;}
+static void draw_vertical_heading_text(uint8_t *fb,EpdRect body,const char *title,const char *label){(void)title;(void)label;draw_vertical_heading(fb,body);}
+static bool book_layout_page_chapter_title(size_t page,char *title,size_t capacity){(void)page;if(capacity)title[0]=0;return false;}
 // 题头带与样式编号按固件取值；这个测试只关心正文是否被外框擦掉。
 // Band and style index match the firmware; this test only checks the body surviving the chrome.
 enum {APP_BOOK_TITLE_STYLE_PLAIN=3};
