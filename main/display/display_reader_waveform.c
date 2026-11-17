@@ -32,10 +32,15 @@
  * automatically while a reading background is set; tune the numbers on hardware against
  * ghosting and text blackness.
  * 用户 2026-10-26：背景页翻页旧字转白擦不净（二次裁剪只剩 15 拍白推），白列改回主页
- * 水波纹已验证的 24 拍，其余迁移与相数不变，翻页时长不变。
+ * 水波纹已验证的 24 拍；该历史修订保留在记录中，当前背景水波纹按 2026-11-17 反馈回退为18拍。
  * User report 2026-10-26: erased text stayed pale on background pages because the second trim
- * left only 15 white pushes. The to=15 row now carries the main water table's verified 24
- * pushes; every other transition and the phase count stay put, so turns keep their timing.
+ * left only 15 white pushes. The then-applied to=15 row carried the main water table's verified
+ * 24 pushes; the historical change is retained here, while current background turns use 18.
+ * 用户 2026-11-17 反馈：背景水波纹的黑→白白闪明显；背景白列改回无背景水波纹的18拍，
+ * 保留29相表和末尾保持相，优先降低白闪，擦白余量改由实屏复核。
+ * User report 2026-11-17: background water turns show a strong black-to-white flash; the
+ * background white column now returns to the no-background water table's 18 pushes, keeping
+ * the 29-phase table and trailing holds. Whitening margin requires panel revalidation.
  * 用户 2026-10-27：水波纹落到插图页时，剥掉深色对前导擦白的代价显形——旧字转图片灰留下
  * 字形残影；改用整页表后旧字清了，但整页表保留原厂相等对，脏区膨胀带上的未变化像素被
  * 黑白往返推出一圈细线。插图页现在用独立派生表：深色对保留擦白，相等对保持。
@@ -263,15 +268,15 @@ static void bg_strip_dark_erase(uint8_t (*data)[16][4], int frames) {
     }
 }
 
-// 白列补强：基座拿的是原厂 18 拍白列，二次裁剪又削掉 3 拍，旧字转白只剩 15 拍，擦不净
-// 就留下淡灰字形。主页水波纹的 to=15 行是实屏验证过的 24 拍；按原形状（含中间保持）
-// 右对齐搬进来，只有短表放不下时才压掉中间保持相。
-// White-column boost: the base carries the vendor's 18 pushes and the second trim shaves
-// three more, leaving 15 to erase text to white -- too few, so glyphs stay pale gray. The
-// main water table's to=15 row is the panel-verified 24 pushes; move it in right-aligned
-// with its interior holds, compressing them only when the shorter table cannot take it.
+static const EpdWaveform* water_table(void);
+
+// 白列回退：基座拿的是原厂18拍白列，二次裁剪会削掉余量；此前借用主页水波纹的24拍，
+// 在背景翻页中造成明显黑→白白闪。现改用无背景水波纹的18拍，右对齐保留末尾保持相。
+// White-column rollback: the base carries the vendor's 18 pushes and the second trim removes
+// slack; borrowing the main water table's 24 pushes caused a strong black-to-white flash.
+// Reuse the no-background water table's 18 pushes, right-aligned with trailing holds intact.
 static void bg_boost_white_column(uint8_t (*data)[16][4], int frames) {
-    const EpdWaveformPhases* water = e0470_waveform_phases(display_main_water_waveform(), MODE_GL16);
+    const EpdWaveformPhases* water = e0470_waveform_phases(water_table(), MODE_GL16);
     if (!water || !water->luts || water->phases != E0470_GL16_FRAMES || water->phase_times) return;
     const int limit = frames - BG_TRIM_HOLD;
     if (limit <= 0) return;

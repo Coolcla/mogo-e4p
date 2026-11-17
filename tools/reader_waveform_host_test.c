@@ -166,11 +166,11 @@ int main(void) {
             black += e0470_phase_action(full_page, f, 0, from) == 1;
         assert(black == 18);
     }
-    // 背景派生表：二次裁剪会把白列削到 15 拍，旧字转白擦不净。这里必须补回主页水波纹
-    // 已验证的 24 拍，且不增加帧数——白列的形状能落进现有的尾部保持空间。
-    // Background derivative: the second trim would leave 15 white pushes and erased text
-    // would stay pale. It must carry the main water table's verified 24 pushes without
-    // adding frames—the column shape fits inside the existing trailing holds.
+    // 背景派生表：二次裁剪会削掉白列余量；背景水波纹回用无背景表的18拍白推，降低黑→白白闪，
+    // 不增加相数并保留尾部保持。
+    // Background derivative: the second trim removes white-column slack; background turns
+    // reuse the no-background table's 18 white pushes to reduce black-to-white flash, without
+    // adding phases and while retaining trailing holds.
     s_bg_path = "card:/backgrounds/paper.bmp";
     const EpdWaveform* bg = display_reader_bg_waveform();
     const EpdWaveformPhases* bgp = e0470_waveform_phases(bg, MODE_GL16);
@@ -178,7 +178,17 @@ int main(void) {
     assert(bgp->phases <= E0470_GL16_FRAMES);
     int bg_white = 0;
     for (int f = 0; f < bgp->phases; ++f) bg_white += e0470_phase_action(bgp, f, 15, 0) == 2;
-    assert(bg_white == 24);
+    assert(bg_white == 18);
+    // 所有黑/灰到白的推白次数沿用无背景水波纹，避免背景表额外制造白闪。
+    // All black/gray-to-white push counts match the no-background water table, avoiding extra flash.
+    for (int from = 0; from < 15; ++from) {
+        int raw_pushes = 0, bg_pushes = 0;
+        for (int f = 0; f < ripple->phases; ++f)
+            raw_pushes += e0470_phase_action(ripple, f, 15, from) == 2;
+        for (int f = 0; f < bgp->phases; ++f)
+            bg_pushes += e0470_phase_action(bgp, f, 15, from) == 2;
+        assert(bg_pushes == raw_pushes);
+    }
     // 白列必须给尾部保持让位，不能把最后一相也拿去推白。
     // The white column must leave the trailing hold alone instead of pushing on the last phase.
     assert(e0470_phase_action(bgp, bgp->phases - 1, 15, 0) == 0);

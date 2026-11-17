@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.3 · 本地测试 / Local testing · 2026-11-17
 
+- 调整开启阅读背景时的水波纹白列：背景派生表回用无背景阅读水波纹的黑/灰→白推白次数，降低反馈中的明显白闪；宿主波形回归通过，实屏擦白余量待验收。/ Adjust the water-turn white column when a reading background is enabled: the background derivative now reuses the no-background reader-water push counts for black/gray-to-white transitions, reducing the reported flash; host waveform regression passes, and panel whitening margin awaits acceptance.
+
 - 新增「壁纸」统一入口：「待机壁纸」和「关机壁纸」独立配置；关机可选壁纸、阅读票根、书架拼贴、日历或系统默认，支持取景和提示开关，自定义图片缓存在TF卡，无卡或缓存不可用时显示系统默认；定时浅睡到期切换关机图。宿主与S31构建通过，实机待验收。/ Add unified wallpaper settings with independent art, custom/ticket/collage/calendar/built-in shutdown modes, framing and hints, SD-cached custom art and timed switching; host/build passed, device acceptance pending.
 
 - 自定义关机图片仅保存到TF卡缓存，不再依赖机内卷挂载；同卡重启可读取成品，保存失败区分具体原因并保留原选择。旧开发版机内缓存需重新选图保存到TF，v47配置备份格式不变。相关宿主回归、S31构建及刷入启动通过，重复换图与实屏待验收。/ Store custom shutdown art only in SD caches, removing internal-volume dependencies; reload prepared art after reboot and retain the prior selection on save failures. Reselect old development-only internal art once; v47 config backups keep their format. Host/build/flashed boot passed; repeated replacements and panel behavior await acceptance.
