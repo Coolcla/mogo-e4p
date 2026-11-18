@@ -231,6 +231,7 @@ persist += r'''
 int main(void) {
     assert(batt_load()==-1 && s_batt_restore==3); // 不恢复旧曲线 / do not restore the old curve
     stored_ver=1;assert(batt_load()==-1); // 中低段重标后拒绝上一版百分比 / reject percentages from the prior curve
+    stored_ver=2;assert(batt_load()==-1); // 本轮曲线不恢复版本2 / this curve rejects revision 2
     stored_ver=BATT_STATE_VERSION+1;assert(batt_load()==-1);
     stored_ver=BATT_STATE_VERSION;assert(batt_load()==600 && s_batt_restore==0 && s_batt_restore_value==600);
     stored_soc=-1;assert(batt_load()==-1);stored_soc=1001;assert(batt_load()==-1);

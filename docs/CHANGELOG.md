@@ -3,6 +3,10 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## v1.1.4 · 本地测试 / Local testing · 2026-11-18
+
+- 根据新一轮连续放电日志微调中低电量曲线，减少低电尾段偏高；更新电量缓存版本，首次启动按新曲线估算。/ Refine the middle/lower battery curve from another continuous discharge to reduce an overstated tail; revise saved-SOC compatibility so the first start uses the new curve.
+
 ## v1.1.4 · 2026-11-18
 
 - 优化开启阅读背景后的水波纹显示效果，减轻白闪。

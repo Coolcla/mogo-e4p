@@ -402,7 +402,7 @@ static esp_err_t bq_read_current(int16_t* ma) {
 #define BATT_LOW_STEP_INTERVAL_MS 10000  // 低电量保留快速跟随。 / Keep faster tracking at low levels.
 #define BATT_LOW_PERMILLE 140            // 目标不高于 14% 时加快跟随。 / Track faster when the target is at/below 14%.
 #define BATT_RESTORE_TOL_PERMILLE 150    // 开机恢复容差。 / Boot-restore tolerance.
-#define BATT_STATE_VERSION 2            // 中低段重标后不恢复旧百分比。 / Reject saved percentages from the previous curve.
+#define BATT_STATE_VERSION 3            // 中低段重标后不恢复旧百分比。 / Reject saved percentages from the previous curve.
 #define BATT_DONE_MIN_MV 4300            // 判满电压门槛，防状态位误判。 / Voltage gate for the done snap.
 // 涓流判满：原厂在充电期间关掉终止，STATUS1 停在恒压码 2，top-off 码 3 不会出现，
 // done 路径可能永不触发；高电压下持续近零电流即视为充满。
@@ -422,22 +422,22 @@ static esp_err_t bq_read_current(int16_t* ma) {
 #define BATT_LOG_PATH "/sdcard/batt.log"
 
 // 4.4 V 高压电池补偿/EMA 电压 → 显示千分比，mV 降序；不是静置 OCV 实测。
-// 4380 mV 满电平台及 3950 mV 以上基准保留。2026-11-11 连续放电日志在
-// 3950→3300 mV 间累计放出 1358437.917 µAh，按剩余积分归一到既有 629→0‰，
-// 替代无数据的低段直线。保留 3300 mV 的显示余量；不推断绝对容量或实际断电点。
+// 4380 mV 满电平台及 4100 mV / 790‰ 基准保留。2026-11-18 提供的连续日志在
+// 4100→3300 mV 间累计放出 1669952.231 µAh，按剩余积分归一到既有 790→0‰。
+// 保留 3300 mV 的显示余量；不推断绝对容量或把末行当成物理断电点。
 // 来源、公式与限制见本组件 README；曲线调整须同时递增 BATT_STATE_VERSION。
 // Compensated/EMA voltage -> displayed permille for the 4.4 V LiHV pack, descending
 // in mV; this is not measured rested OCV. Keep the 4380 mV full plateau and anchors
-// at/above 3950 mV. The continuous discharge supplied on 2026-11-11 delivered
-// 1358437.917 uAh between 3950 and 3300 mV; normalize remaining charge to the existing
-// 629->0 permille endpoints, replacing the provisional low-range line. Keep the
+// at/above 4100 mV. The continuous discharge supplied on 2026-11-18 delivered
+// 1669952.231 uAh between 4100 and 3300 mV; normalize remaining charge to the existing
+// 790->0 permille endpoints. Keep the
 // 3300 mV display reserve without inferring absolute capacity or physical cutoff.
 // See the component README for provenance and limits; bump BATT_STATE_VERSION with curve changes.
 static const int32_t s_soc_curve[][2] = {
-    {4380, 1000}, {4300, 955}, {4200, 875}, {4100, 790}, {4050, 733},
-    {4000, 695},  {3950, 629}, {3900, 558}, {3850, 504}, {3825, 461},
-    {3800, 406},  {3775, 324}, {3750, 224}, {3725, 169}, {3700, 133},
-    {3675, 104},  {3650, 57},  {3625, 40},  {3600, 33},  {3500, 18},
+    {4380, 1000}, {4300, 955}, {4200, 875}, {4100, 790}, {4050, 734},
+    {4000, 695},  {3950, 632}, {3900, 568}, {3850, 507}, {3825, 461},
+    {3800, 402},  {3775, 313}, {3750, 228}, {3725, 163}, {3700, 126},
+    {3675, 87},   {3650, 46},  {3625, 37},  {3600, 32},  {3500, 16},
     {3400, 7},    {3300, 0},
 };
 

@@ -27,31 +27,35 @@ Compensate voltage using signed BQ27220 current: subtract while charging and add
 普通区间每 60 秒最多变化 1%，充放电切换后重新计时；确认充满仍直接对齐 100%。放电目标不高于 14% 时保留每 10 秒最多下降 1%，空电目标允许清掉不足 1% 的尾数，不让死区长期显示 1%。这是显示平滑，不是延长实际续航。
 Normal levels move at most 1% every 60 seconds, rearming after charging transitions; confirmed full still aligns directly to 100%. Discharge targets at or below 14% retain 1% steps every ten seconds, and an empty target can clear a sub-1% remainder. Smoothing does not extend physical runtime.
 
-曲线使用负载补偿和 EMA 后的电压，不是静置实测 OCV。4.38 V 满电平台及 4.30/4.20/4.10 V 的 95.5/87.5/79% 保留；它们来自早期满电平台和回充对账。4.05/4.00/3.95 V 的 73.3/69.5/62.9% 保留 2026-11-05 连续清醒段的相对估算，以 4.10 V / 79% 和假定 2050 mAh 为基准，并非绝对电量实测。
-The curve uses load-compensated, EMA-filtered voltage, not measured rested OCV. Retain the 4.38 V full plateau and 95.5/87.5/79% at 4.30/4.20/4.10 V from earlier plateau/refill observations. The 73.3/69.5/62.9% targets at 4.05/4.00/3.95 V retain the 2026-11-05 relative awake-discharge estimate, anchored to 4.10 V / 79% and an assumed 2050 mAh capacity, not measured absolute SOC.
+曲线使用负载补偿和 EMA 后的电压，不是静置实测 OCV。4.38 V 满电平台及 4.30/4.20/4.10 V 的 95.5/87.5/79% 保留；它们来自早期满电平台和回充对账。4.10 V / 79% 是沿用的相对基准，并非本次实测的绝对电量。
+The curve uses load-compensated, EMA-filtered voltage, not measured rested OCV. Retain the 4.38 V full plateau and 95.5/87.5/79% at 4.30/4.20/4.10 V from earlier plateau/refill observations. The 4.10 V / 79% anchor remains a relative reference, not an absolute SOC measurement from this calibration.
 
-3.95–3.30 V 改用 2026-11-11 提供日志的连续放电形状，替代旧低段直线与偏高尾段。保持 3.95 V / 62.9% 和 3.30 V / 0% 两个边界，在两者之间按剩余采样放电量归一，不把日志末行当成真实断电点，也不重新估计额定容量。关键目标如下：
-The 3.95–3.30 V range follows the continuous discharge supplied on 2026-11-11, replacing the provisional line and overstated tail. Keep 3.95 V / 62.9% and 3.30 V / 0%, normalizing sampled remaining charge between them without treating the last row as the physical cutoff or estimating rated capacity.
+4.10–3.30 V 使用 2026-11-18 提供日志中的连续放电形状，替代上一轮中低段估算。保持 4.10 V / 79% 和 3.30 V / 0% 两个边界，在两者之间按剩余采样放电量归一；不重新估计额定容量。关键目标如下，最终显示仍经过死区和单向限速：
+The 4.10–3.30 V range follows the continuous discharge supplied on 2026-11-18, replacing the previous middle/lower-range estimate. Keep 4.10 V / 79% and 3.30 V / 0%, normalizing sampled remaining charge between them without estimating rated capacity. Key targets follow; visible levels still apply deadband and one-way rate limits.
 
 | 补偿/EMA 电压 / Filtered voltage | 显示目标 / Target |
 | --- | --- |
-| 3.90 / 3.85 / 3.80 V | 55.8 / 50.4 / 40.6% |
-| 3.775 / 3.75 / 3.725 V | 32.4 / 22.4 / 16.9% |
-| 3.70 / 3.675 / 3.65 V | 13.3 / 10.4 / 5.7% |
-| 3.625 / 3.60 / 3.50 V | 4.0 / 3.3 / 1.8% |
-| 3.40 / 3.30 V | 0.7 / 0% |
+| 4.05 / 4.00 / 3.95 V | 73.4 / 69.5 / 63.2% |
+| 3.90 / 3.85 / 3.825 V | 56.8 / 50.7 / 46.1% |
+| 3.80 / 3.775 / 3.75 V | 40.2 / 31.3 / 22.8% |
+| 3.725 / 3.70 / 3.675 V | 16.3 / 12.6 / 8.7% |
+| 3.65 / 3.625 / 3.60 V | 4.6 / 3.7 / 3.2% |
+| 3.50 / 3.40 / 3.30 V | 1.6 / 0.7 / 0% |
 
-可复核来源：输入日志 SHA-256 `a1a70c633afe1390ba858ea02b1df9fdb901fe189d3eb985066d62e11d5aca6f`，格式 2，`boot=75406354784d6057`、`session=1`、`seq=2..1181`；1,180 条连续清醒记录共 19.684 小时、约 1,660.266 mAh，区间内 `unknown_ms` 不增长，序号无缺失、无新增丢队列/写卡错误。`file_missed=1` 是首条前已发生的文件缺失，区间内保持不变。取第一次下降跨越目标电压的相邻记录，线性插值 `out_uah_est`：3.95 V 为 287037 µAh，3.30 V 为 1645474.917 µAh。每个锚点的千分比为 `round(629 × (1645474.917 − Q(V)) / 1358437.917)`；最终显示仍经过死区和单向限速。
-Reproducible source: log SHA-256 `a1a70c633afe1390ba858ea02b1df9fdb901fe189d3eb985066d62e11d5aca6f`, format 2, `boot=75406354784d6057`, `session=1`, `seq=2..1181`. Its 1,180 continuous awake records cover 19.684 hours and about 1660.266 mAh with no growth in unknown time, sequence gaps, queue drops or write errors. `file_missed=1` predates the first row and stays fixed. Linearly interpolate `out_uah_est` at each first descending voltage crossing: 287037 uAh at 3.95 V and 1645474.917 uAh at 3.30 V. Anchor permille is `round(629 × (1645474.917 − Q(V)) / 1358437.917)`; the visible percentage still applies deadband and one-way rate limits.
+可复核来源：输入日志 SHA-256 `69f1809d281c917e197a6e5f768f8f1a355ccb496b7468c762c0a5c6e3c03495`，格式 3，`boot=80b588bf83b795a1`、`session=1`、`seq=26..1183`，采集固件 1.1.2、`curve_hash=680cc0a5`。北京时间 2026-11-16 00:02:34–19:17:29 的 1,158 条连续清醒记录约 19.249 小时、采样放出 1,704.396 mAh；`unknown_ms`、`lock_ms` 和充电积分不增长，序号无缺失，最大采样间隔 3,769 ms，无队列丢弃、写卡或检查点错误。末行是原始电压 3.10 V 的欠压动作记录（`event=2048`），没有有效滤波电压，不参与拟合；此前 1,157 条均有效。
+Reproducible source: log SHA-256 `69f1809d281c917e197a6e5f768f8f1a355ccb496b7468c762c0a5c6e3c03495`, format 3, `boot=80b588bf83b795a1`, `session=1`, `seq=26..1183`, firmware 1.1.2 and `curve_hash=680cc0a5`. The 1,158 continuous awake records span 2026-11-16 00:02:34–19:17:29 Beijing time, about 19.249 hours and 1704.396 mAh sampled discharge. Unknown time, lock time and charge input stay fixed; there are no sequence gaps, queue drops, card/checkpoint errors, and the largest sample interval is 3769 ms. The final row records undervoltage action at raw 3.10 V (`event=2048`) without valid filtered voltage and is excluded from fitting; the preceding 1157 rows are valid.
 
-3.30 V 以下到末行仍记录约 14.8 mAh，保留为显示余量。较早日志有长时间锁屏缺测，后续充电跨重启且未记录确认充满；这些段、校时时钟跳变和芯片 SOC 均不参与本次曲线拟合。单台设备、单次连续放电只能校正该段形状；容量老化、温度、其他负载、充电阶段及新曲线设备体验仍须验证，不能据此宣称绝对电量准确度或续航已提高。
-About 14.8 mAh remains recorded below 3.30 V through the last row, retained as display reserve. Earlier logs have long sleep gaps; later charging spans restarts without confirmed full. Those segments, wall-clock jumps and gauge SOC do not enter this fit. One device and one continuous discharge support this segment's shape only; aging, temperature, other loads, charging and the new display still require validation, with no claim of absolute SOC accuracy or improved runtime.
+对每个目标电压，取首对满足 `Va ≥ V > Vb` 的相邻有效记录，线性插值 `out_uah_est`。4.10 V 为 45538 µAh（`seq=41..42`），3.30 V 为 1715490.231 µAh（`seq=1172..1173`）；每个锚点的千分比为 `round(790 × (1715490.231 − Q(V)) / 1669952.231)`。原日志的芯片 SOC、显示百分比和后续充电/锁屏/重启段不参与拟合。回归保留上一轮独立放电样本，并新增本轮非锚点观测，核对曲线与跨版本恢复。
+For each target voltage, linearly interpolate `out_uah_est` in the first adjacent valid pair satisfying `Va ≥ V > Vb`. Counters are 45538 uAh at 4.10 V (`seq=41..42`) and 1715490.231 uAh at 3.30 V (`seq=1172..1173`). Anchor permille is `round(790 × (1715490.231 − Q(V)) / 1669952.231)`. Gauge SOC, displayed percentages and later charging/sleep/restart segments do not enter the fit. Regressions retain independent samples from the previous discharge and add non-anchor observations from this cycle, checking the curve and revision restoration.
+
+3.30 V 以下到欠压记录仍采到约 13.165 mAh，保留为显示余量；欠压命令不代表已观察到物理断电。最新这一轮只校正连续清醒、约 76–173 mA 放电条件下的曲线形状；容量老化、温度、其他负载、充电阶段及新曲线设备体验仍须验证，不能据此宣称绝对电量准确度或续航已提高。
+About 13.165 mAh is recorded below 3.30 V through the undervoltage row, retained as display reserve; the command is not proof of observed physical power loss. This cycle refines the curve shape under continuous awake discharge at roughly 76–173 mA only. Aging, temperature, other loads, charging and the new display still require validation, with no claim of absolute SOC accuracy or improved runtime.
 
 高压近零电流判满需要连续有效采样；超过 5 秒的采样空白、读数失败或明显放电会重新确认，保留硬件 top-off 和原电压门槛。显示算法不修改充电电流、截止电压、终止策略或欠压保护。
 High-voltage near-zero-current full confirmation requires continuous valid sampling. Gaps longer than five seconds, read failures or material discharge restart confirmation, retaining hardware top-off and existing voltage gates. Display logic does not change charge current, regulation voltage, termination policy or undervoltage protection.
 
-NVS 百分比带 `soc_ver` 算法版本，当前为 2；旧的无版本、版本 1 和其他不兼容记录不恢复，首次按新曲线估算，不清空其他设置。以后在五分钟周期、充电状态变化、累计变化至少 2%（至少隔一分钟）及正常重启/关机前保存有效值，相同值不重复写。保存失败不记作成功；意外断电仍可能丢失最近变化，启动时仍按电压容差决定是否恢复。
-NVS percentages carry algorithm revision 2 in `soc_ver`. Unversioned, revision-1 and other incompatible records are ignored so the first start estimates from the new curve without erasing other settings. Save valid values every five minutes, on charger changes, after at least 2% movement (at least one minute apart), and before normal restart/shutdown; duplicate values skip writes. Failed saves are not cached as successes. Unexpected power loss may still lose recent movement, and boot restoration remains subject to voltage tolerance.
+NVS 百分比带 `soc_ver` 算法版本，当前为 3；旧的无版本、版本 1/2 和其他不兼容记录不恢复，首次按新曲线估算，不清空其他设置。以后在五分钟周期、充电状态变化、累计变化至少 2%（至少隔一分钟）及正常重启/关机前保存有效值，相同值不重复写。保存失败不记作成功；意外断电仍可能丢失最近变化，启动时仍按电压容差决定是否恢复。
+NVS percentages carry algorithm revision 3 in `soc_ver`. Unversioned, revision-1/2 and other incompatible records are ignored so the first start estimates from the new curve without erasing other settings. Save valid values every five minutes, on charger changes, after at least 2% movement (at least one minute apart), and before normal restart/shutdown; duplicate values skip writes. Failed saves are not cached as successes. Unexpected power loss may still lose recent movement, and boot restoration remains subject to voltage tolerance.
 
 ## 电源键采样 / Power-key sampling
 
