@@ -3,21 +3,15 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
-## v1.1.3 · 本地测试 / Local testing · 2026-11-18
+## v1.1.4 · 2026-11-18
 
-- 优化开启阅读背景后的开书加载：TF缓存屏幕尺寸的灰阶成品，离页或重启后可直接复用；缓存失效时自动重新生成，写卡失败仍可显示本次背景。优化首次灰阶打包及同尺寸/灰度PNG解码，保持原显示规则；真机耗时待验证。/ Speed up book opening with backgrounds by caching panel-sized grayscale art on SD across exits/reboots, rebuilding stale caches and retaining the current background on cache-write failure. Optimize initial packing and native/grayscale PNG decoding while preserving rendering; device timing remains unverified.
-
-## v1.1.3 · 本地测试 / Local testing · 2026-11-17
-
-- 调整开启阅读背景时的水波纹白列：背景派生表回用无背景阅读水波纹的黑/灰→白推白次数，降低反馈中的明显白闪；宿主波形回归通过，实屏擦白余量待验收。/ Adjust the water-turn white column when a reading background is enabled: the background derivative now reuses the no-background reader-water push counts for black/gray-to-white transitions, reducing the reported flash; host waveform regression passes, and panel whitening margin awaits acceptance.
-
-- 新增「壁纸」统一入口：「待机壁纸」和「关机壁纸」独立配置；关机可选壁纸、阅读票根、书架拼贴、日历或系统默认，支持取景和提示开关，自定义图片缓存在TF卡，无卡或缓存不可用时显示系统默认；定时浅睡到期切换关机图。宿主与S31构建通过，实机待验收。/ Add unified wallpaper settings with independent art, custom/ticket/collage/calendar/built-in shutdown modes, framing and hints, SD-cached custom art and timed switching; host/build passed, device acceptance pending.
-
-- 自定义关机图片仅保存到TF卡缓存，不再依赖机内卷挂载；同卡重启可读取成品，保存失败区分具体原因并保留原选择。旧开发版机内缓存需重新选图保存到TF，v47配置备份格式不变。相关宿主回归、S31构建及刷入启动通过，重复换图与实屏待验收。/ Store custom shutdown art only in SD caches, removing internal-volume dependencies; reload prepared art after reboot and retain the prior selection on save failures. Reselect old development-only internal art once; v47 config backups keep their format. Host/build/flashed boot passed; repeated replacements and panel behavior await acceptance.
-
-- 新增「屏幕偏移修正」：四向每次 1px、各轴 ±32px、即时保存和恢复居中，全局生效并同步触点，按下反色、四边1–32px黑块阶梯尺，正常调整差分刷新不逐次黑闪；校正保留在本机，不随配置备份迁移。宿主、S31 编译和刷入启动通过，用户反馈效果可接受；全场景实机验证未完成。/ Add screen offset correction with 1px steps, ±32px axes, persistence/reset, global output, aligned touch, press inversion, 1–32px solid edge rulers and differential adjustment without per-step full flashes; calibration stays local and outside backups. Host/build/flash/boot passed and the user reports acceptable results; full device coverage remains incomplete.
-
-- 撤回本次新增的 TXT 标题样式和 EPUB 内部章节题头独立分页，恢复此前排版行为；更早的 EPUB/MOBI 题头样式保留。/ Revert the added TXT heading styles and separate styled pages for internal EPUB chapters, restoring prior layout while retaining earlier EPUB/MOBI heading styles.
+- 优化开启阅读背景后的水波纹显示效果，减轻白闪。
+- 优化开启阅读背景时的开书速度。
+- 新增关机壁纸设置。
+- 新增屏幕偏移修正。
+- 移除锁屏图片显示数量限制。
+- 修复阅读票据封面不显示的问题。
+- 还原标题样式逻辑，TXT 不再支持标题样式。
 
 ## v1.1.3 · 2026-11-17
 
@@ -29,7 +23,6 @@ User-visible changes by release; see [README](../README.md) for usage.
 - 优化书架性能。
 - 优化 EPUB 图文混排或纯图片页的残影。
 - 修复 Wi-Fi 开启会重置自动锁屏计时的问题。
-- 老黄历移除梅花装饰并加粗切角边框；锁屏图片目录取消64张固定上限；阅读票根兼容列表封面缓存并修复 EPUB 封面偶发不显示（宿主已验证，实屏待验收）。
 
 ## v1.1.2 · 2026-11-14
 
