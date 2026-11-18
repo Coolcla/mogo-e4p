@@ -8,6 +8,7 @@
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
 #include "esp_http_client.h"
+#include "esp_log.h"
 #include "esp_tls_errors.h"
 #include "esp_timer.h"
 #include "epdiy.h"
@@ -18,6 +19,7 @@
 #include "ota_online.h"
 #include "device_power.h"
 #include "ble_page_turner.h"
+#include "memory_peak.h"
 #include "time_service.h"
 #include "wifi_transfer.h"
 #include "network_service.h"
@@ -39,6 +41,7 @@
 #define WEATHER_CELLULAR_CONNECT_US (20LL * 1000000)
 #define WEATHER_CELLULAR_RESPONSE_US (10LL * 1000000)
 #define WEATHER_IO_POLL_MS 200
+#define WEATHER_TASK_STACK_BYTES 8192u
 #define WEATHER_REFRESH_SECONDS (6LL * 60 * 60)
 typedef struct weather_search_batch {
     struct weather_search_batch *next;
@@ -202,6 +205,7 @@ static bool http_get_once(const char *path, char *body, weather_clock_t *respons
     esp_err_t init_error;
     esp_http_client_handle_t client = network_http_client_init(&config, bearer, &s_http_session, &init_error);
     if (!client) {
+        if (init_error == ESP_ERR_NO_MEM) result_notice(APP_WEATHER_FAILED, "内存不足，请稍后重试");
         *retryable = init_error == ESP_ERR_ESP_TLS_CANNOT_RESOLVE_HOSTNAME && !cancelled();
         network_diagnostics_http_failure("weather", NULL, "init", init_error, bearer);
         return false;
@@ -335,9 +339,14 @@ static void weather_worker(void *arg) {
         result_notice(APP_WEATHER_FAILED, "内存不足，请稍后重试"); goto done;
     }
     if (cancelled()) goto done;
-    if (network_service_acquire(NETWORK_USE_WEATHER, &lease) != ESP_OK ||
-        !network_service_wait_ready(&lease, 30000)) {
-        result_notice(APP_WEATHER_UNAVAILABLE, "当前联网方式不可用，请检查网络设置");
+    if (ble_pt_connected()) {
+        result_notice(APP_WEATHER_UNAVAILABLE, "翻页器正在使用，请先关闭蓝牙");
+        goto done;
+    }
+    const esp_err_t acquire = network_service_acquire(NETWORK_USE_WEATHER, &lease);
+    if (acquire != ESP_OK || !network_service_wait_ready(&lease, 30000)) {
+        const char *hint = memory_peak_hint(acquire);
+        result_notice(APP_WEATHER_UNAVAILABLE, hint ? hint : "当前联网方式不可用，请检查网络设置");
         goto done;
     }
     network_diagnostics_snapshot("weather", lease.bearer);
@@ -490,7 +499,7 @@ void app_weather_clear_search(void) {
     s_view.result_count = s_view.result_total = s_view.result_page = 0;
     memset(s_view.results, 0, sizeof(s_view.results)); ++s_view.revision;
 }
-static bool request_page(app_weather_request_t request, const char *query, unsigned page) {
+static bool request_page(app_weather_request_t request, const char *query, unsigned page, bool manual) {
     app_weather_init(); (void)collect_result();
     if (s_pending || pico_online_busy()) return false;
     if (!weather_clock_valid(time(NULL))) {
@@ -498,8 +507,12 @@ static bool request_page(app_weather_request_t request, const char *query, unsig
         snprintf(s_view.notice, sizeof(s_view.notice), "请先校准系统日期与时间"); ++s_view.revision; return false;
     }
     if (ble_pt_connected()) {
-        s_view.state = APP_WEATHER_UNAVAILABLE;
-        snprintf(s_view.notice, sizeof(s_view.notice), "蓝牙翻页器正在使用，请稍后更新"); ++s_view.revision; return false;
+        if (manual) {
+            s_view.state = APP_WEATHER_UNAVAILABLE;
+            snprintf(s_view.notice, sizeof(s_view.notice), "翻页器正在使用，请先关闭蓝牙");
+            ++s_view.revision;
+        }
+        return false;
     }
     const pmu_snapshot_t *pmu = device_power_get();
     int percent = pmu_battery_percent(pmu);
@@ -536,8 +549,9 @@ static bool request_page(app_weather_request_t request, const char *query, unsig
     app_time_service_cancel();
     s_next_attempt = esp_timer_get_time() + WEATHER_RETRY_US;
     s_deadline = esp_timer_get_time() + WEATHER_SESSION_US;
-    if (xTaskCreate(weather_worker, "weather", 8192, NULL, 1, NULL) != pdPASS) {
-
+    // TLS 的软件大整数运算可在单次调用内持续占用 CPU；与 Idle 同级确保它仍可喂看门狗。
+    // TLS software bignum work may run for a long time in one call; share idle priority so Idle still runs.
+    if (xTaskCreate(weather_worker, "weather", WEATHER_TASK_STACK_BYTES, NULL, tskIDLE_PRIORITY, NULL) != pdPASS) {
         atomic_store(&s_busy, false);
         s_view.state = APP_WEATHER_FAILED;
         snprintf(s_view.notice, sizeof(s_view.notice), "内存不足，请稍后重试"); ++s_view.revision; return false;
@@ -547,13 +561,13 @@ static bool request_page(app_weather_request_t request, const char *query, unsig
     ++s_view.revision; return true;
 }
 bool app_weather_request(app_weather_request_t request, const char *query) {
-    return request_page(request, query, 0);
+    return request_page(request, query, 0, true);
 }
 bool app_weather_search(const char *query, unsigned page) {
     app_weather_init(); (void)collect_result();
     if (s_pending || !weather_query_valid(query) || page >= (WEATHER_SEARCH_TOTAL_LIMIT + WEATHER_CITY_LIMIT - 1) / WEATHER_CITY_LIMIT) return false;
     if (!strcmp(s_cached_query, query) && search_show_page(page)) return true;
-    return request_page(APP_WEATHER_SEARCH, query, page);
+    return request_page(APP_WEATHER_SEARCH, query, page, true);
 }
 bool app_weather_poll(bool automatic) {
     app_weather_init(); unsigned revision = s_view.revision;
@@ -567,7 +581,7 @@ bool app_weather_poll(bool automatic) {
         s_view.state != APP_WEATHER_CITY_REQUIRED &&
         (!valid || now >= s_view.forecast.fetched + WEATHER_REFRESH_SECONDS || !weather_day_for(&s_view.forecast, now, true))) {
         s_next_attempt = esp_timer_get_time() + WEATHER_RETRY_US;
-        (void)app_weather_request(APP_WEATHER_FETCH, NULL);
+        (void)request_page(APP_WEATHER_FETCH, NULL, 0, false);
     }
     return revision != s_view.revision;
 }

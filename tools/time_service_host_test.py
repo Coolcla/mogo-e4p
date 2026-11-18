@@ -63,6 +63,8 @@ int main(void){
 }
 '''
 scheduler=common+r'''
+#include "memory_peak.h"
+#define ESP_ERR_NO_MEM 0x101
 typedef int nvs_handle_t;
 enum {WIFI_TRANSFER_STOPPED,WIFI_TRANSFER_STARTING,WIFI_TRANSFER_READY,WIFI_TRANSFER_UPLOADING,WIFI_TRANSFER_ERROR};
 enum {WIFI_TRANSFER_MODE_AP,WIFI_TRANSFER_MODE_STA};
@@ -235,7 +237,8 @@ int main(void){uint32_t utc=0;
 }
 '''
 with tempfile.TemporaryDirectory(prefix='kiiko-clock-test-',dir='/private/tmp') as folder:
+ (Path(folder)/'esp_err.h').write_text('#pragma once\n')
  for name,unit in [('restore',restore),('scheduler',scheduler),('lease',lease),('ntp',ntp)]:
   c=Path(folder)/(name+'.c');binary=Path(folder)/name;c.write_text(unit)
-  subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-unused-variable','-g','-fsanitize=address,undefined',str(c),'-o',str(binary)],check=True)
+  subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-unused-function','-Wno-unused-variable','-g','-fsanitize=address,undefined','-I'+folder,str(c),'-o',str(binary)],check=True)
   subprocess.run([str(binary)],check=True)

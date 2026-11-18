@@ -18,6 +18,11 @@
 static book_txt_t s_book;
 static book_epub_t *s_epub;
 static book_mobi_t *s_mobi;
+size_t book_open_min_psram_block(const char *path) {
+    const char *ext = path ? strrchr(path, '.') : NULL;
+    return ext && !strcasecmp(ext, ".txt") ? sizeof(book_entry_t) * BOOK_CHAPTER_MAX : 0;
+}
+
 esp_err_t book_open(const char *path) {
     book_close();
     if (!path || !*path) return ESP_ERR_INVALID_ARG;

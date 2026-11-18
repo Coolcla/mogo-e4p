@@ -105,6 +105,7 @@
 #include "network_service.h"
 #include "cellular_service.h"
 #include "memory_manager.h"
+#include "memory_peak.h"
 #include "memory_inventory.h"
 
 static void fit_value(char *value, int width);
@@ -148,6 +149,7 @@ static bool s_network_shortcut_back;
 static bool s_enter_memory_from_quick;
 static bool s_memory_shortcut_back;
 static network_status_t s_network_snapshot;
+static const char *s_network_notice;
 static mm_snapshot_t s_memory_snapshot;
 static mm_clean_report_t s_memory_report;
 static int64_t s_memory_next_sample_ms;
@@ -1337,7 +1339,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             else snprintf(signal, sizeof(signal), "%d/31", network.cellular_signal);
             snprintf(detail, sizeof(detail), "4G：%s · 信号 %s", settings_cellular_status(&network), signal);
             ui_text(fb, 48, 602, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
-            ui_text(fb, 48, 648, 21, "移动网络使用内置 SIM 卡；联网方式单独选择。", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 48, 648, 21, s_network_notice ? s_network_notice :
+                    "移动网络使用内置 SIM 卡；联网方式单独选择。", EPD_DRAW_ALIGN_LEFT, false);
         } else {
             ui_text(fb, 48, 340, 21, network.cellular_capability_known
                     ? "当前硬件未检测到移动网络模块。"
@@ -1866,6 +1869,7 @@ static void on_enter(app_ctx_t *ctx) {
     }
     if (s_enter_page == SETTINGS_NETWORK) {
         s_page = SETTINGS_NETWORK;
+        s_network_notice = NULL;
         s_network_shortcut_back = s_enter_network_from_quick;
     }
     if (s_enter_page == SETTINGS_MEMORY) {
@@ -2438,7 +2442,12 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         network_service_get_status(&network);
         if (network.cellular_capable && y >= NETWORK_TOGGLE_Y &&
             y < NETWORK_TOGGLE_Y + NETWORK_TOGGLE_H) {
-            (void)network_service_set_enabled(NETWORK_BEARER_CELLULAR, !network.cellular_enabled);
+            const esp_err_t err = network_service_set_enabled(NETWORK_BEARER_CELLULAR, !network.cellular_enabled);
+            s_network_notice = memory_peak_hint(err);
+            if (err != ESP_OK && !s_network_notice) {
+                s_network_notice = network.cellular_enabled ? "4G 未能关闭，请稍后重试" :
+                    err == ESP_ERR_NO_MEM ? "内存不足，无法启动 4G" : "4G 未能启动，请稍后重试";
+            }
             return APP_REDRAW_PAGE;
         }
         if (network.cellular_capable && y >= NETWORK_ROUTE_ROW_Y &&
@@ -2611,7 +2620,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         network_status_t network;
         network_service_get_status(&network);
         if(network.cellular_capable && row==1) {
-            s_page=SETTINGS_NETWORK;return APP_REDRAW_PAGE;
+            s_page=SETTINGS_NETWORK;s_network_notice=NULL;return APP_REDRAW_PAGE;
         }
         const int bluetooth_row = network.cellular_capable ? 2 : 1;
         if(row==bluetooth_row) {

@@ -1315,10 +1315,12 @@ bool book_cover_jobs_quiesce(unsigned timeout){(void)timeout;return true;}
 void book_lock_collage_invalidate(void) {}
 
 bool ble_pt_connected(void) { return false; }
+const char *ble_pt_enable_block_reason(void) { return NULL; }
 
 // 调度回归链接真实生命周期服务；失败组合由独立生命周期测试控制。
 // Scheduler regressions link the actual lifecycle service; dedicated lifecycle tests control failure combinations.
-bool wifi_transfer_pause_for_sleep(void) { return true; }
+bool network_service_pause_for_sleep(void) { return true; }
+void network_service_resume_after_sleep(void) {}
 bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 void lock_images_close(void){}

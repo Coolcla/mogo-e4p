@@ -13,6 +13,7 @@
 #include "driver/uart.h"
 #include "uart_uhci.h"
 #include "esp_err.h"
+#include "memory_peak.h"
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "freertos/FreeRTOS.h"
@@ -131,7 +132,7 @@ public:
     *
     * @return ESP_OK on success
     */
-    esp_err_t Start();
+    esp_err_t Start(memory_peak_token_t *peak = nullptr);
 
     /**
     * @brief Stop the modem
@@ -301,7 +302,7 @@ private:
     // Frame processing
     esp_err_t SendFrame(const uint8_t* data, size_t length, FrameType type);
     esp_err_t EnqueueTxFrame(const uint8_t* buf, size_t len);
-    void ProcessReceivedFrame(uint8_t* data, size_t size);
+    void ProcessReceivedFrame(const uint8_t* data, size_t size);
     void HandleEthFrame(uint8_t* data, size_t length);
     void HandleAtResponse(const char* data, size_t length);
 
@@ -382,6 +383,8 @@ private:
     std::atomic<bool> stop_flag_{false};
     std::atomic<bool> handshake_done_{false};
     std::atomic<bool> initializing_{false};
+    std::atomic<memory_peak_token_t> init_peak_{0};
+    std::atomic<bool> init_can_commit_{false};
     std::atomic<uint8_t> seq_no_{0};
 
     // Working state machine

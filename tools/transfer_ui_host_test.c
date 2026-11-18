@@ -249,11 +249,10 @@ int main(void) {
     }
     on_enter(&ctx);
     test_busy = true;
+    const int stops_at_chooser = test_stop_count;
     tap(&ctx, method_control_rect(0));
-    assert(s_view == TRANSFER_METHODS);
+    assert(s_view == TRANSFER_NETWORKS && s_scan_pending && test_stop_count == stops_at_chooser);
     test_busy = false;
-    tap(&ctx, method_control_rect(0));
-    assert(s_view == TRANSFER_NETWORKS && s_scan_pending);
     network_ui_tick(&ctx);
     assert(s_network_count == 8 && !s_scan_pending);
     test_configured = s_saved_configured = true;
@@ -343,7 +342,7 @@ int main(void) {
     assert(s_view == TRANSFER_HOME && s_start_pending && s_mode == WIFI_TRANSFER_MODE_STA);
     int stops_before = test_stop_count;
     tap(&ctx, control_rect(2));
-    assert(test_stop_count == stops_before + 1 && !s_start_pending);
+    assert(test_stop_count == stops_before && !s_start_pending);
     assert(s_view == TRANSFER_METHODS && !ctx.request_return && ctx.request_app == NULL);
     on_enter(&ctx);
     tap(&ctx, method_control_rect(1));
@@ -375,6 +374,19 @@ int main(void) {
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
+    // 仅进入方式选择、退场或拔卡都不能拆掉并不属于本页的联网 STA。
+    // The chooser and its exit/media hook cannot tear down an unrelated STA.
+    on_enter(&ctx);
+    test_wifi_running = true;
+    test_status = (wifi_transfer_status_t){.state=WIFI_TRANSFER_READY,.network_ready=true,
+        .network_only=true,.mode=WIFI_TRANSFER_MODE_STA,.session_id=999};
+    s_root.is_flash = false;
+    stops_before = test_stop_count;
+    app_transfer.on_media_lost(&ctx);
+    transfer_on_exit(&ctx);
+    assert(test_stop_count == stops_before && test_wifi_running && test_status.network_ready);
+    test_wifi_running = false;
+    test_status = (wifi_transfer_status_t){0};
     ctx.request_return = false;
     test_configured = true;
     app_transfer_request_wifi_upload();

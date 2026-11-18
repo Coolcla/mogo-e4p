@@ -17,6 +17,7 @@ static time_t weather_test_time(time_t *out) {if(out)*out=wall_time;return wall_
 #undef time
 static void (*pending)(void *);
 bool weather_test_cellular;
+unsigned weather_regular_acquires;
 static bool done,worker,flash,saved=true,fail_flash,fail_task,fail_alloc,cancel_read,cancel_connect,ota_busy,ble_connected;
 static unsigned starts,stops,requests,auto_calls,forecast_calls,search_calls,ns_writes,time_cancels;
 static int network_state,scenario;
@@ -60,7 +61,7 @@ int xSemaphoreTake(SemaphoreHandle_t s,uint32_t wait){
 }
 int xSemaphoreGive(SemaphoreHandle_t s){assert(s==(void*)1&&!done);done=true;return pdTRUE;}
 int xTaskCreate(void(*f)(void*),const char*n,unsigned stack,void*a,unsigned p,void*t){
-    (void)n;(void)a;(void)p;(void)t;assert(stack==8192&&!pending);if(fail_task)return 0;pending=f;return pdPASS;
+    (void)n;(void)a;(void)t;assert(stack==8192&&p==tskIDLE_PRIORITY&&!pending);if(fail_task)return 0;pending=f;return pdPASS;
 }
 void vTaskDelete(void *p){(void)p;}
 void vTaskDelay(unsigned ms){monotonic+=(int64_t)ms*1000;if(cancel_connect)atomic_store(&s_cancel,true);}
@@ -539,5 +540,22 @@ int main(void) {
     assert(!weather_day_for(&s_view.forecast,wall_time,false));
     assert(starts==stops&&time_cancels>0&&!heap_allocs);
     weather_clocks();
+
+    clock_setup(base_time);
+    ble_connected=true; weather_test_cellular=true;
+    unsigned before_network=weather_regular_acquires;
+    requests_before=requests;
+    app_weather_poll(true); assert(!pending);
+    assert(!app_weather_request(APP_WEATHER_SEARCH,"上海") && !pending);
+    assert(!app_weather_request(APP_WEATHER_FETCH,NULL) && !pending);
+    assert(strstr(s_view.notice,"请先关闭蓝牙") && weather_regular_acquires==before_network);
+    ble_connected=false;
+    assert(app_weather_request(APP_WEATHER_FETCH,NULL) && pending);
+    ble_connected=true; run_worker(); assert(app_weather_poll(false));
+    assert(s_view.state==APP_WEATHER_UNAVAILABLE && weather_regular_acquires==before_network);
+    assert(requests==requests_before && !heap_allocs);
+    ble_connected=false; request(APP_WEATHER_FETCH,NULL);
+    assert(s_view.state==APP_WEATHER_READY && requests>requests_before && !heap_allocs);
+    puts("PASS: active BLE blocks manual and automatic weather without borrowing a bearer; standalone 4G works");
     puts("PASS: weather proxy session, six-hour boundary, shorter expiry, midnight, toggle persistence, city-ID fetch, paginated search, no device relabeling, owned cleanup, cancellation, NVS main-only and resource guards");
 }

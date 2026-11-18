@@ -100,6 +100,7 @@ int main(void){
 # Reuse the fake font while exercising the real orientation transaction, session and paginator.
 layout = (ROOT / "tools/book_layout_host_test.c").read_text().split("static void session_layout_lifecycle(void) {")[0]
 layout += r'''
+#include "memory_peak.h"
 #include "reader_orientation.h"
 #define UI_BAR_H 96
 #define UI_BAR_MARGIN 24
@@ -141,6 +142,7 @@ static int64_t esp_timer_get_time(void){return 123000000;}
 static void lock_draw(void){assert(!locks);++locks;}
 static void unlock_draw(void){assert(locks==1);--locks;test_zero_width=false;}
 static void invalidate_prep(void){++invalidates;}
+static void reader_prefetch_discard(void){assert(!locks);invalidate_prep();}
 static void release_page_images(void){++releases;}
 static void prepare_inline_image(void){++prepared;}
 static void save_progress(void){++saves;}

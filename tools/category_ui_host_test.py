@@ -73,7 +73,8 @@ static void shelf_categories_recount(void){book_collection_apply(&s_collection,s
 static bool transfer_idle=true,cover_idle=true;
 static esp_err_t recovery_error=ESP_OK;
 static unsigned recovery_calls,recovery_invalidations;
-static bool wifi_transfer_try_stop_if_idle(void){return transfer_idle;}
+static bool network_service_stop_local_wifi(void){return transfer_idle;}
+static void cancel_auto_resume(void){}
 bool book_cover_jobs_quiesce(unsigned timeout){assert(timeout==2000);return cover_idle;}
 static esp_err_t category_extra_state(const char *old,const char *next,uint32_t size){(void)old;(void)next;(void)size;return ESP_OK;}
 static esp_err_t book_category_recover(const char *root,esp_err_t (*extra)(const char *,const char *,uint32_t)){

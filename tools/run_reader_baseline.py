@@ -50,6 +50,7 @@ SUITES = {
     "orientation": [sys.executable, "tools/reader_orientation_host_test.py"],
     "font_policy": [sys.executable, "tools/lock_font_host_test.py"],
     "memory": [sys.executable, "tools/reader_memory_host_test.py"],
+    "memory_peak": [sys.executable, "tools/memory_peak_host_test.py"],
     "memory_manager": [sys.executable, "tools/memory_manager_host_test.py"],
     "memory_inventory": [sys.executable, "tools/memory_inventory_host_test.py"],
     "memory_ui": [sys.executable, "tools/memory_ui_host_test.py"],
@@ -78,6 +79,7 @@ SUITES = {
     "cellular_readiness": [sys.executable, "tools/cellular_readiness_host_test.py"],
     "cellular_srdy_ack": [sys.executable, "tools/cellular_srdy_ack_host_test.py"],
     "cellular_rx_queue": [sys.executable, "tools/cellular_rx_queue_host_test.py"],
+    "cellular_uhci_buffers": [sys.executable, "tools/cellular_uhci_buffers_host_test.py"],
     "cellular_service": [sys.executable, "tools/cellular_service_host_test.py"],
     "network_route": [sys.executable, "tools/network_route_host_test.py"],
     "network_http": [sys.executable, "tools/network_http_host_test.py"],
@@ -170,6 +172,8 @@ def run(command, env, timeout):
 
 def toolchain(folder):
     env = os.environ.copy()
+    peak_stubs = str(ROOT / "tools/memory_peak_stubs")
+    env["CPATH"] = os.pathsep.join(filter(None, (peak_stubs, env.get("CPATH"))))
     compiler = shlex.split(env.get("CC", "cc"))
     if platform.system() == "Darwin" and "CC" not in env:
         developer = Path("/Library/Developer/CommandLineTools")

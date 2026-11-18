@@ -1129,13 +1129,9 @@ void app_loop_run(const app_loop_config_t* config) {
         // ble_pt_sync(). Rolling our own "state differs from setting, so start()" makes a failed
         // start true on every tick, re-initialising dozens of times a second until memory runs
         // out; sync() carries the memory gate, the failure back-off and the crash-loop lock.
-        // WiFi 在 C6、BLE 在 S3；传输仍与 BLE 竞争 S3 内部内存，网络占用先拆 BLE，结束后恢复。
-        // WiFi runs on C6 and BLE on S3; both consume S3 internal memory, so network leases pause BLE and release it afterwards.
-        wifi_transfer_status_t transfer;
-        wifi_transfer_get_status(&transfer);
-        const bool wifi_busy = transfer.state != WIFI_TRANSFER_STOPPED ||
-            pico_online_busy();
-        ble_pt_sync(app_settings_ble_turner() && !wifi_busy);
+        // Wi-Fi 让位由驱动边界的蓝牙占用控制，不根据页面或联网状态强制断连。
+        // Wi-Fi suspension follows the driver's BLE claim, never an inferred page/network state.
+        ble_pt_sync(app_settings_ble_turner());
         TD_TIME("ble_poll", ble_pt_poll());
         if (app_quick_layer_is_open() || quick_input_owned) {
             // 覆盖层期间丢弃页内蓝牙输入，关闭后不重放翻页或学习事件。
@@ -1184,6 +1180,8 @@ void app_loop_run(const app_loop_config_t* config) {
         unsigned requested_idle = app_settings_auto_lock_minutes();
         // 纯联网不续期无操作计时；文件传书会话与联网 OTA 仍阻止自动锁屏。
         // Network-only WiFi must not renew idle time; file sessions and online OTA still block automatic lock.
+        wifi_transfer_status_t transfer;
+        wifi_transfer_get_status(&transfer);
         const bool transfer_busy = transfer.state != WIFI_TRANSFER_STOPPED && !transfer.network_only;
         bool idle_blocked = usb_storage_active() || transfer_busy || pico_online_busy() || current == &app_transfer ||
             current->holds_pmu || power_dialog_open || touch.touched ||

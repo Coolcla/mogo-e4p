@@ -19,6 +19,8 @@ typedef enum {
 } book_kind_t;
 /// 打开并替换当前书源。/ Open and replace the current source.
 esp_err_t book_open(const char *path);
+/// 已知的单个必需 PSRAM 块下限；零表示需解析书源才能估算。/ Known mandatory PSRAM block; zero means the source must be parsed first.
+size_t book_open_min_psram_block(const char *path);
 /// 关闭书源并释放目录。/ Close the source and free its index.
 void book_close(void);
 /// 当前书是 EPUB 时切换书内自带字体；TXT/MOBI 无事发生。改动在下一章解析时生效。

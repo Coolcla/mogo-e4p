@@ -442,6 +442,7 @@ static int list_books(const char *root, const char *query, size_t page, transfer
 #include "wifi_transfer.h"
 #include "transfer_signature.h"
 #include "ble_page_turner.h"
+#include "memory_peak.h"
 static bool s_ble_network_reserved;
 #include "transfer_policy.h"
 #include "transfer_credentials_store.h"
@@ -479,7 +480,10 @@ void wifi_transfer_memory_usage(size_t *internal_bytes, size_t *psram_bytes) {
     if (psram_bytes) *psram_bytes = s_memory_psram;
     portEXIT_CRITICAL(&s_lock);
 }
-static bool s_stopping, s_upload_active;
+static bool s_stopping, s_upload_active, s_files_disabled;
+static memory_peak_token_t s_association_peak;
+static bool s_connect_calling;
+static unsigned s_cancel_attempts;
 static bool s_config_busy;
 // 对时独占 SNTP 与临时 WiFi；取消后等待清理完成，才允许拆网络或睡眠。
 // Time sync owns SNTP/temporary WiFi; wait for cleanup before network teardown or sleep.
@@ -731,8 +735,14 @@ static esp_err_t sync_time_impl(uint32_t *utc_seconds) {
         clear_secret(&saved, sizeof(saved));
         return err == ESP_OK ? ESP_ERR_NOT_FOUND : err;
     }
-    err = ble_pt_network_acquire();
-    if (err != ESP_OK) { clear_secret(&saved, sizeof(saved)); return err; }
+    memory_peak_token_t peak;
+    err = memory_peak_try_begin(MEMORY_PEAK_WIFI_TIME, &peak);
+    if (err == ESP_OK) err = ble_pt_network_acquire();
+    if (err != ESP_OK) {
+        clear_secret(&saved, sizeof(saved));
+        memory_peak_finish(peak);
+        return err;
+    }
     bool loop_owned = false, wifi_initialized = false, wifi_started = false;
     esp_netif_t *netif = NULL;
     esp_event_handler_instance_t wifi_handler = NULL, ip_handler = NULL;
@@ -746,7 +756,7 @@ static esp_err_t sync_time_impl(uint32_t *utc_seconds) {
     wifi.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
     clear_secret(&saved, sizeof(saved));
     s_time_events = xEventGroupCreate();
-    if (!s_time_events) { clear_secret(&wifi, sizeof(wifi)); ble_pt_network_release(); return ESP_ERR_NO_MEM; }
+    if (!s_time_events) { err = ESP_ERR_NO_MEM; goto time_cleanup; }
     err = esp_netif_init();
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) goto time_cleanup;
     err = esp_event_loop_create_default();
@@ -797,6 +807,8 @@ static esp_err_t sync_time_impl(uint32_t *utc_seconds) {
             if (err != ESP_OK) goto time_cleanup;
         }
     }
+    memory_peak_finish(peak);
+    peak = 0;
     err = time_sync_ntp(utc_seconds);
 time_cleanup:
     if (wifi_started) esp_wifi_stop();
@@ -805,10 +817,11 @@ time_cleanup:
     if (wifi_initialized) esp_wifi_deinit();
     if (netif) esp_netif_destroy_default_wifi(netif);
     if (loop_owned) esp_event_loop_delete_default();
-    vEventGroupDelete(s_time_events); s_time_events = NULL;
+    if (s_time_events) vEventGroupDelete(s_time_events);
+    s_time_events = NULL;
     clear_secret(&wifi, sizeof(wifi));
     ble_pt_network_release();
-
+    memory_peak_finish(peak);
     return err;
 }
 
@@ -943,16 +956,18 @@ done:
     return best;
 }
 
-esp_err_t wifi_transfer_scan_wifi(wifi_transfer_network_t out[WIFI_TRANSFER_SCAN_MAX], size_t *count) {
-    if (!cancel_time_sync(true)) return ESP_ERR_INVALID_STATE;
+esp_err_t wifi_transfer_scan_admitted(wifi_transfer_network_t out[WIFI_TRANSFER_SCAN_MAX], size_t *count,
+                                     memory_peak_token_t admitted) {
     if (!out || !count) return ESP_ERR_INVALID_ARG;
     memset(out, 0, sizeof(*out) * WIFI_TRANSFER_SCAN_MAX); *count = 0;
     wifi_transfer_status_t status;
     wifi_transfer_get_status(&status);
     if (s_wifi || s_http || s_netif || status.state != WIFI_TRANSFER_STOPPED) return ESP_ERR_INVALID_STATE;
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
-    esp_err_t err = ble_pt_network_acquire();
-    if (err != ESP_OK) { release_config(); return err; }
+    memory_peak_token_t peak = 0;
+    esp_err_t err = admitted ? ESP_OK : memory_peak_try_begin(MEMORY_PEAK_WIFI_SCAN, &peak);
+    if (err == ESP_OK) err = ble_pt_network_acquire();
+    if (err != ESP_OK) { release_config(); memory_peak_finish(peak); return err; }
     bool initialized = false, started = false;
     esp_netif_t *scan_netif = NULL;
     const char *stage = "netif";
@@ -1060,7 +1075,12 @@ cleanup:
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
     ble_pt_network_release();
     release_config();
+    memory_peak_finish(peak);
     return err;
+}
+
+esp_err_t wifi_transfer_scan_wifi(wifi_transfer_network_t out[WIFI_TRANSFER_SCAN_MAX], size_t *count) {
+    return wifi_transfer_scan_admitted(out, count, 0);
 }
 
 esp_err_t wifi_transfer_forget_saved_wifi(const char *ssid) {
@@ -1090,7 +1110,8 @@ esp_err_t wifi_transfer_forget_wifi(void) {
 
 static void set_error(esp_err_t err) {
     portENTER_CRITICAL(&s_lock);
-    if (s_status.mode == WIFI_TRANSFER_MODE_STA && s_connection.failed) err = ESP_ERR_TIMEOUT;
+    if (s_status.mode == WIFI_TRANSFER_MODE_STA && s_connection.failed)
+        err = s_status.last_error != ESP_OK ? s_status.last_error : ESP_ERR_TIMEOUT;
     s_status.last_error = err;
     s_status.state = err == ESP_OK ? (s_status.network_ready ? WIFI_TRANSFER_READY : WIFI_TRANSFER_STARTING) : WIFI_TRANSFER_ERROR;
     portEXIT_CRITICAL(&s_lock);
@@ -1101,6 +1122,7 @@ static void wifi_event(void *arg, esp_event_base_t base, int32_t id, void *data)
     int64_t now = esp_timer_get_time() / 1000;
     bool disconnected = false;
     portENTER_CRITICAL(&s_lock);
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) s_connection.cancel_pending = false;
     if (!s_stopping && base == WIFI_EVENT) {
         if (id == WIFI_EVENT_AP_STACONNECTED) s_status.sta_count++;
         if (id == WIFI_EVENT_AP_STADISCONNECTED && s_status.sta_count) s_status.sta_count--;
@@ -1164,11 +1186,68 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
 }
 
 void wifi_transfer_service_poll(void) {
-    if (!s_started || s_cfg.mode != WIFI_TRANSFER_MODE_STA) return;
-    int64_t now = esp_timer_get_time() / 1000;
+    const int64_t now = esp_timer_get_time() / 1000;
+    memory_peak_token_t completed = 0;
     portENTER_CRITICAL(&s_lock);
-    int action = s_stopping ? 0 : connection_poll(&s_connection, now);
-    unsigned attempts = s_connection.attempts;
+    if (!s_started || s_status.mode != WIFI_TRANSFER_MODE_STA) {
+        portEXIT_CRITICAL(&s_lock);
+        return;
+    }
+    const bool usable = !s_stopping && !s_config_busy && !s_connect_calling;
+    const bool expired = usable && !s_connection.online && !s_connection.failed && now >= s_connection.deadline_ms;
+    if (usable && s_association_peak && !s_connection.cancel_pending &&
+        (s_connection.online || s_connection.pending || s_connection.failed)) {
+        completed = s_association_peak;
+        s_association_peak = 0;
+    }
+    if (expired) {
+        (void)connection_poll(&s_connection, now);
+        s_connection.cancel_pending = s_association_peak != 0;
+        s_connection.next_ms = now;
+        s_cancel_attempts = 0;
+        s_status.network_ready = false; s_status.url[0] = 0;
+        if (s_status.state != WIFI_TRANSFER_UPLOADING) s_status.state = WIFI_TRANSFER_ERROR;
+        if (s_status.last_error == ESP_OK) s_status.last_error = ESP_ERR_TIMEOUT;
+    }
+    const bool cancel = usable && s_connection.cancel_pending && now >= s_connection.next_ms;
+    if (cancel) {
+        s_connect_calling = true;
+        s_connection.next_ms = now + 2000;
+        if (s_cancel_attempts < 3) ++s_cancel_attempts;
+    }
+    const bool due = usable && !expired && !cancel && !s_association_peak && !s_connection.online &&
+        !s_connection.failed && s_connection.pending && now >= s_connection.next_ms;
+    portEXIT_CRITICAL(&s_lock);
+    if (expired) ESP_LOGW("transfer", "sta connection timeout");
+    if (cancel) {
+        const esp_err_t result = esp_wifi_disconnect();
+        portENTER_CRITICAL(&s_lock);
+        const bool driver_down = result == ESP_ERR_WIFI_NOT_INIT || result == ESP_ERR_WIFI_NOT_STARTED;
+        if (driver_down) {
+            s_connection.cancel_pending = false;
+            s_started = false;
+        }
+        if (!s_connection.cancel_pending && s_association_peak) {
+            completed = s_association_peak;
+            s_association_peak = 0;
+        }
+        s_connect_calling = false;
+        portEXIT_CRITICAL(&s_lock);
+    }
+    memory_peak_finish(completed);
+    if (!due) return;
+    memory_peak_token_t peak;
+    if (memory_peak_try_begin(MEMORY_PEAK_WIFI_CONNECT, &peak) != ESP_OK) {
+        portENTER_CRITICAL(&s_lock);
+        // 忙不消耗一次关联尝试。/ Busy does not consume an association attempt.
+        if (s_connection.pending && s_connection.next_ms <= now) s_connection.next_ms = now + 1000;
+        portEXIT_CRITICAL(&s_lock);
+        return;
+    }
+    portENTER_CRITICAL(&s_lock);
+    const int action = (s_stopping || s_config_busy || s_connect_calling || s_association_peak)
+        ? 0 : connection_poll(&s_connection, now);
+    if (action != 0) s_connect_calling = true;
     if (action < 0) {
         s_status.network_ready = false; s_status.url[0] = 0;
         if (s_status.state != WIFI_TRANSFER_UPLOADING) s_status.state = WIFI_TRANSFER_ERROR;
@@ -1176,17 +1255,51 @@ void wifi_transfer_service_poll(void) {
     }
     portEXIT_CRITICAL(&s_lock);
     if (action < 0) {
-        ESP_LOGW("transfer", "sta connection timeout attempts=%u", attempts);
         esp_wifi_disconnect();
-    }
-    if (action == 1) {
-        esp_err_t err = esp_wifi_connect();
-        if (err != ESP_OK) {
-            portENTER_CRITICAL(&s_lock);
-            connection_lost(&s_connection, now); s_status.last_error = err;
-            portEXIT_CRITICAL(&s_lock);
+        portENTER_CRITICAL(&s_lock); s_connect_calling = false; portEXIT_CRITICAL(&s_lock);
+    } else if (action == 1) {
+        const esp_err_t result = esp_wifi_connect();
+        portENTER_CRITICAL(&s_lock);
+        if (result == ESP_OK) {
+            s_association_peak = peak;
+            peak = 0;
+        } else {
+            connection_lost(&s_connection, now);
+            s_status.last_error = result;
         }
+        s_connect_calling = false;
+        portEXIT_CRITICAL(&s_lock);
     }
+    memory_peak_finish(peak);
+}
+
+void wifi_transfer_recover_stuck_sta(void) {
+    const int64_t now = esp_timer_get_time() / 1000;
+    portENTER_CRITICAL(&s_lock);
+    const bool retry = s_started && s_association_peak && s_connection.cancel_pending && s_cancel_attempts >= 3 &&
+        now >= s_connection.next_ms && !s_config_busy && !s_connect_calling && !s_upload_active && !s_time_active;
+    if (retry) {
+        s_connect_calling = s_stopping = true;
+        s_connection.next_ms = now + 2000;
+    }
+    portEXIT_CRITICAL(&s_lock);
+    if (!retry) return;
+
+    // 调用方持有无线控制门且没有 Wi-Fi 租约；仅确认驱动停稳后归还。
+    // The caller holds the bearer gate without Wi-Fi leases; release only after the driver is down.
+    const esp_err_t stopped = esp_wifi_stop();
+    memory_peak_token_t completed = 0;
+    portENTER_CRITICAL(&s_lock);
+    if (stopped == ESP_OK || stopped == ESP_ERR_WIFI_NOT_STARTED || stopped == ESP_ERR_WIFI_NOT_INIT) {
+        s_started = s_connection.cancel_pending = false;
+        completed = s_association_peak;
+        s_association_peak = 0;
+    } else {
+        s_stopping = false;
+    }
+    s_connect_calling = false;
+    portEXIT_CRITICAL(&s_lock);
+    memory_peak_finish(completed);
 }
 
 static esp_err_t respond_error(httpd_req_t *req, int code) {
@@ -1280,7 +1393,7 @@ static bool provisioning_request(httpd_req_t *req) {
 
 static bool receive_stopped(void *ctx) {
     (void)ctx;
-    portENTER_CRITICAL(&s_lock); bool stopping = s_stopping; portEXIT_CRITICAL(&s_lock);
+    portENTER_CRITICAL(&s_lock); bool stopping = s_stopping || s_files_disabled; portEXIT_CRITICAL(&s_lock);
     return stopping;
 }
 
@@ -1322,7 +1435,7 @@ static esp_err_t wifi_handler(httpd_req_t *req) {
 }
 
 static int receive_http(void *ctx, char *buf, size_t n) {
-    portENTER_CRITICAL(&s_lock); bool stopping = s_stopping; portEXIT_CRITICAL(&s_lock);
+    portENTER_CRITICAL(&s_lock); bool stopping = s_stopping || s_files_disabled; portEXIT_CRITICAL(&s_lock);
     if (stopping) return -1;
     return httpd_req_recv(ctx, buf, n);
 }
@@ -1466,7 +1579,7 @@ static esp_err_t books_handler(httpd_req_t *req) {
     int resolved = resolve_mutation_path(s_root, name, path, sizeof(path));
     if (resolved) return respond_error(req, resolved);
     portENTER_CRITICAL(&s_lock);
-    bool accepted = admission_begin(s_stopping, &s_upload_active);
+    bool accepted = admission_begin(s_stopping || s_files_disabled, &s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (!accepted) return wifi_response(req, "409 Conflict", "{\"error\":\"正在上传或切换网络，请稍后重试\"}");
     file_result_t result = retry ? (file_result_t){.status = !s_cfg.file_changed_cb || s_cfg.file_changed_cb(path) == ESP_OK ? 200 : 500} :
@@ -1507,7 +1620,7 @@ static esp_err_t signature_handler(httpd_req_t *req) {
         !recv_small_body(req, text, sizeof(text)) || !transfer_signature_valid(text, req->content_len)))
         return wifi_response(req, "400 Bad Request", "{\"error\":\"签名最多95字节，不能含换行或控制字符\"}");
     portENTER_CRITICAL(&s_lock);
-    bool accepted = admission_begin(s_stopping, &s_upload_active);
+    bool accepted = admission_begin(s_stopping || s_files_disabled, &s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (!accepted) return wifi_response(req, "409 Conflict", "{\"error\":\"正在传输，请完成后再设置签名\"}");
     esp_err_t err = req->method == HTTP_POST ? s_cfg.signature_set_cb(text) :
@@ -1599,7 +1712,7 @@ static esp_err_t titles_handler(httpd_req_t *req) {
     const cJSON *title = json ? cJSON_GetObjectItemCaseSensitive(json, "title") : NULL;
     if (!cJSON_IsString(title) || !title->valuestring) { cJSON_Delete(json); return respond_error(req, 400); }
     portENTER_CRITICAL(&s_lock);
-    bool accepted = admission_begin(s_stopping, &s_upload_active);
+    bool accepted = admission_begin(s_stopping || s_files_disabled, &s_upload_active);
     portEXIT_CRITICAL(&s_lock);
     if (!accepted) { cJSON_Delete(json); return respond_error(req, 409); }
     esp_err_t err = s_cfg.title_set_cb(path, title->valuestring);
@@ -1622,7 +1735,7 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     snprintf(part, sizeof(part), "%s.part", path);
     bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
     portENTER_CRITICAL(&s_lock);
-    if (!admission_begin(s_stopping, &s_upload_active)) {
+    if (!admission_begin(s_stopping || s_files_disabled, &s_upload_active)) {
         portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "503 Service Unavailable", "{\"error\":\"网络正在切换，请连接后重试\"}");
     }
@@ -1660,7 +1773,7 @@ static esp_err_t media_upload_handler(httpd_req_t *req, const char *root, unsign
     if (set_wallpaper && !s_cfg.wallpaper_set_cb)
         return wifi_response(req, "503 Service Unavailable", "{\"error\":\"锁屏壁纸设置不可用\"}");
     portENTER_CRITICAL(&s_lock);
-    if (!admission_begin(s_stopping, &s_upload_active)) {
+    if (!admission_begin(s_stopping || s_files_disabled, &s_upload_active)) {
         portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "503 Service Unavailable", "{\"error\":\"网络正在切换，请稍后重试\"}");
     }
@@ -1700,7 +1813,7 @@ static esp_err_t file_upload_handler(httpd_req_t *req) {
     bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
     const char *name = strrchr(relative, '/'); name = name ? name + 1 : relative;
     portENTER_CRITICAL(&s_lock);
-    if (!admission_begin(s_stopping, &s_upload_active)) {
+    if (!admission_begin(s_stopping || s_files_disabled, &s_upload_active)) {
         portEXIT_CRITICAL(&s_lock);
         return wifi_response(req, "503 Service Unavailable", "{\"error\":\"网络正在切换，请稍后重试\"}");
     }
@@ -2002,7 +2115,7 @@ static esp_err_t files_mutation_handler(httpd_req_t *req) {
     }
     bool accepted;
     portENTER_CRITICAL(&s_lock);
-    accepted = admission_begin(s_stopping, &s_upload_active);
+    accepted = admission_begin(s_stopping || s_files_disabled, &s_upload_active);
     if (accepted) s_status.state = WIFI_TRANSFER_UPLOADING;
     portEXIT_CRITICAL(&s_lock);
     if (!accepted) { cJSON_Delete(json); return files_error(req, "503 Service Unavailable", "{\"error\":\"设备正忙，请稍后重试\"}"); }
@@ -2070,19 +2183,51 @@ static esp_err_t files_mutation_handler(httpd_req_t *req) {
 
 /* ---- 生命周期 / Lifecycle ---- */
 bool wifi_transfer_try_stop_if_idle(void) {
-    if (!cancel_time_sync(false)) return false;
     portENTER_CRITICAL(&s_lock);
-    bool accepted = admission_stop(&s_stopping, s_upload_active);
+    const bool accepted = !s_time_active && !s_config_busy && !s_connect_calling &&
+        admission_stop(&s_stopping, s_upload_active);
     portEXIT_CRITICAL(&s_lock);
-    if (accepted) wifi_transfer_stop();
-    return accepted;
+    if (!accepted) return false;
+    wifi_transfer_stop();
+    wifi_transfer_status_t status;
+    wifi_transfer_get_status(&status);
+    return status.state == WIFI_TRANSFER_STOPPED;
+}
+
+void wifi_transfer_block_local_files(uint32_t session_id) {
+    portENTER_CRITICAL(&s_lock);
+    if (session_id && s_status.session_id == session_id && !s_status.network_only) s_files_disabled = true;
+    portEXIT_CRITICAL(&s_lock);
+}
+
+bool wifi_transfer_detach_http(bool media_lost) {
+    portENTER_CRITICAL(&s_lock);
+    const bool allowed = s_status.mode == WIFI_TRANSFER_MODE_STA && !s_config_busy &&
+        (!s_upload_active || media_lost);
+    if (allowed) s_files_disabled = true;
+    portEXIT_CRITICAL(&s_lock);
+    if (!allowed) return false;
+    if (s_http && httpd_stop(s_http) != ESP_OK) return false;
+    s_http = NULL;
+    const uint32_t session = s_cfg.session_id;
+    s_cfg = (wifi_transfer_cfg_t){.mode = WIFI_TRANSFER_MODE_STA, .network_only = true};
+    free(s_buffer);
+    s_buffer = NULL;
+    portENTER_CRITICAL(&s_lock);
+    s_memory_internal = s_memory_psram = 0;
+    s_status.network_only = true;
+    // 保留状态快照的编号和变更计数供原页面读取；恢复配置不再持有页面资源。
+    // Keep owner and counts in the snapshot; restore no longer retains page resources.
+    s_status.session_id = session;
+    portEXIT_CRITICAL(&s_lock);
+    return true;
 }
 
 bool wifi_transfer_pause_for_sleep(void) {
     if (!cancel_time_sync(false)) return false;
     wifi_transfer_status_t status;
     wifi_transfer_get_status(&status);
-    if (status.state == WIFI_TRANSFER_STOPPED) return true;
+    if (!status.owns_radio) return true;
     if (status.state == WIFI_TRANSFER_UPLOADING) return false;
     wifi_transfer_cfg_t saved = s_cfg;
     if (saved.root_dir) {
@@ -2095,56 +2240,118 @@ bool wifi_transfer_pause_for_sleep(void) {
     return true;
 }
 
-void wifi_transfer_resume_after_sleep(void) {
-    if (!s_sleep_paused) return;
-    s_sleep_paused = false;
-    esp_err_t err = wifi_transfer_start(&s_sleep_cfg);
-    if (err != ESP_OK) ESP_LOGW("transfer", "resume after sleep: %s", esp_err_to_name(err));
+esp_err_t wifi_transfer_resume_after_sleep(void) {
+    if (!s_sleep_paused) return ESP_OK;
+    const esp_err_t err = wifi_transfer_start(&s_sleep_cfg);
+    if (!memory_peak_is_busy(err)) s_sleep_paused = false;
+    if (err != ESP_OK && !memory_peak_is_busy(err))
+        ESP_LOGW("transfer", "resume after sleep: %s", esp_err_to_name(err));
+    return err;
+}
+
+static void wifi_release_ble(void) {
+    if (!s_ble_network_reserved) return;
+    s_ble_network_reserved = false;
+    ble_pt_network_release();
 }
 
 void wifi_transfer_stop(void) {
     if (!cancel_time_sync(false)) return;
     portENTER_CRITICAL(&s_lock); s_stopping = true; portEXIT_CRITICAL(&s_lock);
-    if (s_http) { httpd_stop(s_http); s_http = NULL; }
+    esp_err_t result = ESP_OK;
+    memory_peak_token_t association = 0;
+    if (s_http) {
+        result = httpd_stop(s_http);
+        if (result != ESP_OK) goto stop_failed;
+        s_http = NULL;
+    }
     portENTER_CRITICAL(&s_lock); s_memory_internal = 0; portEXIT_CRITICAL(&s_lock);
-    if (s_started) { esp_wifi_stop(); s_started = false; }
+    if (s_started) {
+        result = esp_wifi_stop();
+        if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_STARTED && result != ESP_ERR_WIFI_NOT_INIT) goto stop_failed;
+    }
+    portENTER_CRITICAL(&s_lock);
+    s_started = false;
+    association = s_association_peak;
+    s_association_peak = 0;
+    portEXIT_CRITICAL(&s_lock);
     if (s_events) { esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, s_events); s_events = NULL; }
     if (s_ip_events) { esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID, s_ip_events); s_ip_events = NULL; }
-    if (s_wifi) { esp_wifi_deinit(); s_wifi = false; }
+    if (s_wifi) {
+        result = esp_wifi_deinit();
+        if (result != ESP_OK && result != ESP_ERR_WIFI_NOT_INIT) goto stop_failed;
+        s_wifi = false;
+    }
     if (s_netif) { esp_netif_destroy_default_wifi(s_netif); s_netif = NULL; }
     if (s_loop_owned) { esp_event_loop_delete_default(); s_loop_owned = false; }
     portENTER_CRITICAL(&s_lock); s_memory_psram = 0; portEXIT_CRITICAL(&s_lock);
     free(s_buffer); s_buffer = NULL;
-    if (s_ble_network_reserved) { s_ble_network_reserved = false; ble_pt_network_release(); }
+    wifi_release_ble();
     portENTER_CRITICAL(&s_lock);
     s_status.state = WIFI_TRANSFER_STOPPED; s_status.sta_count = 0;
+    s_status.owns_radio = false;
     s_status.network_ready = false; s_status.url[0] = 0;
     s_upload_active = false;
     memset(&s_connection, 0, sizeof(s_connection));
     portEXIT_CRITICAL(&s_lock);
+    memory_peak_finish(association);
+    return;
+stop_failed:
+    portENTER_CRITICAL(&s_lock);
+    s_status.state = WIFI_TRANSFER_ERROR;
+    s_status.network_ready = false;
+    if (!s_connection.failed || s_status.last_error == ESP_OK) s_status.last_error = result;
+    if (s_association_peak) {
+        // 停驱动失败：继续等待断开确认，禁止再接收文件。/ Failed to stop the driver: keep seeking disconnect confirmation, with HTTP writes blocked.
+        s_files_disabled = true;
+        s_stopping = false;
+        if (!s_connection.failed) {
+            s_connection.failed = s_connection.cancel_pending = true;
+            s_connection.next_ms = 0;
+            s_cancel_attempts = 0;
+        }
+    }
+    portEXIT_CRITICAL(&s_lock);
+    memory_peak_finish(association);
 }
 
-esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
+esp_err_t wifi_transfer_start_admitted(const wifi_transfer_cfg_t *cfg, memory_peak_token_t admitted) {
     if (!cfg || (cfg->network_only && cfg->mode != WIFI_TRANSFER_MODE_STA) ||
         (!cfg->network_only && (!cfg->root_dir || !cfg->free_bytes_cb)) ||
         (cfg->root_dir && strlen(cfg->root_dir) >= sizeof(s_root)) ||
         (cfg->mode != WIFI_TRANSFER_MODE_AP && cfg->mode != WIFI_TRANSFER_MODE_STA)) return ESP_ERR_INVALID_ARG;
-    if (!cancel_time_sync(true)) return ESP_ERR_INVALID_STATE;
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
     if (s_wifi || s_netif || s_http) { release_config(); return ESP_ERR_INVALID_STATE; }
-    // 先回收 BLE 内存，再创建 WiFi/HTTP；失败不半途启动。/ Reclaim BLE before WiFi/HTTP allocation; never start partially on a failed stop.
-    const esp_err_t reserve = ble_pt_network_acquire();
-    if (reserve != ESP_OK) { release_config(); return reserve; }
+    memory_peak_token_t peak = 0;
+    esp_err_t reserve = admitted ? ESP_OK : memory_peak_try_begin(MEMORY_PEAK_WIFI, &peak);
+    if (reserve == ESP_OK) reserve = ble_pt_network_acquire();
+    if (reserve != ESP_OK) { release_config(); memory_peak_finish(peak); return reserve; }
     s_ble_network_reserved = true;
+    // 仅核对明确的 HTTP 栈和传输缓冲，不猜测驱动峰值。/ Check only known HTTP stack and transfer buffer, not driver peaks.
+    if (!cfg->network_only) {
+        reserve = memory_peak_check((memory_peak_heap_t){12288, 12288, 16384, 16384});
+        if (reserve != ESP_OK) {
+            wifi_release_ble();
+            release_config();
+            memory_peak_finish(peak);
+            return reserve;
+        }
+    }
+    const wifi_transfer_cfg_t previous = s_cfg;
+    char previous_root[sizeof(s_root)];
+    memcpy(previous_root, s_root, sizeof(previous_root));
     s_cfg = *cfg;
-    if (cfg->root_dir) strcpy(s_root, cfg->root_dir);
-    else s_root[0] = 0;
+    if (cfg->root_dir && cfg->root_dir != s_root) strcpy(s_root, cfg->root_dir);
+    else if (!cfg->root_dir) s_root[0] = 0;
     s_cfg.root_dir = s_root;
     portENTER_CRITICAL(&s_lock);
     memset(&s_status, 0, sizeof(s_status)); s_status.state = WIFI_TRANSFER_STARTING;
     s_stopping = s_upload_active = false;
     s_status.mode = cfg->mode;
     s_status.network_only = cfg->network_only;
+    s_status.session_id = cfg->session_id;
+    s_status.owns_radio = true;
+    s_files_disabled = false;
     portEXIT_CRITICAL(&s_lock);
     transfer_credentials_t saved = {0};
     wifi_config_t wifi = {0};
@@ -2284,7 +2491,7 @@ esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
     if (power_err != ESP_OK) ESP_LOGW("transfer", "disable wifi power save: %s", esp_err_to_name(power_err));
     err = esp_wifi_set_max_tx_power(48); // 0.25 dBm units, vendor kMetalioWifiMaxTxPower / 0.25 dBm 单位，同厂商 kMetalioWifiMaxTxPower
     if (err != ESP_OK) ESP_LOGW("transfer", "cap tx power 12 dBm: %s", esp_err_to_name(err));
-    s_started = true;
+    portENTER_CRITICAL(&s_lock); s_started = true; portEXIT_CRITICAL(&s_lock);
     if (cfg->mode == WIFI_TRANSFER_MODE_AP) {
         portENTER_CRITICAL(&s_lock);
         s_status.network_ready = true; strcpy(s_status.url, WIFI_TRANSFER_URL);
@@ -2294,12 +2501,31 @@ esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
     } else {
         int64_t now = esp_timer_get_time() / 1000;
         portENTER_CRITICAL(&s_lock); connection_begin(&s_connection, now); portEXIT_CRITICAL(&s_lock);
-        wifi_transfer_service_poll();
     }
     release_config();
+    memory_peak_finish(peak);
+    if (!admitted && cfg->mode == WIFI_TRANSFER_MODE_STA) wifi_transfer_service_poll();
     return ESP_OK;
 fail:
     clear_secret(&wifi, sizeof(wifi)); clear_secret(&saved, sizeof(saved));
-    wifi_transfer_stop(); release_config(); set_error(err); return err;
+    wifi_transfer_stop();
+    if (!s_wifi && !s_netif && !s_http) {
+        // 恢复事务仍需上一会话的配置；未拆干净时不可覆盖活动回调。
+        // Keep the previous config for rollback; never overwrite callbacks while teardown is incomplete.
+        s_cfg = previous;
+        memcpy(s_root, previous_root, sizeof(s_root));
+    }
+    release_config(); set_error(err);
+    memory_peak_finish(peak);
+    return err;
 }
+esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t *cfg) {
+    return wifi_transfer_start_admitted(cfg, 0);
+}
+
+esp_err_t wifi_transfer_restore_admitted(memory_peak_token_t admitted) {
+    const wifi_transfer_cfg_t saved = s_cfg;
+    return wifi_transfer_start_admitted(&saved, admitted);
+}
+
 #endif

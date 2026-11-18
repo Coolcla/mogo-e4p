@@ -96,10 +96,14 @@ static void epd_hl_set_all_white(void *h){(void)h;memset(pixels,255,FRAME_BYTES)
 static enum EpdDrawError epd_hl_update_screen_from_white(void *h,int mode,int temp){(void)h;assert(mode==MODE_GC16&&temp==25&&frame_ready&&panel[0]==255);assert(pixels[0]==(draw_ok?0x10+style:0xfe));memcpy(panel,pixels,FRAME_BYTES);++presents;return EPD_DRAW_SUCCESS;}
 static void app_font_begin_lock(app_lock_font_t *s){assert(panel[0]==(feedback_seen?0xff:current_background));s->active=true;++font_begin;}
 static void app_font_end_lock(app_lock_font_t *s){assert(s->active);++font_end;}
-static bool wifi_transfer_pause_for_sleep(void){++pause;return transfer_ok;}
-static bool cellular_service_pause_for_sleep(void){assert(pause==1&&!resume&&!presents);++cellular_pause;return cellular_ok;}
-static void cellular_service_resume_after_sleep(void){assert(cellular_pause==1&&!resume);++cellular_resume;}
-static void wifi_transfer_resume_after_sleep(void){assert(cellular_pause==1&&cellular_resume==(cellular_ok?1u:0u));++resume;}
+static bool network_service_pause_for_sleep(void){
+    ++pause;
+    if (!transfer_ok) return false;
+    assert(!resume && !presents); ++cellular_pause;
+    if (!cellular_ok) ++resume;
+    return cellular_ok;
+}
+static void network_service_resume_after_sleep(void){assert(cellular_pause==1&&!resume);++resume;++cellular_resume;}
 static void pico_boot_clear_resume(void){++clear_resume;}
 static bool calibration_locked;
 static void device_power_batt_calibration_lock(bool locked){assert(locked!=calibration_locked);calibration_locked=locked;}

@@ -5,6 +5,11 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-18
 
+- 开书和无线启动共用内存高峰准入；Wi-Fi 不再自动断开正在使用的蓝牙翻页器。/ Coordinate book-open and radio-start memory peaks; Wi-Fi no longer disconnects an active Bluetooth page-turner.
+- Wi-Fi 占用或不满足起栈内存条件时，快捷栏和设置页直接提示并拒绝开启蓝牙，不保存无效开关；快捷开启网络遇到驱动内存不足时单独提示。/ Quick controls and Settings reject Bluetooth enable with an immediate Wi-Fi or memory hint and leave the setting unchanged; network startup reports driver out-of-memory separately.
+- 将 S31 的 4G 收发数据优先放入 PSRAM，减少片内 DMA 内存占用；让天气任务与系统空闲任务共享 CPU 时间，避免慢 TLS 运算饿死空闲任务。/ Prefer PSRAM for S31 cellular payloads to reduce internal DMA memory use, and let idle tasks run during slow weather TLS operations.
+- 无线开关遇到内存高峰准入繁忙时，提示当前正在开书、启动无线或连接翻页器等具体原因；移动网络设置页也显示操作失败提示。/ Name the phase holding peak admission when a radio toggle is blocked and show toggle errors in cellular settings.
+- 4G 与蓝牙翻页器互斥：保留正在使用的连接，启动另一项时提示关闭占用功能；空闲蓝牙可临时让位，4G 停止后按原设置恢复。/ Make cellular and Bluetooth page turning mutually exclusive: preserve active connections, identify the blocker, and restore idle Bluetooth after cellular stops.
 - 新增默认关闭的自动电量校准，按本机有效放电区间逐步学习；支持查看覆盖、关闭后保留结果和确认重置，数据仅留本机，显示平滑与充电保护保持不变。/ Add opt-in automatic battery calibration from eligible local discharge intervals, coverage status, retained results after disabling and confirmed reset; keep data local and retain display smoothing and charger protection.
 - 设置将自动电量校准标为 `(beta)` 测试版；修复关闭状态提示、PIN 解锁前写入、显示检查点归属及双槽重置中断后的恢复。/ Mark automatic battery calibration as `(beta)` in Settings; fix disabled status, writes before PIN unlock, checkpoint provenance, and recovery from an interrupted dual-slot reset.
 - 根据新一轮连续放电日志微调中低电量曲线，减少低电尾段偏高；更新电量缓存版本，首次启动按新曲线估算。/ Refine the middle/lower battery curve from another continuous discharge to reduce an overstated tail; revise saved-SOC compatibility so the first start uses the new curve.

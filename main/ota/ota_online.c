@@ -19,6 +19,7 @@
 #include "wifi_transfer.h"
 #ifdef ESP_PLATFORM
 #include "network_service.h"
+#include "memory_peak.h"
 #include "cellular_service.h"
 #include "esp_log.h"
 #endif
@@ -174,6 +175,8 @@ static bool layout_valid(void) {
 }
 #ifdef ESP_PLATFORM
 static const char *network_unavailable_notice(esp_err_t error) {
+    const char *hint = memory_peak_hint(error);
+    if (hint) return hint;
     if (error == ESP_ERR_NO_MEM) return "网络启动内存不足，请稍后重试";
     network_status_t network;
     network_service_get_status(&network);

@@ -204,6 +204,7 @@
 #include "book_epub.h"
 #include "book_policy.h"
 #include "book_file_path.h"
+#include "memory_peak.h"
 #include "book_progress.h"
 #include "book_bookmark_format.h"
 #include "book_category_ops.h"
@@ -247,7 +248,7 @@
 #include "board_init.h"
 #include "board_hardware.h"
 #include "board_sd.h"
-#include "wifi_transfer.h"
+#include "network_local_wifi.h"
 #include "book_search.h"
 #include "settings.h"
 #include "book/book_reader_input.h"
@@ -346,6 +347,14 @@ static bool s_dictionary_presented;
 static bool s_reader_notice_presented;
 static char s_requested_open[BOOK_STORE_PATH_MAX];
 static bool s_requested_open_home;
+static bool s_requested_resume;
+static int64_t s_resume_next_ms, s_resume_deadline_ms;
+
+static void cancel_auto_resume(void) {
+    if (!s_requested_resume) return;
+    s_requested_open[0] = 0;
+    s_requested_open_home = s_requested_resume = false;
+}
 static bool s_reader_return_home;
 static bool s_requested_manage;
 static shelf_entry_t* s_shelf;
@@ -629,7 +638,8 @@ bool app_book_request_open(const char* path) {
     if (!path || !path[0] || strnlen(path, sizeof(s_requested_open)) >= sizeof(s_requested_open)) return false;
     if (!book_file_path_supported(path)) return false;
     copy_text(s_requested_open, sizeof(s_requested_open), path);
-    s_requested_open_home = false;
+    s_requested_open_home = s_requested_resume = false;
+    s_resume_next_ms = s_resume_deadline_ms = 0;
     return true;
 }
 bool app_book_request_open_from_home(const char* path) {
@@ -638,7 +648,9 @@ bool app_book_request_open_from_home(const char* path) {
     return true;
 }
 bool app_book_request_resume(const char *path) {
-    return app_book_request_open_from_home(path);
+    if (!app_book_request_open_from_home(path)) return false;
+    s_requested_resume = true;
+    return true;
 }
 bool app_book_request_return_to_body(const char *path) {
     // 走普通开书来源：正文的返回仍是书架，不继承深睡恢复的「回首页」语义。
@@ -4063,6 +4075,7 @@ static void reader_bind_chapter(void) {
     s_image_count = content->image_count;
 }
 static void free_book(void) {
+    const bool had_book = s_reader_session.book.path[0] != 0;
     dictionary_cancel();
     (void)book_excerpt_flush(s_reader_session.book.path);
     book_excerpt_reset(); s_excerpt_forward = false;
@@ -4073,7 +4086,10 @@ static void free_book(void) {
     s_reader_turn_pending = s_reader_text_frame = s_reader_stable_frame = false;
     pending_progress_t* pending = pending_find(s_reader_session.book.path);
     if (pending && !pending->dirty) pending_discard(s_reader_session.book.path);
-    invalidate_prep();
+    // 关书所在的 UI 边界已交还预绘；不把上一册的帧留到书架。
+    // The close runs after prefetch handoff; don't retain the previous book's frame on the shelf.
+    if (had_book) reader_prefetch_discard();
+    else invalidate_prep();
     book_layout_set_image_dims(NULL, NULL);
     s_reader_dims_ctx = (reader_dims_ctx_t){0};
     reader_session_release_layout(&s_reader_session);
@@ -4346,16 +4362,11 @@ static bool reader_open_load(void *ctx, size_t chapter, size_t offset) {
     skip_hidden_image_pages(ctx, 1);
     return s_text != NULL;
 }
-static bool open_book_impl(app_ctx_t* ctx, const char* path) {
-#if CONFIG_READER_PERF
-    reader_perf_begin("open");
-    READER_PERF_SCOPE(READER_PERF_ACTION);
-#endif
+static bool open_book_preflight(const char *path, uint32_t *size) {
     if (!book_file_path_supported(path)) {
         copy_text(s_message, sizeof(s_message), "此版本仅支持 TXT、EPUB 和 MOBI 书籍");
         return false;
     }
-    s_reader_return_home = false;
     if (!strncmp(path, "/sdcard/", 8)) {
         board_sd_info_t sd = {0};
         board_sd_get_info(&sd);
@@ -4379,32 +4390,16 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
         copy_text(s_message, sizeof(s_message), "内置存储单本限 1 MB");
         return false;
     }
-    wifi_transfer_status_t network = {0};
-    wifi_transfer_get_status(&network);
+    *size = (uint32_t)st.st_size;
+    return true;
+}
+
+static bool open_book_impl(app_ctx_t *ctx, const char *path, uint32_t size) {
+#if CONFIG_READER_PERF
+    reader_perf_begin("open");
+    READER_PERF_SCOPE(READER_PERF_ACTION);
+#endif
     s_shelf_key_mode=s_shelf_key_paint_pending=false;s_shelf_key_delta=s_shelf_key_pressed=0;
-    // 书架封面和上一本书的预渲染缓冲可以重建；先释放，再解析 EPUB。
-    // Cover and previous-page caches are rebuildable; release them before EPUB parsing.
-    invalidate_covers();
-    lock_draw();
-    reader_prefetch_discard();
-    unlock_draw();
-    if (network.network_ready) ttf_font_cache_clear();
-    // 开书前把字形缓存全还回去并量一下能腾多少：书内字体要的正是这块 PSRAM，而系统字体
-    // 的缓存是里面最容易回收的。字体本身保持装载，翻页时按需重新缓存。
-    // Hand every glyph cache back before opening and measure what that was worth: embedded
-    // faces need exactly this PSRAM, and the system face's cache is the easiest part to
-    // reclaim. The faces stay loaded and re-cache on demand.
-    size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    size_t reclaimed = ttf_font_cache_clear_all();
-    size_t psram_after = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    ESP_LOGI(TAG, "open start wifi=%d internal=%u/%u psram=%u/%u cache=%uK freed=%uK",
-             network.network_ready,
-             (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
-             (unsigned)psram_after,
-             (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT),
-             (unsigned)(reclaimed / 1024),
-             (unsigned)((psram_after - psram_before) / 1024));
     reader_open_t open = {
         .session = &s_reader_session, .px = &s_px,
         .reserve = pending_reserve, .replace = reader_open_replace,
@@ -4412,7 +4407,7 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
         .load = reader_open_load, .close = free_book, .load_ctx = ctx,
     };
     esp_err_t err = ESP_OK;
-    reader_open_result_t result = reader_open_run(&open, path, (uint32_t)st.st_size, &err);
+    reader_open_result_t result = reader_open_run(&open, path, size, &err);
     if (result == READER_OPEN_RESERVE_OLD) {
         copy_text(s_message, sizeof(s_message), "内存不足，无法保留待保存进度");
         return false;
@@ -4427,7 +4422,7 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
         if (pending && !pending->dirty) pending_discard(path);
         copy_text(s_message, sizeof(s_message),
                   err == ESP_ERR_NOT_SUPPORTED ? "文件格式或压缩方式暂不支持" :
-                  err == ESP_ERR_NO_MEM ? "内存不足，请重启后重试" :
+                  err == ESP_ERR_NO_MEM ? "内存不足，请稍后重试" :
                   err == ESP_ERR_INVALID_SIZE ? "图书资源过大或章节过多" :
                   "无法打开图书，请检查文件");
         ESP_LOGW(TAG, "open failed: %s internal=%u/%u psram=%u/%u", esp_err_to_name(err),
@@ -4461,34 +4456,97 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
     ESP_LOGI(TAG, "opened kind=%d chapters=%u pages=%u px=%d", book_kind(), (unsigned)book_chapter_count(), (unsigned)book_layout_page_count(), s_px);
     return true;
 }
-static bool open_book(app_ctx_t *ctx, const char *path) {
+static bool open_book_attempt(app_ctx_t *ctx, const char *path, bool *retry) {
+    *retry = false;
     if (book_category_pending(app_settings_books_dir())) {
         copy_text(s_message,sizeof(s_message),"分类整理未完成，请在管理分类中重试恢复"); return false;
     }
+    uint32_t size;
+    if (!open_book_preflight(path, &size)) return false;
+    memory_peak_token_t peak;
+    const esp_err_t admitted = memory_peak_try_begin(MEMORY_PEAK_READER, &peak);
+    if (admitted != ESP_OK) {
+        *retry = memory_peak_is_busy(admitted);
+        copy_text(s_message, sizeof(s_message), memory_peak_hint(admitted));
+        return false;
+    }
     if (!book_cover_jobs_quiesce(2000)) {
-        copy_text(s_message,sizeof(s_message),"封面任务正在收尾，请稍后再试");return false;
+        copy_text(s_message,sizeof(s_message),"封面任务正在收尾，请稍后再试");
+        memory_peak_finish(peak);
+        return false;
+    }
+    // 旧书关闭后才归还布局和字体，不因旧书仍占内存而提前拒绝替换。
+    // Closing the old book returns layout and faces; do not reject a replacement based on that live usage.
+    const size_t block = s_reader_session.book.path[0] ? 0 : book_open_min_psram_block(path);
+    const memory_peak_heap_t need = {.psram_free = block, .psram_block = block};
+    // 软线只触发一轮按序回收；足够就停，最终只用确定需求作硬准入。
+    // Soft targets trigger one ordered reclaim pass; stop when met and gate only on known needs.
+    const memory_peak_heap_t target = {
+        .psram_free = block > 768u * 1024u ? block : 768u * 1024u,
+        .psram_block = block > 256u * 1024u ? block : 256u * 1024u,
+    };
+    memory_peak_heap_t heap = memory_peak_snapshot();
+    if (memory_peak_check_at(heap, target) != ESP_OK) {
+        invalidate_covers();
+        heap = memory_peak_snapshot();
+        if (memory_peak_check_at(heap, target) != ESP_OK && reader_prefetch_trim())
+            heap = memory_peak_snapshot();
+        if (memory_peak_check_at(heap, target) != ESP_OK && reader_prefetch_try_lock()) {
+            (void)ttf_font_cache_clear_all();
+            reader_prefetch_unlock();
+            heap = memory_peak_snapshot();
+        }
+    } else {
+        // 队列已交还；保留已取走的封面和未完成槽位，回书架时用新代次补齐。
+        // Jobs have handed back; retain collected covers and resume pending slots in a new generation.
+        book_shelf_covers_cancel(&s_shelf_covers);
+    }
+    const esp_err_t capacity = memory_peak_check_at(heap, need);
+    if (capacity != ESP_OK) {
+        copy_text(s_message, sizeof(s_message), memory_peak_hint(capacity));
+        memory_peak_finish(peak);
+        return false;
     }
     esp_err_t checkpoint_error=pico_boot_book_begin(path);
     if (checkpoint_error != ESP_OK) {
         ESP_LOGW("book", "open checkpoint failed: %s", esp_err_to_name(checkpoint_error));
         copy_text(s_message, sizeof(s_message), "启动记录保存失败，请重试");
+        memory_peak_finish(peak);
         return false;
     }
-    bool ok = open_book_impl(ctx, path);
+    bool ok = open_book_impl(ctx, path, size);
+    if (ok) s_reader_return_home = false;
     pico_boot_book_end(ok);
+    memory_peak_finish(peak);
     return ok;
 }
+static bool open_book(app_ctx_t *ctx, const char *path) {
+    bool retry;
+    return open_book_attempt(ctx, path, &retry);
+}
+
 static bool open_requested_book(app_ctx_t* ctx) {
     if (!s_requested_open[0]) return false;
-    char path[BOOK_STORE_PATH_MAX];
-    copy_text(path, sizeof(path), s_requested_open);
-    bool from_home = s_requested_open_home;
+    if (s_requested_resume) {
+        // 后台高峰只推迟一次续读请求，既不忙转也不无限等待。
+        // A background peak postpones one resume request, without spinning or waiting indefinitely.
+        if (!s_resume_deadline_ms) s_resume_deadline_ms = ctx->now_ms + 90000;
+        if (ctx->now_ms >= s_resume_deadline_ms) {
+            cancel_auto_resume();
+            return false;
+        }
+        if (ctx->now_ms < s_resume_next_ms) return false;
+    }
+    bool retry;
+    const bool opened = open_book_attempt(ctx, s_requested_open, &retry);
+    if (s_requested_resume && retry) {
+        s_resume_next_ms = ctx->now_ms + 500;
+        return false;
+    }
+    if (opened) s_reader_return_home = s_requested_open_home;
     s_requested_open[0] = 0;
-    s_requested_open_home = false;
-    bool opened = open_book(ctx, path);
-    if (!opened) return false;
-    s_reader_return_home = from_home;
-    return true;
+    s_requested_open_home = s_requested_resume = false;
+    return opened;
 }
 /* ---- 书架数据 / Shelf data ---- */
 static int shelf_category_add(const char *path) {
@@ -4647,7 +4705,7 @@ static bool shelf_backfill_read_books(bool *truncated) {
 static bool legacy_category_recover(void) {
     if (book_category_pending(app_settings_books_dir())) {
         board_sd_info_t recovery_sd={0};board_sd_get_info(&recovery_sd);
-        if (!recovery_sd.mounted || usb_storage_active() || !wifi_transfer_try_stop_if_idle() ||
+        if (!recovery_sd.mounted || usb_storage_active() || !network_service_stop_local_wifi() ||
             !book_cover_jobs_quiesce(2000) || book_category_recover(app_settings_books_dir(),category_extra_state)!=ESP_OK) return false;
         pending_drop_invalidated(); book_store_notify_changed(); book_lock_collage_invalidate();
     }
@@ -6757,6 +6815,7 @@ static void on_enter(app_ctx_t* ctx) {
 
 }
 static void book_on_exit(app_ctx_t* ctx) {
+    cancel_auto_resume();
     category_reset();
     s_shelf_selecting=false;clear_selection();
     track_ticket_stats(ctx);
@@ -6791,6 +6850,7 @@ static void book_on_exit(app_ctx_t* ctx) {
 // 先停止使用旧卡句柄与字体预渲染，主循环随后切换内置字体。
 // Stop old-card handles and font preparation before the loop switches to the builtin font.
 static void book_on_media_lost(app_ctx_t* ctx) {
+    cancel_auto_resume();
     book_excerpt_reset(); s_excerpt_forward = false;
     category_reset();
     s_shelf_selecting=false;
@@ -7181,6 +7241,7 @@ static app_redraw_t dictionary_tick(app_ctx_t *ctx) {
 }
 
 static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+    if (ev->type == UI_GESTURE_PRESS || ev->type == UI_GESTURE_TAP) cancel_auto_resume();
     bool dictionary_handled = false;
     app_redraw_t dictionary = dictionary_gesture(ctx, ev, &dictionary_handled);
     if (dictionary_handled) return dictionary;
@@ -7478,6 +7539,7 @@ static app_redraw_t middle_pending_tick(app_ctx_t *ctx) {
     return reader_key_action(ctx, s_middle_pending_action);
 }
 static app_redraw_t on_key(app_ctx_t* ctx, int key) {
+    cancel_auto_resume();
     if (s_dictionary_selection.active) return dictionary_dismiss();
     reader_indent_hold_cancel();
     s_pressed_control = -1;
@@ -7554,6 +7616,7 @@ static app_redraw_t on_power_short(app_ctx_t* ctx) {
     return result == APP_REDRAW_NONE ? APP_REDRAW_DONE : result;
 }
 static app_redraw_t on_key_long(app_ctx_t* ctx, int key) {
+    cancel_auto_resume();
     if (s_dictionary_selection.active) return dictionary_dismiss();
     reader_indent_hold_cancel();
     if (key != UI_KEY_2) return APP_REDRAW_NONE;
@@ -7855,6 +7918,11 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         bool failed = s_save_failed;
         retry_progress();
         if (failed != s_save_failed) { invalidate_prep(); return APP_REDRAW_PAGE; }
+    }
+    if (s_requested_resume && s_view == SHELF && !ctx->request_app && !ctx->request_menu && !ctx->request_return &&
+        ctx->now_ms >= s_resume_next_ms && open_requested_book(ctx)) {
+        s_scan_pending = false;
+        return APP_REDRAW_PAGE;
     }
     if (s_scan_pending && ctx->now_ms - s_poll_ms >= 500) {
         s_poll_ms = ctx->now_ms;

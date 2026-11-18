@@ -41,26 +41,17 @@ bool pmu_battery_charging(const pmu_snapshot_t *);
     (stubs / "ble_page_turner.h").write_text("#pragma once\n#include <stdbool.h>\nbool ble_pt_connected(void);\n")
     with (stubs / "wifi_transfer.h").open("a") as output:
         output.write("\n#define WIFI_TRANSFER_STOPPED 0\n#define WIFI_TRANSFER_READY 2\n")
-    (stubs / "network_service.h").write_text("""#pragma once
-#include <stdbool.h>
-#include <stdint.h>
-typedef int esp_err_t;
-#define ESP_OK 0
-#ifndef ESP_ERR_NOT_FOUND
-#define ESP_ERR_NOT_FOUND 2
-#endif
-#include "network_policy.h"
-typedef struct { int bearer; bool owns_wifi, owns_cellular, active; } network_lease_t;
-esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease);
-bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms);
-void network_service_release(network_lease_t *lease);
-""")
+    (stubs / "esp_log.h").write_text("#define ESP_LOGW(...) ((void)0)\n#define ESP_LOGI(...) ((void)0)\n")
+    with (stubs / "common.h").open("a") as output:
+        output.write("\n#define tskIDLE_PRIORITY 0u\n#define ESP_ERR_NOT_FOUND 2\n")
     network_stub = work / "network_service_stub.c"
     network_stub.write_text("""#include \"network_service.h\"
 #include \"wifi_transfer.h\"
 extern bool weather_test_cellular;
+extern unsigned weather_regular_acquires;
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     (void)use;
+    ++weather_regular_acquires;
     if (!lease) return ESP_ERR_INVALID_ARG;
     *lease = (network_lease_t){0};
     if (weather_test_cellular) {
@@ -108,12 +99,13 @@ void network_service_release(network_lease_t *lease) {
 # Existing system regressions retain their behavior; verify new handoff/scheduling entries separately.
 from home_cover_cache_host_test import function
 for name, path, following in (
-    ("quick_toggle_wifi", "main/app/app_quick_layer.c", "network_service_get_status"),
-    ("app_lifecycle_pause_for_lock", "main/app/app_lifecycle.c", "wifi_transfer_pause_for_sleep"),
-    ("app_lifecycle_prepare_poweroff", "main/app/app_lifecycle.c", "wifi_transfer_pause_for_sleep"),
+    ("app_lifecycle_pause_for_lock", "main/app/app_lifecycle.c", "network_service_pause_for_sleep"),
+    ("app_lifecycle_prepare_poweroff", "main/app/app_lifecycle.c", "network_service_pause_for_sleep"),
 ):
     body = function(name, ROOT / path)
     assert body.index("app_weather_cancel_join") < body.index(following)
+quick = function("quick_toggle_network", ROOT / "main/app/app_quick_layer.c")
+assert "network_service_set_enabled" in quick and "app_weather_cancel_join" not in quick
 loop = (ROOT / "main/app/app_loop.c").read_text()
 assert "pico_ota_auto_poll(!app_weather_busy()" in loop
 assert "app_time_service_poll(!app_weather_busy()" in loop

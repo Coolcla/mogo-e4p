@@ -22,6 +22,7 @@
 #include "nvs.h"
 #include "device_power.h"
 #include "network_service.h"
+#include "memory_peak.h"
 #include "settings.h"
 #include "sleep.h"
 #include "time_sync_policy.h"
@@ -43,7 +44,9 @@ static int64_t s_next_attempt_us = 15000000;
 static unsigned s_boot_attempts;
 
 static void clock_worker(void *arg) {
-    (void)arg;
+    // 进 worker 后栈已存在；先交还创建额度，再申请无线阶段，避免自冲突。
+    // The worker stack is now live; finish creation before requesting the radio phase.
+    memory_peak_finish((memory_peak_token_t)(uintptr_t)arg);
     uint32_t utc = 0;
     esp_err_t err = network_service_sync_time(&utc, true);
     ESP_LOGI("clock", "background calibration: %s", esp_err_to_name(err));
@@ -163,10 +166,18 @@ void app_time_service_poll(bool idle) {
     int percent = pmu_battery_percent(pmu);
     if (percent >= 0 && percent < CLOCK_MIN_BATTERY_PERCENT && !pmu_battery_charging(pmu)) return;
     s_next_attempt_us = monotonic + CLOCK_RETRY_US;
+    memory_peak_token_t peak;
+    if (memory_peak_try_begin(MEMORY_PEAK_WIFI_TIME, &peak) != ESP_OK) return;
+    const esp_err_t capacity = memory_peak_check((memory_peak_heap_t){.internal_free = 6144, .internal_block = 6144});
+    if (capacity != ESP_OK) {
+        memory_peak_finish(peak);
+        return;
+    }
     atomic_store(&s_running, true);
     // 仅对时期间保留任务栈；不创建常驻无线任务或页面缓存。
     // Keep a task stack only during calibration; no permanent radio task or page cache.
-    if (xTaskCreate(clock_worker, "rtc_sync", 6144, NULL, 1, NULL) != pdPASS) {
+    if (xTaskCreate(clock_worker, "rtc_sync", 6144, (void *)(uintptr_t)peak, 1, NULL) != pdPASS) {
+        memory_peak_finish(peak);
         atomic_store(&s_running, false);
         ESP_LOGW("clock", "background calibration deferred: no task memory");
         return;

@@ -55,7 +55,8 @@ bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return tru
 bool lock_images_quiesce(unsigned timeout_ms) { assert(timeout_ms==2000 || timeout_ms == 250); event('G'); return images_ok; }
 bool book_cover_jobs_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('C'); return cover_ok; }
 bool ui_avatar_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('A'); return avatar_ok; }
-bool wifi_transfer_pause_for_sleep(void) { event('W'); return transfer_ok; }
+bool network_service_pause_for_sleep(void) { event('W'); return transfer_ok; }
+void network_service_resume_after_sleep(void) {}
 bool ble_pt_connected(void) { return false; }
 bool ble_pt_connecting(void) { return false; }
 bool reader_prefetch_trim(void) { event('Q'); return prefetch_ready; }

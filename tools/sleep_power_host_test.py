@@ -93,15 +93,13 @@ static void app_s31_sleep_init(void) {}
 static int trace_replays;
 static void sleep_trace_replay(void) { ++trace_replays; }
 static bool pico_online_busy(void) { return ota; }
-static bool wifi_transfer_pause_for_sleep(void) { ++pauses; return transfer_ok; }
-static bool cellular_service_pause_for_sleep(void) {
-    assert(pauses == 1 && !resumes && !prepared && !step);
-    ++cellular_pauses; return cellular_ok;
-}
-static void cellular_service_resume_after_sleep(void);
-static void wifi_transfer_resume_after_sleep(void) {
-    assert(cellular_pauses == 1 && cellular_resumes == (cellular_ok ? 1 : 0));
-    ++resumes;
+static bool network_service_pause_for_sleep(void) {
+    ++pauses;
+    if (!transfer_ok) return false;
+    assert(!resumes && !prepared && !step);
+    ++cellular_pauses;
+    if (!cellular_ok) ++resumes;
+    return cellular_ok;
 }
 static int ble_pt_stop(int timeout) { assert(timeout == 2000); ++radio_stops; return ESP_OK; }
 static int fl_pauses, fl_resumes;
@@ -129,11 +127,12 @@ static int cst836u_wake(void *h) {
     assert((output[1] & P1_RAIL_MASK) == P1_RAIL_MASK);
     tp_mode = CST836U_MODE_NORMAL; ++touch_wakes; return ESP_OK;
 }
-static void cellular_service_resume_after_sleep(void) {
+static void network_service_resume_after_sleep(void) {
     assert(cellular_pauses == 1 && !resumes && touch_wakes == 1);
     assert(config[0] == P0_INPUT_MASK && config[1] == P1_INPUT_MASK);
     assert(tp_mode == CST836U_MODE_NORMAL);
     ++cellular_resumes;
+    ++resumes;
 }
 static int pmu_result(void) {
     assert(!key_sampling && prepared && !rails_on && !acc_on && tp_mode == CST836U_MODE_DEEPSLEEP);

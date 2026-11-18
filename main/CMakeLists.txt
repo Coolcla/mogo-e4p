@@ -27,6 +27,7 @@ set(main_requires
     bt
     # 蓝牙翻页器本体。/ The page-turner itself.
     ble_page_turner
+    memory_peak
     e0470_epaper_waveform
     e0470_page_turn
     device_power

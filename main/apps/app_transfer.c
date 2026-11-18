@@ -45,7 +45,8 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "wifi_transfer.h"
-#include "network_service.h"
+#include "network_local_wifi.h"
+#include "memory_peak.h"
 #include "board_sd.h"
 #include "settings.h"
 #include "ttf_font.h"
@@ -66,6 +67,8 @@ static bool s_media_lost;
 static int s_pressed = -1;
 static wifi_transfer_mode_t s_mode = WIFI_TRANSFER_MODE_AP;
 static bool s_session_started;
+static uint32_t s_owned_session;
+static bool s_owned_session_uses_sd;
 static int64_t s_poll_ms;
 static uint64_t s_free;
 static size_t s_heap_before, s_internal_before;
@@ -189,6 +192,7 @@ static esp_err_t s_scan_error;
 static void render(app_ctx_t* ctx, uint8_t* fb);
 static void stop_session(void);
 static bool stop_upload_if_idle(void);
+static bool stop_wifi_for_provisioning(void);
 
 static void transfer_header(uint8_t *fb, const char *title, const char *subtitle) {
     ui_nav_status(fb);
@@ -480,10 +484,7 @@ static void queue_network_start(wifi_transfer_mode_t mode) {
 }
 
 static bool enter_networks(void) {
-    if (network_service_prepare_wifi() != ESP_OK) return false;
-    if (!wifi_transfer_try_stop_if_idle()) return false;
-    stop_session();
-    s_start_pending = false;
+    if (!stop_upload_if_idle()) return false;
     s_view = TRANSFER_NETWORKS;
     s_forget_confirm = false;
     s_show_saved = s_saved_detail = false;
@@ -500,9 +501,7 @@ static bool enter_networks(void) {
 }
 
 static bool start_hotspot_service(void) {
-    if (network_service_prepare_wifi() != ESP_OK) return false;
-    if (!wifi_transfer_try_stop_if_idle()) return false;
-    stop_session();
+    if (s_session_started && s_status.changed_count) s_any_changed = true;
     s_mode = WIFI_TRANSFER_MODE_AP;
     s_qr_url = false;
     clear_qr();
@@ -516,19 +515,31 @@ static bool start_hotspot_service(void) {
 
 // 提示页先呈现，下一轮才同步扫描；输入页不轮询已停服的传书状态。
 // Present the scan notice first, scan synchronously next tick, and do not poll stopped transfer state in the editor.
+static esp_err_t start_owned_session(const wifi_transfer_cfg_t *cfg) {
+    uint32_t session;
+    const esp_err_t result = network_service_start_local_wifi(cfg, &session);
+    wifi_transfer_get_status(&s_status);
+    if (session) {
+        s_owned_session = session;
+        s_owned_session_uses_sd = !cfg->network_only && !cfg->is_flash;
+    } else if (s_status.session_id != s_owned_session) {
+        s_owned_session = 0;
+        s_owned_session_uses_sd = false;
+    }
+    s_session_started = result == ESP_OK;
+    return result;
+}
+
 static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     if (s_view != TRANSFER_NETWORKS || s_forget_confirm || ctx->consumed) return APP_REDRAW_NONE;
     if (s_network_connect_pending) {
         s_network_connect_pending = false;
-        if (network_service_prepare_wifi() != ESP_OK) {
-            snprintf(s_network_message, sizeof(s_network_message), "移动网络正在使用，请稍后重试");
-            return APP_REDRAW_PAGE;
-        }
         wifi_transfer_cfg_t cfg = {.mode = WIFI_TRANSFER_MODE_STA, .network_only = true};
-        esp_err_t err = wifi_transfer_start(&cfg);
-        s_session_started = err == ESP_OK;
-        wifi_transfer_get_status(&s_status);
-        if (err != ESP_OK) snprintf(s_network_message, sizeof(s_network_message), "连接启动失败，请重试");
+        esp_err_t err = start_owned_session(&cfg);
+        if (err != ESP_OK) {
+            const char *hint = memory_peak_hint(err);
+            snprintf(s_network_message, sizeof(s_network_message), "%s", hint ? hint : "连接启动失败，请重试");
+        }
         return APP_REDRAW_PAGE;
     }
     if (s_session_started) {
@@ -549,12 +560,13 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
     // bitmaps before starting WiFi, then recreate them while drawing the result.
     // This prevents the hosted radio from competing with the UI cache at init.
     ttf_font_cache_clear();
-    esp_err_t err = wifi_transfer_scan_wifi(s_networks, &s_network_count);
+    esp_err_t err = network_service_scan_wifi(s_networks, &s_network_count);
     s_scan_error = err;
     if (err != ESP_OK) {
         s_network_count = 0;
+        const char *hint = memory_peak_hint(err);
         snprintf(s_network_message, sizeof(s_network_message), "%s",
-                 err == ESP_ERR_NO_MEM ? "内存已清理，请点下方按钮重试" : "扫描失败，请点下方按钮重试");
+                 hint ? hint : err == ESP_ERR_NO_MEM ? "内存已清理，请点下方按钮重试" : "扫描失败，请点下方按钮重试");
     }
     else if (!s_network_count) snprintf(s_network_message, sizeof(s_network_message), "未发现网络，请靠近路由器后重扫");
     else s_network_message[0] = 0;
@@ -587,7 +599,7 @@ static int provisioning_hit(uint16_t x, uint16_t y) {
 }
 
 static app_redraw_t connect_saved_network(const char *ssid) {
-    if (!stop_upload_if_idle()) {
+    if (!stop_wifi_for_provisioning()) {
         snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
         return APP_REDRAW_PAGE;
     }
@@ -604,7 +616,7 @@ static app_redraw_t provisioning_action(int id) {
         else if (id == 11) {
             // 断联后页面标记可能已丢失；以组件的真实会话为准，上传中不能清配置。
             // A failed reconnect may lose the page flag; stop the actual component session, never an active upload.
-            if (!stop_upload_if_idle()) {
+            if (!stop_wifi_for_provisioning()) {
                 snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再遗忘");
                 return APP_REDRAW_PAGE;
             }
@@ -624,7 +636,7 @@ static app_redraw_t provisioning_action(int id) {
         if (s_saved_detail) {
             if (id == 13) return connect_saved_network(s_selected.ssid);
             if (id == 14) {
-                if (!stop_upload_if_idle()) {
+                if (!stop_wifi_for_provisioning()) {
                     snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再修改");
                     return APP_REDRAW_PAGE;
                 }
@@ -655,7 +667,7 @@ static app_redraw_t provisioning_action(int id) {
                 return APP_REDRAW_PAGE;
             }
             if (saved_network_index(s_selected.ssid) >= 0) return connect_saved_network(s_selected.ssid);
-            if (!stop_upload_if_idle()) {
+            if (!stop_wifi_for_provisioning()) {
                 snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
                 return APP_REDRAW_PAGE;
             }
@@ -679,7 +691,7 @@ static app_redraw_t provisioning_action(int id) {
             s_view = TRANSFER_PASSWORD;
         } else if (id == 6) {
             if (s_status.network_ready) {
-                if (!stop_upload_if_idle()) {
+                if (!stop_wifi_for_provisioning()) {
                     snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再断开");
                     return APP_REDRAW_PAGE;
                 }
@@ -688,7 +700,7 @@ static app_redraw_t provisioning_action(int id) {
             } else {
                 // 未连上不等于驱动已停止；重试前先释放仍在等待或超时的旧 STA。
                 // Disconnected does not mean stopped; release the pending or timed-out STA before retrying.
-                if (!stop_upload_if_idle()) {
+                if (!stop_wifi_for_provisioning()) {
                     snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
                     return APP_REDRAW_PAGE;
                 }
@@ -698,7 +710,7 @@ static app_redraw_t provisioning_action(int id) {
         }
         else if (id == 7 && s_network_page) --s_network_page;
         else if (id == 8) {
-            if (!stop_upload_if_idle()) {
+            if (!stop_wifi_for_provisioning()) {
                 snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再扫描");
                 return APP_REDRAW_PAGE;
             }
@@ -812,6 +824,7 @@ static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_
 }
 
 static EpdRect status_rect(void) { return (EpdRect){36, 676, 612, 270}; }
+static book_store_root_t s_capacity_roots[] = {{.is_flash = false}, {.is_flash = true}};
 static uint64_t free_bytes(void* arg) { return book_store_free_bytes(arg); }
 
 static void draw_status(uint8_t* fb) {
@@ -829,8 +842,10 @@ static void draw_status(uint8_t* fb) {
     ui_text(fb, area.x + 28, area.y + 24, 26, state, EPD_DRAW_ALIGN_LEFT, false);
     char line[256];
     if (s_media_lost) snprintf(line, sizeof(line), "重新进入传书可使用内置存储");
-    else if (s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready)
-        snprintf(line, sizeof(line), "原因：%s", esp_err_to_name(s_status.last_error));
+    else if (s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready) {
+        const char *hint = memory_peak_hint(s_status.last_error);
+        snprintf(line, sizeof(line), "原因：%s", hint ? hint : esp_err_to_name(s_status.last_error));
+    }
     else if (s_mode == WIFI_TRANSFER_MODE_AP)
         snprintf(line, sizeof(line), "已连接 %u 台 · 已完成 %u 本", s_status.sta_count, s_status.done_count);
     else snprintf(line, sizeof(line), "同网浏览器上传 · 已完成 %u 本", s_status.done_count);
@@ -987,6 +1002,8 @@ static void on_enter(app_ctx_t* ctx) {
     s_network_connect_pending = false;
     clear_password();
     s_session_started = false;
+    s_owned_session = 0;
+    s_owned_session_uses_sd = false;
     s_pressed = -1;
     s_settle = s_any_changed = false;
     s_status.mode = s_mode;
@@ -1009,15 +1026,8 @@ static void on_enter(app_ctx_t* ctx) {
         }
     } else if (s_wifi_upload_requested) {
         s_wifi_upload_requested = false;
-        // 配网页可能留下常驻的仅联网会话；传书前先释放它再启动上传服务。
-        // Provisioning may leave a network-only session alive; release it before starting upload.
-        if (s_status.wifi_configured && wifi_transfer_try_stop_if_idle())
-            queue_network_start(WIFI_TRANSFER_MODE_STA);
-        else if (s_status.wifi_configured) {
-            s_view = TRANSFER_HOME;
-            s_status.state = WIFI_TRANSFER_ERROR;
-            snprintf(s_method_message, sizeof(s_method_message), "传输正在结束，请稍后再试");
-        }
+        // 先排定前台启动；准入后再由网络事务替换常驻会话。/ Queue foreground startup; replace the current session only after admission.
+        if (s_status.wifi_configured) queue_network_start(WIFI_TRANSFER_MODE_STA);
         else if (!enter_networks()) {
             s_view = TRANSFER_NETWORKS;
             s_scan_pending = false;
@@ -1044,16 +1054,25 @@ static void on_enter(app_ctx_t* ctx) {
 
 static void stop_session(void) {
     clear_qr();
-    // 停服后读最终计数，保留本页跨模式文件变更的记录。
-    // Join reception before reading counts and retain file changes across mode switches.
-    wifi_transfer_stop();
     wifi_transfer_get_status(&s_status);
-    if (s_session_started && s_status.changed_count) s_any_changed = true;
+    if (s_owned_session && s_status.session_id == s_owned_session && s_status.changed_count)
+        s_any_changed = true;
     s_session_started = false;
+    s_owned_session = 0;
+    s_owned_session_uses_sd = false;
 }
 
 static bool stop_upload_if_idle(void) {
-    if (!wifi_transfer_try_stop_if_idle()) return false;
+    if (!network_service_stop_owned_wifi(s_owned_session, false)) return false;
+    stop_session();
+    s_start_pending = false;
+    return true;
+}
+
+static bool stop_wifi_for_provisioning(void) {
+    // 用户明确断开、换网或遗忘；仅此类动作可停用页面并未创建的空闲 STA。
+    // Explicit disconnect, network selection or forget may stop idle STA not started by this page.
+    if (!network_service_stop_local_wifi()) return false;
     stop_session();
     s_start_pending = false;
     return true;
@@ -1063,14 +1082,16 @@ static bool stop_upload_if_idle(void) {
 // Join HTTP before clearing the old root; in-flight requests never move to another storage.
 static void transfer_on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
-    if (s_root.is_flash) return;
+    if (s_owned_session ? !s_owned_session_uses_sd : s_root.is_flash) return;
+    const bool stopped = network_service_stop_owned_wifi(s_owned_session, true);
+    if (!stopped) network_service_drop_owned_wifi(s_owned_session, true);
     stop_session();
-    s_start_pending = s_scan_pending = false;
+    s_start_pending = s_scan_pending = s_network_connect_pending = false;
     s_view = s_direct_entry ? TRANSFER_HOME : TRANSFER_METHODS;
     clear_password();
     s_pressed = -1;
     s_free = 0;
-    memset(&s_root, 0, sizeof(s_root));
+    if (stopped) memset(&s_root, 0, sizeof(s_root));
     s_media_lost = true;
     s_settle = false;
 }
@@ -1087,12 +1108,11 @@ static void transfer_on_exit(app_ctx_t* ctx) {
     s_scan_pending = s_network_connect_pending = false;
     wifi_transfer_status_t latest = {0};
     wifi_transfer_get_status(&latest);
-    bool keep_sta = s_wifi_settings_only && latest.network_ready &&
+    bool keep_sta = s_wifi_settings_only && latest.network_ready && latest.network_only &&
                     latest.mode == WIFI_TRANSFER_MODE_STA;
-    if (keep_sta) {
-        clear_qr();
-        s_session_started = false; // 全局循环接管保活；再次进页会从组件状态恢复。
-    } else stop_session();
+    if (!keep_sta && !network_service_stop_owned_wifi(s_owned_session, false))
+        network_service_drop_owned_wifi(s_owned_session, false);
+    stop_session();
     s_wifi_settings_only = false;
     s_usb_entry = false;
     s_direct_entry = false;
@@ -1140,11 +1160,6 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     if (s_view != TRANSFER_HOME) return network_ui_tick(ctx);
     if (s_start_pending) {
         s_start_pending = false;
-        if (network_service_prepare_wifi() != ESP_OK) {
-            s_status.state = WIFI_TRANSFER_ERROR;
-            s_status.last_error = ESP_ERR_INVALID_STATE;
-            return APP_REDRAW_PAGE;
-        }
         // 传书模式也应在启动无线电前释放可重建字形，避免内部内存不足。
         // Release rebuildable glyphs before starting the radio for uploads too.
         ttf_font_cache_clear();
@@ -1153,15 +1168,13 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             s_media_lost = false;
             s_free = book_store_free_bytes(&s_root);
             wifi_transfer_cfg_t cfg = {.mode = s_mode, .root_dir = s_root.path, .is_flash = s_root.is_flash,
-                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_root,
+                .file_limit = book_store_file_limit(&s_root), .free_bytes_cb = free_bytes, .free_bytes_ctx = &s_capacity_roots[s_root.is_flash],
                 .file_changed_cb = book_progress_forget, .file_deleted_cb = transfer_file_deleted,
                 .file_moved_cb = transfer_file_moved,
                 .wallpaper_set_cb = transfer_set_wallpaper,
                 .signature_get_cb = transfer_signature_get, .signature_set_cb = transfer_signature_set,
                 .title_get_cb = NULL, .title_set_cb = NULL};
-            err = wifi_transfer_start(&cfg);
-            s_session_started = err == ESP_OK;
-            wifi_transfer_get_status(&s_status);
+            err = start_owned_session(&cfg);
             if (err == ESP_OK) s_free = book_store_free_bytes(&s_root);
         }
         s_status.mode = s_mode;
