@@ -357,13 +357,15 @@ static bool png_gray_input_cancel(const uint8_t *data, size_t size, FILE *file, 
     if (depth == 16) png_set_strip_16(png);
     if (color == PNG_COLOR_TYPE_PALETTE) png_set_palette_to_rgb(png);
     if (color == PNG_COLOR_TYPE_GRAY && depth < 8) png_set_expand_gray_1_2_4_to_8(png);
-    if (png_get_valid(png, info, PNG_INFO_tRNS)) png_set_tRNS_to_alpha(png);
-    if (color == PNG_COLOR_TYPE_GRAY || color == PNG_COLOR_TYPE_GRAY_ALPHA) png_set_gray_to_rgb(png);
-    if (!(color & PNG_COLOR_MASK_ALPHA) && !png_get_valid(png, info, PNG_INFO_tRNS))
+    const bool transparent = png_get_valid(png, info, PNG_INFO_tRNS) != 0;
+    const bool gray_only = color == PNG_COLOR_TYPE_GRAY && !transparent && !alpha;
+    if (transparent) png_set_tRNS_to_alpha(png);
+    if (!gray_only && (color == PNG_COLOR_TYPE_GRAY || color == PNG_COLOR_TYPE_GRAY_ALPHA)) png_set_gray_to_rgb(png);
+    if (!gray_only && !(color & PNG_COLOR_MASK_ALPHA) && !transparent)
         png_set_filler(png, 0xff, PNG_FILLER_AFTER);
     png_read_update_info(png, info);
     png_size_t stride = png_get_rowbytes(png, info);
-    if (stride < width * 4 || stride > 65536) goto done;
+    if (stride < width * (gray_only ? 1u : 4u) || stride > 65536) goto done;
     row = cover_alloc(stride);
     if (!row) goto done;
     unsigned next_y = 0;
@@ -371,28 +373,34 @@ static bool png_gray_input_cancel(const uint8_t *data, size_t size, FILE *file, 
     // The streaming reader applies the crop window to rows and columns alike: rows outside the
     // window are dropped and columns are sampled inside it.
     const book_crop_t crop = book_cover_crop(width, height, out_width, out_height);
-    if (crop.width && crop.height) {
+    const bool native = crop.width == out_width && crop.height == out_height;
+    if (!native && crop.width && crop.height) {
         xmap = scale_map(out_width, crop.width);
         ymap = scale_map(out_height, crop.height);
         rows[0] = cover_alloc(crop.width);
         rows[1] = cover_alloc(crop.width);
         if (alpha) { masks[0] = cover_alloc(crop.width); masks[1] = cover_alloc(crop.width); }
     }
-    if (xmap && ymap && rows[0] && rows[1] && (!alpha || (masks[0] && masks[1]))) {
+    if (native || (xmap && ymap && rows[0] && rows[1] && (!alpha || (masks[0] && masks[1])))) {
         for (png_uint_32 y = 0; y < height; ++y) {
             if (cancelled && cancelled(context)) goto done;
             png_read_row(png, row, NULL);
             decode_yield((unsigned)y);
             const int wy = (int)y - (int)crop.y;
             if (wy < 0 || wy >= (int)crop.height) continue;
-            uint8_t *cur = rows[wy & 1];
-            for (unsigned x = 0; x < crop.width; ++x) {
+            uint8_t *cur = native ? out + (size_t)wy * out_width : rows[wy & 1];
+            uint8_t *mask = alpha ? (native ? alpha + (size_t)wy * out_width : masks[wy & 1]) : NULL;
+            // 无透明度的灰度PNG不用扩成RGBA再转回；原尺寸直接落目标行，不计算缩放权重。
+            // Opaque grayscale PNG stays grayscale; native-size rows go straight to output without scaling weights.
+            if (gray_only) memcpy(cur, row + crop.x, crop.width);
+            else for (unsigned x = 0; x < crop.width; ++x) {
                 const uint8_t *p = row + (size_t)(crop.x + x) * 4;
                 const uint8_t gray = luminance(p[0], p[1], p[2]);
                 // 透明层保留预乘灰度与独立alpha，避免缩放后出现白边。/ Preserve premultiplied gray and alpha for layers, avoiding white scaling fringes.
                 cur[x] = (uint8_t)(((unsigned)gray * p[3] + (alpha ? 0 : 255u * (255u - p[3])) + 127u) / 255u);
-                if (alpha) masks[wy & 1][x] = p[3];
+                if (mask) mask[x] = p[3];
             }
+            if (native) { ++next_y; continue; }
             // 两行都齐了的目标行可以一次输出完：同一源行可能对应多个目标行（放大时）。
             // Every destination row whose two source rows are now present can be emitted: one source
             // row may serve several destination rows when scaling up.

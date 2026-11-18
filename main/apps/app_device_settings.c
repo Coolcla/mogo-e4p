@@ -2657,9 +2657,8 @@ static void settings_exit(app_ctx_t *ctx) {
     s_screen_offset_pressed = -1;
     ui_lock_style_close();
 
-    // 阅读背景预览缓存只在设置页存活；阅读器打开时会按当前路径重新解码。
-    // The reading-background preview cache lives only while settings is open; the reader
-    // re-decodes from the stored path when it opens.
+    // 释放预览内存；阅读器按当前路径读取TF成品，缓存失效时才重新解码。
+    // Release preview RAM; the reader loads prepared SD art and decodes only stale/missing caches.
     ui_reader_background_release();
     s_reading_bg_confirm=s_reading_bg_ready=s_reading_bg_pending=false;s_reading_bg_notice[0]=0;
     s_font_sync_confirm=false;s_font_sync_path[0]=0;

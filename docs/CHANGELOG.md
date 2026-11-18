@@ -3,6 +3,10 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## v1.1.3 · 本地测试 / Local testing · 2026-11-18
+
+- 优化开启阅读背景后的开书加载：TF缓存屏幕尺寸的灰阶成品，离页或重启后可直接复用；缓存失效时自动重新生成，写卡失败仍可显示本次背景。优化首次灰阶打包及同尺寸/灰度PNG解码，保持原显示规则；真机耗时待验证。/ Speed up book opening with backgrounds by caching panel-sized grayscale art on SD across exits/reboots, rebuilding stale caches and retaining the current background on cache-write failure. Optimize initial packing and native/grayscale PNG decoding while preserving rendering; device timing remains unverified.
+
 ## v1.1.3 · 本地测试 / Local testing · 2026-11-17
 
 - 调整开启阅读背景时的水波纹白列：背景派生表回用无背景阅读水波纹的黑/灰→白推白次数，降低反馈中的明显白闪；宿主波形回归通过，实屏擦白余量待验收。/ Adjust the water-turn white column when a reading background is enabled: the background derivative now reuses the no-background reader-water push counts for black/gray-to-white transitions, reducing the reported flash; host waveform regression passes, and panel whitening margin awaits acceptance.

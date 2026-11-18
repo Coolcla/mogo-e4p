@@ -15,6 +15,22 @@ python3 tools/run_reader_baseline.py controls
 python3 tools/run_reader_baseline.py present
 ```
 
+## 阅读背景加载 / Reading-background loading
+
+`ui_reader_background` 在TF `/sdcard/.readpico/reader-background/0.bin` 至 `3.bin` 按四个方向各保留一个成品；正常屏幕每份415872字节像素加文件头，四份约1.6 MiB。首次准备（包括设置页预览）完成后保存成品，退出仍释放内存；下次开书或重启后先读取成品，不再解码、缩放或抖动原图。内存始终只有当前方向的一张成品，不常驻其他方向。
+`ui_reader_background` keeps one prepared file per orientation at SD `/sdcard/.readpico/reader-background/0.bin` through `3.bin`: normally 415872 pixel bytes plus a header each, about 1.6 MiB for four files. Initial preparation, including Settings previews, saves the result; exit still releases RAM. Subsequent opens/reboots load it without source decoding, scaling or dithering, retaining only the current orientation in RAM.
+
+缓存核对格式版本、原路径、源文件大小与修改时间、逻辑/面板尺寸、方向、像素长度及CRC；读取和解码后再次核对源文件元数据。原图必须仍在卡上，缺图不使用旧成品；路径、大小或修改时间变化及损坏、截断、尾部多余数据均触发重新生成。保留大小和修改时间的原地改图不能可靠识别，此时可删除缓存目录以强制重建。四个槽只代表最近在各方向准备的图片，预览其他图片会覆盖对应方向的槽。
+Caches check format version, source path/size/mtime, logical/panel dimensions, orientation, length and CRC; source metadata is rechecked after reading or decoding. The source must still exist. Identity changes, corruption, truncation and trailing data rebuild the result. Edits preserving both size and mtime cannot be reliably detected; delete the cache directory to force rebuilding. Each slot retains the most recently prepared image in that orientation, so previewing another image replaces that slot.
+
+缓存为可删除的派生数据，不纳入配置备份。缺失或不可写时仍走原图解码；临时文件写入、同步、关闭成功后才替换成品，写卡失败不阻止本次阅读，半写结果不会作为成品读取。首次加载、缓存命中、换方向以及不可写卡应分别测量，宿主“零次解码”不等于真机耗时。原白点归一、抖动相位、混合公式及刷新策略不变；PNG同尺寸路径跳过缩放，非透明灰度路径跳过RGBA展开。
+Caches are removable derived data excluded from settings backups. Missing/unwritable caches retain source decoding. Temporary writes must sync and close before replacement; failures retain the current decoded frame and partial files are never loaded as results. Measure initial loads, cache hits, orientation changes and unwritable media separately; host zero-decode evidence is not a device timing measurement. White-point clamping, dither phase, blending and refresh rules remain unchanged; native PNG skips scaling and opaque grayscale skips RGBA expansion.
+
+`background` 覆盖四向逐像素等价、内存释放后零解码重载、成品单份415872字节、源变化、损坏及写卡故障；`image_stream` 核对灰度/彩色/透明/调色板/黑白/16位PNG的真实像素、原尺寸裁切、缩放等价、图层alpha及取消。
+`background` checks exact four-orientation pixels, zero-decode reloads after RAM release, one 415872-byte result, source changes, corruption and write failures. `image_stream` checks real grayscale/color/transparent/palette/mono/16-bit PNG pixels, native crops, scaling equivalence, layer alpha and cancellation.
+
+## 宿主回归与测量范围 / Host regression and measurement scope
+
 `display_contract` 在禁止硬件头的条件下单独编译 C/C++ 页面契约，检查不透明显示状态与真实后端类型及布局兼容，并覆盖区域回调在零尺寸、负坐标和整数边界上的无损转换。显示状态仍由装配和显示服务持有；页面只借用，区域裁剪继续由原显示出口处理。
 `display_contract` compiles C/C++ page contracts with hardware headers forbidden, checks opaque/native state identity and layout, and verifies lossless callback rectangles at zero sizes, negative coordinates and integer boundaries. Assembly and display services retain state ownership; pages borrow it, and existing display exits retain clipping.
 

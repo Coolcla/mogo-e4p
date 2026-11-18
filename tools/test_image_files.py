@@ -68,13 +68,51 @@ def main():
         files = [work / name for name in ("large.jpg", "large.png", "progressive.jpg", "odd.jpg", "small.jpg")]
         assert all(path.stat().st_size > 2 * 1024 * 1024 for path in files[:3])
         subprocess.run([str(exe), "read", *map(str, files)], check=True,env=env)
+        # 同尺寸快速路径逐字节核对灰度、预乘与alpha；缩放灰度与等价RGB对照。
+        # Check native gray, premultiplication and alpha byte-for-byte; compare scaled gray against equivalent RGB.
+        native=[]
+        size=(176,240)
+        rng=random.Random(184)
+        gray=Image.frombytes("L",size,rng.randbytes(size[0]*size[1]))
+        rgba=Image.frombytes("RGBA",size,rng.randbytes(size[0]*size[1]*4))
+        palette=gray.convert("P")
+        palette.putpalette(rng.randbytes(768))
+        cases=[("gray",gray,{}),("gray-transparent",gray,{"transparency":127}),
+               ("rgb",rgba.convert("RGB"),{}),("rgba",rgba,{}),("gray-alpha",rgba.convert("LA"),{}),
+               ("palette",palette,{"transparency":bytes(range(256))}),("mono",gray.convert("1"),{}),
+               ("crop",Image.frombytes("RGB",(176,250),rng.randbytes(176*250*3)),{})]
+        raw16=rng.randbytes(size[0]*size[1]*2)
+        cases.append(("gray16",Image.frombytes("I;16",size,raw16),{}))
+        for name,picture,options in cases:
+            path=work/(name+".png")
+            picture.save(path,**options)
+            if name=="gray16":
+                decoded=Image.frombytes("L",size,raw16[1::2]).convert("RGBA")
+            else:
+                decoded=Image.open(path).convert("RGBA")
+                if name=="crop":
+                    decoded=decoded.crop((0,5,176,245))
+            white,premult,alpha=bytearray(),bytearray(),bytearray()
+            for r,g,b,a in decoded.getdata():
+                luminance=(r*77+g*150+b*29)>>8
+                white.append((luminance*a+255*(255-a)+127)//255)
+                premult.append((luminance*a+127)//255)
+                alpha.append(a)
+            Path(str(path)+".raw").write_bytes(white+premult+alpha)
+            native.append(path)
+        subprocess.run([str(exe),"pixels",*map(str,native)],check=True,env=env)
+        scaled=work/"scaled-gray.png"
+        large_gray=Image.frombytes("L",(823,1171),rng.randbytes(823*1171))
+        large_gray.save(scaled)
+        large_gray.convert("RGB").save(str(scaled)+"-rgb.png")
+        subprocess.run([str(exe),"compare",str(scaled)],check=True,env=env)
         (work / "bad.jpg").write_bytes(b"not an image")
         (work / "bad.png").write_bytes((work / "large.png").read_bytes()[:400])
         with (work / "overlimit.jpg").open("wb") as file:
             file.write((work / "odd.jpg").read_bytes())
             file.truncate(50 * 1024 * 1024 + 1)
         subprocess.run([str(exe), "reject", *map(str, [work / "bad.jpg", work / "bad.png", work / "overlimit.jpg"])], check=True,env=env)
-        print("PASS: streaming baseline/progressive JPEG and PNG over 2 MiB; odd/small dimensions; corruption/limit bounds")
+        print("PASS: streaming baseline/progressive JPEG and PNG over 2 MiB; native gray/RGB/RGBA/gray-alpha/palette/mono/16-bit pixels and alpha; scaled grayscale parity; cancellation; corruption/limit bounds")
 
 if __name__ == "__main__":
     main()
