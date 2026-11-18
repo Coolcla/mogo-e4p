@@ -490,6 +490,7 @@ def wake_poll_source():
     path = ROOT / 'components/device_power/device_power_metalio.c'
     text = path.read_text()
     code = power_source() + '#include "' + str(ROOT / 'components/device_power/battery_log.h') + '"\n#include "fca9555.h"\n'
+    code += '#include "battery_calibration.h"\nstatic batt_cal_t s_batt_cal;\nstatic const batt_cal_storage_t s_batt_cal_storage={0};\n'
     code += '\n'.join(line for line in text.splitlines()
                       if re.match(r'#define (?:BATT_|BQ_REG_|KEY_)', line)) + '\n'
     code += re.search(r'static const int32_t s_soc_curve\[.*?\};', text, re.S)[0] + '\n'
@@ -527,7 +528,7 @@ void batt_log_observe(batt_log_state_t *state,const batt_log_sample_t *sample){
 }
 '''
     for name in ('bq_read_voltage', 'bq_read_current', 'bq_read_soc',
-                 'batt_compensated_mv', 'batt_curve_soc', 'batt_filter_step', 'batt_full_now',
+                 'batt_compensated_mv', 'batt_curve_soc', 'batt_effective_soc', 'batt_filter_step', 'batt_full_now',
                  'poll_key', 'poll_battery', 'wake_battery_snapshot_reusable',
                  'device_power_poll', 'device_power_take_key_wakeup'):
         code += function(name, path) + '\n'
@@ -540,6 +541,7 @@ static void reset_wake_poll(void){
     s_bq=&devices[0x55];s_cx=&devices[0x6b];s_charger_configured=true;
     s_charger_resume_us=0;s_charger_next_us=10000000;s_charger_uv_shutdown=false;
     memset(&s_snap,0,sizeof(s_snap));memset(&s_batt_filter,0,sizeof(s_batt_filter));
+    batt_cal_init(&s_batt_cal,s_soc_curve,now_us);
     s_batt_poll_reusable=false;s_batt_poll_us=0;s_batt_saved_permille=-1;
     s_batt_full_since_us=-1;s_batt_last_save_us=now_us;s_batt_charging_last=false;
     s_key_down=s_key_long_fired=s_key_short_pending=s_key_long_pending=false;
@@ -669,7 +671,9 @@ static void sleep_test_log(const char *tag,const char *fmt,...){
 #define ESP_LOGI(...) sleep_test_log(__VA_ARGS__)
 enum { DEVICE_POWER_BATT_LOG_LOCK=128, DEVICE_POWER_BATT_LOG_WAKE=256 };
 static unsigned log_locks, log_wakes;
-static void device_power_batt_log_event(int event){if(event==128)++log_locks;else {assert(event==256);++log_wakes;}}
+static bool calibration_locked;
+static void device_power_batt_calibration_lock(bool locked){calibration_locked=locked;}
+static void device_power_batt_log_event(int event){if(event==128){assert(calibration_locked);++log_locks;}else {assert(event==256&&!calibration_locked);++log_wakes;}}
 typedef struct {int unused;} EpdiyHighlevelState;
 #define APP_LOCK_STYLE_CLOCK 5
 static bool clock_style;
@@ -938,7 +942,7 @@ def main():
             path = work / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-        includes = ['-I'+str(work)] + ['-I'+str(ROOT/'components'/component/'include') for component in ['board_i2c','fca9555','cst836u','sc7a20h','device_power']]
+        includes = ['-I'+str(work),'-I'+str(ROOT/'components/device_power')] + ['-I'+str(ROOT/'components'/component/'include') for component in ['board_i2c','fca9555','cst836u','sc7a20h','device_power']]
         bus = '#include "' + str(ROOT/'components/board_i2c/board_i2c.c') + '"\n'
         cases = [('bus', '', BUS_TEST),
                  ('tca', '#include "'+str(ROOT/'components/fca9555/fca9555.c')+'"\n', IO_TEST),
@@ -957,7 +961,7 @@ def main():
             c, binary = work/(name+'.c'), work/name
             c.write_text(MODEL + bus + source + test)
             subprocess.run(compiler + ['-std=gnu11','-Wall','-Wextra','-Wno-unused-function',
-                                       '-Wno-unused-variable','-fsanitize=address,undefined','-pthread'] + includes + [str(c),'-o',str(binary)], env=env, check=True)
+                                       '-Wno-unused-variable','-fsanitize=address,undefined','-pthread'] + includes + [str(c),str(ROOT/'components/device_power/battery_calibration.c'),'-o',str(binary)], env=env, check=True)
             subprocess.run([str(binary)], env=env, check=True)
 
 if __name__ == '__main__':

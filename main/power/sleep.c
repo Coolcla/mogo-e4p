@@ -439,6 +439,7 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc, int64_t de
     unsigned sleep_errors = 0;
     esp_err_t last_sleep_error = ESP_OK;
     int64_t last_sleep_error_log_ms = 0;
+    device_power_batt_calibration_lock(true);
     device_power_batt_log_event(DEVICE_POWER_BATT_LOG_LOCK);
     for (;;) {
         int64_t now_us = esp_timer_get_time();
@@ -591,6 +592,7 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc, int64_t de
         }
     }
 
+    device_power_batt_calibration_lock(false);
     device_power_batt_log_event(DEVICE_POWER_BATT_LOG_WAKE);
 #if CONFIG_APP_LOCK_SLEEP_TRACE
     lock_sleep_trace_mark(LOCK_TRACE_EXIT, (int32_t)exit);

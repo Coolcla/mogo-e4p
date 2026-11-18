@@ -92,6 +92,8 @@ SUITES = {
     "battery_log": [sys.executable, "tools/battery_log_host_test.py"],
     "battery_log_task": [sys.executable, "tools/battery_log_task_host_test.py"],
     "battery_filter": [sys.executable, "tools/test_pmu_soc_filter.py"],
+    "battery_calibration": [sys.executable, "tools/battery_calibration_host_test.py"],
+    "battery_calibration_ui": [sys.executable, "tools/battery_calibration_ui_host_test.py"],
     "status_power": [sys.executable, "tools/ui_refresh_feedback_host_test.py", "--status-only"],
     "nav_layout": [sys.executable, "tools/ui_refresh_feedback_host_test.py", "--nav-only"],
     "quick_pixels": [sys.executable, "tools/quick_layer_raster_host_test.py"],

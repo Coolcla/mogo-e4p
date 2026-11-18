@@ -21,9 +21,9 @@ curve=re.search(r'^static const int32_t s_soc_curve\[.*?\};',source,re.M|re.S).g
 typedef=re.search(r'typedef struct \{[^}]*\} batt_filter_t;',source,re.S).group(0)
 with tempfile.TemporaryDirectory() as tmp:
     p=Path(tmp)
-    code='#include <assert.h>\n#include <stdbool.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n'
+    code='#include <assert.h>\n#include <stdbool.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n#include "battery_calibration.h"\nstatic batt_cal_t s_batt_cal;\n'
     code+=defines+'\n'+curve+'\n'+typedef+'\n'
-    code+='\n'.join(extract(f) for f in ['batt_compensated_mv','batt_curve_soc','batt_filter_step','batt_full_now'])
+    code+='\n'.join(extract(f) for f in ['batt_compensated_mv','batt_curve_soc','batt_effective_soc','batt_filter_step','batt_full_now'])
     code+='''
 static batt_filter_t f;
 static int32_t s_mv;
@@ -225,6 +225,11 @@ int main(void) {
  assert(batt_compensated_mv(4000,true,INT16_MIN)==4150);
  assert(batt_compensated_mv(4000,true,INT16_MAX)==3850);
  assert(batt_compensated_mv(4000,false,INT16_MIN)==4000);
+ // 个性曲线经过同一限速器，重置模型不直接改显示。/ Custom targets use the same limiter; resetting the model never snaps the display.
+ batt_cal_init(&s_batt_cal,s_soc_curve,0);s_batt_cal.record.soc[5]=650;
+ reset();step(0,4000,0,true,false,false,-1);assert(s_pm==650);
+ batt_cal_reset(&s_batt_cal,0);step(60000000,4000,0,true,false,false,-1);assert(s_pm==650);
+ step(120000000,4000,100,true,true,false,-1);assert(s_pm<=660);
  puts("PASS: battery filter noise immunity, monotonic one-direction stepping, rate limit, charge-done snap, boot restore tolerance, EMA convergence, load compensation, taper-full and the full-charge plateau");
 }
 '''
@@ -232,5 +237,6 @@ int main(void) {
     (p/'toolchain').mkdir()
     env,_=toolchain(p/'toolchain')
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',
-                    str(p/'test.c'),'-o',str(p/'test')],env=env,check=True)
+                    '-I'+str(root/'components/device_power'), str(p/'test.c'),
+                    str(root/'components/device_power/battery_calibration.c'),'-o',str(p/'test')],env=env,check=True)
     subprocess.run([str(p/'test')],env=env,check=True)

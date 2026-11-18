@@ -123,7 +123,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_NETWORK, SETTINGS_TIME,
                SETTINGS_READING_BG, SETTINGS_READING_BG_PREVIEW,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_HAPTIC,
-               SETTINGS_POWER_LOG,
+               SETTINGS_POWER_LOG, SETTINGS_BATT_CALIBRATION,
                SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH,
                SETTINGS_MEMORY,
@@ -235,6 +235,9 @@ static bool s_sync_pending;
 static bool s_font_sync_confirm;
 static char s_font_sync_path[TTF_FONT_PATH_MAX];
 static bool s_config_confirm;
+static bool s_batt_calibration_confirm;
+static device_power_batt_calibration_status_t s_batt_calibration_status;
+static int64_t s_batt_calibration_next_ms;
 // 屏幕修复：点一下就开始。整屏盲刷要几秒，活儿交给 tick——不能在触摸回调里做。
 // Panel repair: one tap starts it. The blind full-screen drive takes seconds, so the work goes to the
 // tick rather than a touch callback.
@@ -425,9 +428,8 @@ static int settings_wireless_rows(void) {
 #define SETTINGS_DISPLAY_Y (SETTINGS_WIRELESS_Y + settings_wireless_rows() * SETTINGS_ROW_H + 78)
 #define SETTINGS_PERSONAL_Y (SETTINGS_DISPLAY_Y + SETTINGS_DISPLAY_ROWS * SETTINGS_ROW_H + 78)
 #define SETTINGS_MAINTENANCE_Y (SETTINGS_PERSONAL_Y + SETTINGS_PERSONAL_ROWS * SETTINGS_ROW_H + 78)
-// 电源管理排在最后，放调试类开关，不挤占常规设置。
-// Power management sits last for debug switches without crowding ordinary settings.
-#define SETTINGS_POWER_ROWS 1
+// 电源管理集中本机电量学习及独立日志开关。/ Power management groups local battery learning and the independent logging switch.
+#define SETTINGS_POWER_ROWS 2
 #define SETTINGS_POWER_Y (SETTINGS_MAINTENANCE_Y + SETTINGS_MAINTENANCE_ROWS * SETTINGS_ROW_H + 78)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
@@ -1133,6 +1135,62 @@ static app_redraw_t screen_offset_gesture(app_ctx_t *ctx, const ui_gesture_event
     return screen_offset_feedback(ctx, previous);
 }
 
+static void batt_calibration_render(uint8_t *fb) {
+    device_power_batt_calibration_status_t status;
+    device_power_get_batt_calibration(&status);
+    back_header(fb, "自动电量校准");
+    setting_toggle(fb, 272, "自动电量校准", "按本机放电学习", status.enabled);
+    section(fb, 438, "学习状态");
+    ui_text_box(fb, (EpdRect){48, 482, 588, 42}, 28, status.applied ? "已应用部分校准" :
+            status.sampled_bins ? "正在学习" : "等待有效样本", EPD_DRAW_ALIGN_LEFT, false);
+    char coverage[96];
+    snprintf(coverage, sizeof(coverage), "已有样本 %u / %u 个区间，可信 %u 个",
+             (unsigned)status.sampled_bins, (unsigned)status.total_bins, (unsigned)status.trusted_bins);
+    ui_text_box(fb, (EpdRect){48, 530, 588, 40}, 23, coverage, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){48, 578, 588, 40}, 23, "正常使用即可，学习需要多次有效放电", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){48, 620, 588, 40}, 23, "未覆盖区间继续使用系统估算", EPD_DRAW_ALIGN_LEFT, false);
+    if (!status.enabled)
+        ui_text_box(fb, (EpdRect){48, 662, 588, 40}, 23, "停止学习，已有校准继续生效", EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_button(fb, (EpdRect){36, 706, 612, 78}, s_batt_calibration_confirm ?
+                   "确认重置校准" : "重置校准", false);
+    if (s_notice[0] || status.save_error)
+        ui_text_box(fb, (EpdRect){48, 836, 588, 52}, 22, status.save_error ? "校准保存失败，请重试" : s_notice,
+                EPD_DRAW_ALIGN_LEFT, false);
+    ui_nav_draw(fb, 3);
+    return;
+}
+
+static app_redraw_t batt_calibration_touch(int x, int y) {
+    if (ui_rect_hit((EpdRect){36, 272, 612, 126}, x, y)) {
+        device_power_batt_calibration_status_t status;
+        device_power_get_batt_calibration(&status);
+        const esp_err_t err = device_power_set_batt_calibration(!status.enabled);
+        s_batt_calibration_confirm = false;
+        snprintf(s_notice, sizeof(s_notice), "%s", err == ESP_OK ?
+                 (status.enabled ? "停止学习，已有校准继续生效" : "已开启，等待有效放电样本") : "开关保存失败，请重试");
+        device_power_get_batt_calibration(&s_batt_calibration_status);
+        return APP_REDRAW_PAGE;
+    }
+    if (ui_rect_hit((EpdRect){36, 706, 612, 78}, x, y)) {
+        if (!s_batt_calibration_confirm) {
+            s_batt_calibration_confirm = true;
+            s_notice[0] = 0;
+        } else {
+            const esp_err_t err = device_power_reset_batt_calibration();
+            s_batt_calibration_confirm = false;
+            snprintf(s_notice, sizeof(s_notice), "%s", err == ESP_OK ?
+                     "已恢复系统曲线，学习开关保持不变" : "重置未完整保存，请重试");
+            device_power_get_batt_calibration(&s_batt_calibration_status);
+        }
+        return APP_REDRAW_PAGE;
+    }
+    if (s_batt_calibration_confirm) {
+        s_batt_calibration_confirm = false;
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+}
+
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
@@ -1509,6 +1567,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 3);
         return;
     }
+    if (s_page == SETTINGS_BATT_CALIBRATION) { batt_calibration_render(fb); return; }
     if (s_page == SETTINGS_POWER_LOG) {
         back_header(fb, "日志调试");
         section(fb, 228, "电量校准日志");
@@ -1697,9 +1756,11 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
                   maintenance_icons,maintenance_labels,maintenance_values,SETTINGS_MAINTENANCE_ROWS);
     char batt_log_value[16];
     snprintf(batt_log_value,sizeof(batt_log_value),"%s",app_settings_batt_log()?"开启":"关闭");
-    const char *power_labels[]={"日志调试"};
-    const char *power_values[]={batt_log_value};
-    const int power_icons[]={20};
+    device_power_batt_calibration_status_t calibration;
+    device_power_get_batt_calibration(&calibration);
+    const char *power_labels[]={"自动电量校准", "日志调试"};
+    const char *power_values[]={calibration.enabled ? "学习中" : calibration.applied ? "已保留校准" : "关闭", batt_log_value};
+    const int power_icons[]={20,20};
     setting_group(fb,SETTINGS_POWER_Y-49,"电源管理",SETTINGS_POWER_Y,
                   power_icons,power_labels,power_values,SETTINGS_POWER_ROWS);
     const int version_half = (ui_text_effective_px(20) + 1) / 2;
@@ -1768,6 +1829,8 @@ static void on_enter(app_ctx_t *ctx) {
     s_sync_pending = false;
     s_font_sync_confirm = false; s_font_sync_path[0] = 0;
     s_config_confirm = false;
+    s_batt_calibration_confirm = false;
+    s_batt_calibration_next_ms = 0;
     s_panel_repair_pending = false;
     s_boot_pending = s_local_pending = s_upgrade_restart = false;
     s_upgrade_offer_pending = s_upgrade_confirm = false;
@@ -1827,6 +1890,17 @@ static void on_enter(app_ctx_t *ctx) {
 
 static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (s_page == SETTINGS_BATT_CALIBRATION && ctx->now_ms >= s_batt_calibration_next_ms) {
+        device_power_batt_calibration_status_t next;
+        device_power_get_batt_calibration(&next);
+        s_batt_calibration_next_ms = ctx->now_ms + 1000;
+        const bool changed = next.enabled != s_batt_calibration_status.enabled ||
+            next.applied != s_batt_calibration_status.applied || next.save_error != s_batt_calibration_status.save_error ||
+            next.sampled_bins != s_batt_calibration_status.sampled_bins ||
+            next.trusted_bins != s_batt_calibration_status.trusted_bins;
+        s_batt_calibration_status = next;
+        if (changed) return APP_REDRAW_PAGE;
+    }
     if (s_page == SETTINGS_MEMORY) {
         if (ctx->now_ms >= s_memory_next_sample_ms) {
             mm_snapshot_t next;
@@ -2377,6 +2451,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
+    if (s_page == SETTINGS_BATT_CALIBRATION) return batt_calibration_touch(ev->x0, y);
     if (s_page == SETTINGS_POWER_LOG) {
         if (ui_rect_hit((EpdRect){36, 272, 612, 126}, ev->x0, y)) {
             app_settings_set_batt_log(!app_settings_batt_log());
@@ -2593,13 +2668,21 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if(y>=SETTINGS_POWER_Y && y<SETTINGS_POWER_Y+SETTINGS_POWER_ROWS*SETTINGS_ROW_H) {
         row=(y-SETTINGS_POWER_Y)/SETTINGS_ROW_H;
-        if(row==0) s_page=SETTINGS_POWER_LOG;
+        if(row==0) {
+            s_page=SETTINGS_BATT_CALIBRATION;
+            s_batt_calibration_confirm=false;
+            s_notice[0]=0;
+            device_power_get_batt_calibration(&s_batt_calibration_status);
+            s_batt_calibration_next_ms=ctx->now_ms+1000;
+        }
+        else if(row==1) s_page=SETTINGS_POWER_LOG;
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+    s_batt_calibration_confirm = false;
     s_screen_offset_pressed = -1;
     if (s_ble_shortcut_back && s_page == SETTINGS_MAIN) s_ble_shortcut_back = false;
     if (s_haptics_shortcut_back && s_page == SETTINGS_MAIN) s_haptics_shortcut_back = false;
@@ -2654,6 +2737,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     return APP_REDRAW_NONE;
 }
 static void settings_exit(app_ctx_t *ctx) {
+    s_batt_calibration_confirm = false;
     s_screen_offset_pressed = -1;
     ui_lock_style_close();
 
@@ -2667,6 +2751,7 @@ static void settings_exit(app_ctx_t *ctx) {
     (void)ctx; ui_keyboard_end(); pico_online_cancel_join(); settings_bluetooth_close();
 }
 static void on_before_lock(app_ctx_t *ctx) {
+    s_batt_calibration_confirm = false;
     s_screen_offset_pressed = -1;
     if(s_page==SETTINGS_LOCK_STYLE){ui_lock_style_close();s_page=SETTINGS_MAIN;}
     s_font_sync_confirm=false;s_font_sync_path[0]=0;

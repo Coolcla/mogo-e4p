@@ -29,6 +29,8 @@ A scoped static review on 2026-11-17 covered build/registry and persistence owne
 蓝牙设置的子视图、可见设备快照与布局由 `main/apps/settings_bluetooth.c` 持有，`app_device_settings` 保留导航与页面回调。绘图与命中共用快照，异步采样和报告消费仅在交互／tick中进行；协议与持久化仍在 `ble_page_turner`，协议栈启停仍由 `app_loop` 协调。见[蓝牙设置契约](development/guides/BLUETOOTH.md)。
 The Bluetooth helper owns subviews, visible peer snapshots and layout; Device Settings retains navigation and page callbacks. Rendering/hits share snapshots, while actions/ticks sample state and consume reports. BLE retains protocol/storage and the app loop coordinates stack lifecycle.
 
+电量学习由 `components/device_power/battery_calibration.c` 持有纯计算与记录校验，Metalio后端负责本机NVS双槽和原子电量检查点；设置页只查询/发命令，`main/power`交接锁屏边界。该数据不进入普通配置备份，不依赖TF日志，也不新增采样任务或唤醒。/ Battery learning owns pure computation and record validation in `components/device_power/battery_calibration.c`; the Metalio backend owns local NVS dual slots and atomic SOC checkpoints. Settings queries/issues commands and `main/power` hands off lock boundaries. Ordinary backups exclude this data; there is no card-log dependency, sampling task or additional wake.
+
 ## 存储与外部边界 / Storage And External Boundaries
 
 | 数据 / Data | 所有者与兼容要求 / Ownership And Compatibility |

@@ -48,7 +48,7 @@ typedef enum{APP_REDRAW_NONE,APP_REDRAW_PAGE}app_redraw_t;
 typedef struct{int type,x0,y0;}ui_gesture_event_t;
 enum{UI_GESTURE_TAP,UI_GESTURE_SWIPE_U};
 typedef struct{int unused;}app_desc_t;
-typedef struct{const app_desc_t*request_app;uint8_t *fb;}app_ctx_t;
+typedef struct{const app_desc_t*request_app;uint8_t *fb;int64_t now_ms;}app_ctx_t;
 const app_desc_t app_transfer={0};
 const app_desc_t app_components={0};
 static void app_components_open(app_ctx_t *ctx,bool city){assert(!city);ctx->request_app=&app_components;}
@@ -72,6 +72,11 @@ static void app_font_activate_system(void){++system_activations;}
 static void ui_text_set_system_scale(bool b){assert(b);}
 static int s_font_page,s_main_scroll,s_style_scroll;
 static bool s_font_sync_confirm,s_config_confirm,s_panel_repair_pending;
+static bool s_batt_calibration_confirm;
+static int64_t s_batt_calibration_next_ms;
+typedef struct{bool enabled,applied,save_error;uint8_t sampled_bins,trusted_bins,total_bins;}device_power_batt_calibration_status_t;
+static device_power_batt_calibration_status_t s_batt_calibration_status;
+static void device_power_get_batt_calibration(device_power_batt_calibration_status_t *out){memset(out,0,sizeof(*out));out->total_bins=21;}
 static bool s_reading_bg_confirm,s_reading_bg_ready,s_reading_bg_pending;
 static char s_reading_bg_notice[96];
 static char s_quick_notice[96];
@@ -118,11 +123,11 @@ int main(void){
    assert(SETTINGS_DISPLAY_Y>SETTINGS_WIRELESS_Y+3*SETTINGS_ROW_H);
    assert(SETTINGS_PERSONAL_Y>SETTINGS_DISPLAY_Y+6*SETTINGS_ROW_H);
    const int tops[]={SETTINGS_WIRELESS_Y,SETTINGS_DISPLAY_Y,SETTINGS_PERSONAL_Y,SETTINGS_MAINTENANCE_Y,SETTINGS_POWER_Y};
-   const int counts[]={3,6,8,3,1};
+   const int counts[]={3,6,8,3,2};
    const int destinations[][8]={{-1,SETTINGS_BLUETOOTH,SETTINGS_TIME},
      {SETTINGS_SYSTEM_FONT,SETTINGS_SYSTEM_CONTRAST,SETTINGS_MAIN_REFRESH,-2,SETTINGS_AUTO_LOCK,SETTINGS_POWER_SLEEP},
      {SETTINGS_SHELF_STYLE,SETTINGS_LOCK_STYLE,SETTINGS_LOCK_PIN,-3,SETTINGS_HAPTIC,SETTINGS_READING_BG,-5,SETTINGS_QUICK_BAR},
-     {SETTINGS_CONFIG,-4,SETTINGS_UPGRADE},{SETTINGS_POWER_LOG}};
+     {SETTINGS_CONFIG,-4,SETTINGS_UPGRADE},{SETTINGS_BATT_CALIBRATION,SETTINGS_POWER_LOG}};
    for(int group=0;group<5;++group)for(int i=0;i<counts[group];++i){
      s_page=SETTINGS_MAIN;s_panel_repair_pending=false;s_quick_notice[0]='x';int center=tops[group]+i*SETTINGS_ROW_H+SETTINGS_ROW_H/2;s_main_scroll=center-500;ctx.request_app=NULL;
      main_tap(&ctx,300,500);
@@ -133,6 +138,7 @@ int main(void){
      else if(destinations[group][i]==-5)assert(ctx.request_app==&app_components);
      else assert(profile_edits>0);
      if(destinations[group][i]==SETTINGS_QUICK_BAR)assert(!s_quick_notice[0]);
+     if(destinations[group][i]==SETTINGS_BATT_CALIBRATION)assert(!s_batt_calibration_confirm&&s_batt_calibration_status.total_bins==21&&s_batt_calibration_next_ms==ctx.now_ms+1000);
      s_page=SETTINGS_MAIN;assert(main_tap(&ctx,10,500)==APP_REDRAW_NONE&&s_page==SETTINGS_MAIN);
    }
    s_main_scroll=SETTINGS_SCROLL_MAX;s_page=SETTINGS_MAIN;s_panel_repair_pending=false;

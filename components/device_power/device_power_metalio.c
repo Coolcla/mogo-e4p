@@ -21,6 +21,7 @@
 
 #include "device_power.h"
 #include "battery_log.h"
+#include "battery_calibration.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -441,6 +442,10 @@ static const int32_t s_soc_curve[][2] = {
     {3400, 7},    {3300, 0},
 };
 
+_Static_assert(sizeof(s_soc_curve) / sizeof(s_soc_curve[0]) == BATT_CAL_NODES,
+               "Battery calibration nodes must match the baseline");
+static batt_cal_t s_batt_cal;
+
 // 滤波状态：跨 poll 保持，首采时初始化。 / Filter state held across polls, seeded by the first sample.
 typedef struct {
     bool inited;
@@ -474,6 +479,12 @@ static int32_t batt_curve_soc(int32_t mv) {
     return s_soc_curve[n - 1][1];
 }
 
+// 关闭学习仍使用已保存的个性曲线；无模型时与既有查表完全一致。
+// Disabled learning retains the saved custom curve; absent a model, retain the original lookup exactly.
+static int32_t batt_effective_soc(int32_t mv) {
+    return s_batt_cal.base ? batt_cal_soc(&s_batt_cal, mv) : batt_curve_soc(mv);
+}
+
 // 一步滤波：负载补偿 → EMA → 查表 → 死区/单向/限速；纯函数，便于主机对拍。
 // One filter step: load compensation -> EMA -> table -> deadband/one-direction/rate limit;
 // pure so host tests can replay it.
@@ -492,7 +503,7 @@ static void batt_filter_step(batt_filter_t* f, int64_t now_us, uint16_t raw_mv, 
         f->inited = true;
         f->charging = charging;
         f->ema_q8 = ocv * 256;
-        const int32_t table = batt_curve_soc(ocv);
+        const int32_t table = batt_effective_soc(ocv);
         // 首采恢复：保存值在表值容差内则沿用，深睡唤醒显示连续。
         // First-sample restore: keep the saved value inside tolerance, so deep-standby
         // wake keeps the display continuous.
@@ -520,7 +531,7 @@ static void batt_filter_step(batt_filter_t* f, int64_t now_us, uint16_t raw_mv, 
     } else {
         // 单向步进：放电只降不升，充电只升不降。
         // One-direction stepping: discharge only falls, charge only rises.
-        int32_t target = batt_curve_soc(f->ema_q8 / 256);
+        int32_t target = batt_effective_soc(f->ema_q8 / 256);
         if (charging) {
             if (target < f->disp_permille) target = f->disp_permille;
         } else if (target > f->disp_permille) {
@@ -578,19 +589,32 @@ static int bq_read_soc(void) {
 
 // 电量持久化到 NVS，供深睡唤醒后恢复显示。 / Persist the percent to NVS for deep-standby wake restore.
 static int32_t s_batt_persisted_permille = -1;
+static uint32_t s_batt_persisted_model;
 // 0 未首采、1 采用、2 无记录/读取失败、3 版本不符、4 数值非法、5 超容差。
 // 0 pending, 1 accepted, 2 absent/read error, 3 version mismatch, 4 invalid, 5 outside tolerance.
 static uint8_t s_batt_restore;
 static int32_t s_batt_restore_value = -1;
 static uint32_t s_batt_restore_version;
 
+typedef struct {
+    uint32_t version;   // 曲线算法版本 / Curve algorithm revision
+    uint32_t model;     // 本次显示使用的曲线 / Curve used for this displayed value
+    uint32_t permille;  // 显示千分比 / Displayed permille
+    uint32_t checksum;  // 整体校验 / Whole-record checksum
+} batt_soc_checkpoint_t;
+
 static void batt_save(int32_t permille) {
-    if (permille < 0 || permille > 1000 || permille == s_batt_persisted_permille) return;
+    const uint32_t model = batt_cal_model_id(&s_batt_cal);
+    if (permille < 0 || permille > 1000 ||
+        (permille == s_batt_persisted_permille && model == s_batt_persisted_model)) return;
     nvs_handle_t nvs;
     if (nvs_open("pmu", NVS_READWRITE, &nvs) != ESP_OK) return;
-    if (nvs_set_i32(nvs, "soc", permille) == ESP_OK &&
-        nvs_set_u32(nvs, "soc_ver", BATT_STATE_VERSION) == ESP_OK && nvs_commit(nvs) == ESP_OK) {
+    batt_soc_checkpoint_t checkpoint = {.version = BATT_STATE_VERSION, .model = model,
+        .permille = (uint32_t)permille};
+    checkpoint.checksum = batt_cal_checksum(&checkpoint, offsetof(batt_soc_checkpoint_t, checksum));
+    if (nvs_set_blob(nvs, "soc_state", &checkpoint, sizeof(checkpoint)) == ESP_OK && nvs_commit(nvs) == ESP_OK) {
         s_batt_persisted_permille = permille;
+        s_batt_persisted_model = model;
     }
     nvs_close(nvs);
 }
@@ -603,6 +627,26 @@ static int32_t batt_load(void) {
     s_batt_restore_value = -1;
     s_batt_restore_version = 0;
     if (nvs_open("pmu", NVS_READONLY, &nvs) != ESP_OK) return -1;
+    batt_soc_checkpoint_t checkpoint;
+    size_t size = sizeof(checkpoint);
+    const esp_err_t checkpoint_err = nvs_get_blob(nvs, "soc_state", &checkpoint, &size);
+    if (checkpoint_err != ESP_ERR_NVS_NOT_FOUND) {
+        if (checkpoint_err == ESP_OK && size == sizeof(checkpoint)) {
+            s_batt_restore_value = (int32_t)checkpoint.permille;
+            s_batt_restore_version = checkpoint.version;
+            if (checkpoint.checksum != batt_cal_checksum(&checkpoint, offsetof(batt_soc_checkpoint_t, checksum)) ||
+                checkpoint.permille > 1000) s_batt_restore = 4;
+            else if (checkpoint.version != BATT_STATE_VERSION || checkpoint.model != batt_cal_model_id(&s_batt_cal))
+                s_batt_restore = 3;
+            else {
+                value = (int32_t)checkpoint.permille;
+                s_batt_persisted_model = checkpoint.model;
+                s_batt_restore = 0;
+            }
+        }
+        nvs_close(nvs);
+        return value;
+    }
     const bool have_version = nvs_get_u32(nvs, "soc_ver", &version) == ESP_OK;
     const bool have_value = nvs_get_i32(nvs, "soc", &value) == ESP_OK;
     if (have_version) s_batt_restore_version = version;
@@ -610,13 +654,94 @@ static int32_t batt_load(void) {
     if (!have_version || !have_value) value = -1;
     else if (version != BATT_STATE_VERSION) { s_batt_restore = 3; value = -1; }
     else if (value < 0 || value > 1000) { s_batt_restore = 4; value = -1; }
-    else s_batt_restore = 0;
+    else {
+        bool baseline = true;
+        for (int i = 0; i < BATT_CAL_NODES; ++i)
+            baseline &= s_batt_cal.record.soc[i] == (uint32_t)s_soc_curve[i][1];
+        // 仅新原子记录不存在时读取旧版本3，而且必须使用基线。
+        // Only an absent atomic checkpoint allows legacy revision-3 fallback, and only with the baseline.
+        if (!baseline) {
+            s_batt_restore = 3;
+            value = -1;
+        } else {
+            s_batt_restore = 0;
+            s_batt_persisted_model = batt_cal_model_id(&s_batt_cal);
+        }
+    }
     nvs_close(nvs);
     return value;
 }
 
+/* ---- 本机自动校准存储 / Local automatic calibration storage ---- */
+
+static bool batt_cal_read_slot(void *ctx, unsigned slot, batt_cal_record_t *record) {
+    (void)ctx;
+    nvs_handle_t nvs;
+    if (nvs_open("battcal", NVS_READONLY, &nvs) != ESP_OK) return false;
+    size_t size = sizeof(*record);
+    const bool ok = nvs_get_blob(nvs, slot ? "slot1" : "slot0", record, &size) == ESP_OK && size == sizeof(*record);
+    nvs_close(nvs);
+    return ok;
+}
+
+static bool batt_cal_write_slot(void *ctx, unsigned slot, const batt_cal_record_t *record) {
+    (void)ctx;
+    nvs_handle_t nvs;
+    if (nvs_open("battcal", NVS_READWRITE, &nvs) != ESP_OK) return false;
+    const bool ok = nvs_set_blob(nvs, slot ? "slot1" : "slot0", record, sizeof(*record)) == ESP_OK &&
+                    nvs_commit(nvs) == ESP_OK;
+    nvs_close(nvs);
+    return ok;
+}
+
+static const batt_cal_storage_t s_batt_cal_storage = {
+    .read = batt_cal_read_slot, .write = batt_cal_write_slot,
+};
+
 static void batt_save_current(void) {
+    (void)batt_cal_save(&s_batt_cal, &s_batt_cal_storage, esp_timer_get_time(), true);
     if (s_snap.flags & PMU_STATUS_BATTERY_VALID) batt_save(s_snap.soc_permille);
+}
+
+void device_power_get_batt_calibration(device_power_batt_calibration_status_t *out) {
+    if (!out) return;
+    batt_cal_status_t status;
+    batt_cal_status(&s_batt_cal, &status);
+    *out = (device_power_batt_calibration_status_t){
+        .enabled = status.enabled, .applied = status.applied, .save_error = status.save_error,
+        .sampled_bins = status.sampled_bins, .trusted_bins = status.trusted_bins, .total_bins = status.total_bins,
+    };
+}
+
+esp_err_t device_power_set_batt_calibration(bool enabled) {
+    if (!s_batt_cal.base) return ESP_ERR_INVALID_STATE;
+    const bool previous = s_batt_cal.record.enabled != 0;
+    if (previous == enabled) return ESP_OK;
+    const int64_t now = esp_timer_get_time();
+    batt_cal_enable(&s_batt_cal, enabled, now);
+    if (batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true)) return ESP_OK;
+    s_batt_cal.record.enabled = previous;
+    return ESP_FAIL;
+}
+
+esp_err_t device_power_reset_batt_calibration(void) {
+    if (!s_batt_cal.base) return ESP_ERR_INVALID_STATE;
+    const batt_cal_t previous = s_batt_cal;
+    const int64_t now = esp_timer_get_time();
+    batt_cal_reset(&s_batt_cal, now);
+    if (!batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true)) {
+        s_batt_cal = previous;
+        s_batt_cal.save_error = true;
+        return ESP_FAIL;
+    }
+    // 两槽都刷新为基线，正常重置后不让备用记录恢复出旧曲线。
+    // Refresh both slots to the baseline so a completed reset cannot resurrect the old backup curve.
+    s_batt_cal.dirty = true;
+    return batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true) ? ESP_OK : ESP_FAIL;
+}
+
+void device_power_batt_calibration_lock(bool locked) {
+    batt_cal_lock(&s_batt_cal, locked, esp_timer_get_time());
 }
 
 /* ---- 校准日志 / Calibration log ---- */
@@ -1131,7 +1256,7 @@ static void poll_battery(void) {
         int32_t ocv_mv = (int32_t)mv;
         int32_t disp = 0;
         if (!s_batt_filter.inited && s_batt_saved_permille >= 0) {
-            const int32_t delta = s_batt_saved_permille - batt_curve_soc(batt_compensated_mv(mv, have_i, ma));
+            const int32_t delta = s_batt_saved_permille - batt_effective_soc(batt_compensated_mv(mv, have_i, ma));
             s_batt_restore = delta <= BATT_RESTORE_TOL_PERMILLE &&
                              delta >= -BATT_RESTORE_TOL_PERMILLE ? 1 : 5;
         }
@@ -1161,6 +1286,14 @@ static void poll_battery(void) {
         s_snap.flags &= ~PMU_STATUS_BATTERY_VALID;
     }
 
+    // 学习直接消费本轮采样，不经过日志开关、队列或卡；欠压路径不等待保存。
+    // Learning consumes this poll directly, independent of log switches, queues and cards; undervoltage never waits for persistence.
+    batt_cal_observe(&s_batt_cal, now, have_v ? s_snap.battery_mv : 0, ma,
+                     have_v && have_i && have_chg && !s_charger_uv_shutdown,
+                     have_chg && ((charger_status & 0x07) != 0 || charging));
+    if (!s_batt_cal.locked && !s_charger_uv_shutdown)
+        (void)batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, false);
+
     if (logging) {
         if (s_batt_ic_us < 0 || sampled - s_batt_ic_us >= BATT_LOG_PERIOD_US) {
             s_batt_ic_soc = (int8_t)bq_read_soc();
@@ -1174,7 +1307,7 @@ static void poll_battery(void) {
             .charger_status = charger_status,
             .comp_mv = batt_compensated_mv(mv, have_i, ma),
             .ocv_mv = have_v ? s_snap.battery_mv : -1,
-            .curve_permille = have_v ? batt_curve_soc(s_snap.battery_mv) : -1,
+            .curve_permille = have_v ? batt_effective_soc(s_snap.battery_mv) : -1,
             .disp_permille = have_v ? s_snap.soc_permille : -1,
             .ic_soc = s_batt_ic_soc, .ic_us = s_batt_ic_us,
             .have_filter = have_v,
@@ -1254,6 +1387,8 @@ esp_err_t device_power_init(i2c_master_bus_handle_t bus_handle,
     }
     // 上次电量恢复值：深睡唤醒（复位重启）后显示连续。
     // Last-percent restore: keeps the display continuous after a deep-standby wake (reset boot).
+    batt_cal_init(&s_batt_cal, s_soc_curve, esp_timer_get_time());
+    (void)batt_cal_load(&s_batt_cal, &s_batt_cal_storage);
     s_batt_saved_permille = batt_load();
     s_batt_persisted_permille = s_batt_saved_permille;
 
@@ -1277,6 +1412,8 @@ esp_err_t device_power_deinit(void) {
     (void)device_power_key_sampler_enable(false);
     const esp_err_t parked = cx_charger_park();
     if (parked != ESP_OK) return parked;
+    batt_cal_lock(&s_batt_cal, true, esp_timer_get_time());
+    (void)batt_cal_save(&s_batt_cal, &s_batt_cal_storage, esp_timer_get_time(), true);
     s_charger_configured = false;
     s_charger_next_us = s_charger_resume_us = 0;
     device_power_set_batt_log(false);
