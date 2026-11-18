@@ -99,7 +99,7 @@ typedef struct {
 } network_status_t;
 static void network_service_get_status(network_status_t *status){memset(status,0,sizeof(*status));}
 #define UI_NAV_TOP 1096
-'''+enum+'\nstatic settings_page_t s_page;\n'+macros+'''
+'''+enum+'\nstatic settings_page_t s_page;\nstatic const char *s_network_notice;\n'+macros+'''
 '''
 unit += 'static int settings_wireless_rows(void);\n'
 unit += fn('settings_wireless_rows') + '\n'

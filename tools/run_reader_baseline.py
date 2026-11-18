@@ -120,6 +120,8 @@ SUITES = {
     "settings_font": [sys.executable, "tools/settings_layout_font_host_test.py"],
     "font_cache": [sys.executable, "tools/ttf_block_cache_host_test.py"],
     "glyph_cache": [sys.executable, "tools/ttf_glyph_cache_host_test.py"],
+    "glyph_retry": [sys.executable, "tools/ui_glyph_retry_host_test.py"],
+    "ui_hanzi": [sys.executable, "tools/ui_hanzi_host_test.py"],
     "images": [sys.executable, "tools/reader_images_host_test.py"],
     "webp": [sys.executable, "tools/webp_host_test.py"],
     "settings_view": ["bash", "tools/run_reader_settings_host_tests.sh"],

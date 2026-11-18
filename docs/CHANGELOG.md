@@ -5,6 +5,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-18
 
+- 修复字形临时分配失败后文字持续缺失的问题；失败字形不再写入缓存，重绘时可恢复，无需重启。/ Retry glyphs on redraw instead of caching failed allocations, so missing text can recover without a restart.
 - 手动网络对时、检查更新和确认下载可按业务联网方式自动临时联网，不改无线开关；对时在后台等网络，设置页可继续操作。/ Manual time sync, update checks and confirmed downloads can connect temporarily without changing radio toggles; time sync waits for connectivity off the UI task.
 - 修复移动网络关闭时手动刷新天气无法临时启动 4G 的问题；按业务联网方式连接，结束后自动归还临时网络，不改开关设置。/ Allow manual weather refresh to start cellular temporarily when selected by the business route, then release it without changing radio settings.
 - 天气和自动检查更新按内存余量避让；离页取消不再等待弱网请求，4G 信号改在后台查询。/ Weather and automatic update checks defer on memory pressure; navigation no longer waits for cancelled network checks, and cellular signal is sampled in the background.
