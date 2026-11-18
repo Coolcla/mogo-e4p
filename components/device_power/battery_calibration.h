@@ -30,6 +30,13 @@ typedef struct {
     uint32_t checksum;                        ///< 完整记录 CRC32 / Whole-record CRC32
 } batt_cal_record_t;
 
+typedef enum {
+    BATT_CAL_RESET_NONE = 0,     ///< 无待完成重置 / No pending reset
+    BATT_CAL_RESET_OFF = 1,      ///< 待恢复基线，开关保持关闭 / Pending baseline reset, keep learning off
+    BATT_CAL_RESET_ON = 2,       ///< 待恢复基线，开关保持开启 / Pending baseline reset, keep learning on
+    BATT_CAL_RESET_UNREADABLE,   ///< 重置意图读取失败，不回退旧槽 / Cannot read intent; never fall back to old slots
+} batt_cal_reset_state_t;
+
 typedef struct {
     const int32_t (*base)[2]; ///< 固定电压节点与基线 / Fixed voltage nodes and baseline
     batt_cal_record_t record; ///< 可持久化状态 / Persistent state
@@ -41,6 +48,8 @@ typedef struct {
     int64_t integral, start_integral; ///< 电流积分，mA·µs / Current integrals in mA microseconds
     int64_t last_save_us;     ///< 上次存储尝试 / Last persistence attempt
     int slot;                ///< 最近有效槽，负值为空 / Latest valid slot, negative when absent
+    batt_cal_reset_state_t reset_state; ///< 当前重置意图 / Current reset intent
+    unsigned reset_copies;    ///< 此次运行已确认的基线副本数 / Baseline copies confirmed in this boot
     bool save_error;         ///< 最近存储失败 / Last persistence failed
 } batt_cal_t;
 
@@ -52,6 +61,8 @@ typedef struct {
 typedef struct {
     bool (*read)(void *ctx, unsigned slot, batt_cal_record_t *record); ///< 读取完整槽 / Read a complete slot
     bool (*write)(void *ctx, unsigned slot, const batt_cal_record_t *record); ///< 提交完整槽 / Commit a complete slot
+    batt_cal_reset_state_t (*read_reset)(void *ctx); ///< 区分无意图与读取失败 / Distinguish absent intent from a failed read
+    bool (*write_reset)(void *ctx, batt_cal_reset_state_t state); ///< 提交重置意图或标记完成 / Commit reset intent or completion
     void *ctx; ///< 存储上下文 / Storage context
 } batt_cal_storage_t;
 
@@ -74,7 +85,10 @@ uint32_t batt_cal_model_id(const batt_cal_t *s);
 void batt_cal_status(const batt_cal_t *s, batt_cal_status_t *out);
 /// 清除模型和样本，保留开关及锁屏状态；调用方负责保存。/ Reset samples and curve, retaining learning and lock state; caller persists it.
 void batt_cal_reset(batt_cal_t *s, int64_t now);
-/// 校验完整记录并选择较新有效槽；均失败时保留基线。/ Validate records and choose the newer valid slot, retaining baseline if neither works.
+/// 先遵循重置意图，否则选较新有效槽。/ Honor a reset intent first, otherwise choose the newer valid slot.
 bool batt_cal_load(batt_cal_t *s, const batt_cal_storage_t *storage);
 /// 交替提交完整快照；失败不清 dirty，不推进槽与序号。/ Alternate complete snapshots; failures retain dirty state, slot and sequence.
 bool batt_cal_save(batt_cal_t *s, const batt_cal_storage_t *storage, int64_t now, bool force);
+
+/// 先持久化重置意图，再覆盖两槽；跨启动续做，不恢复过时的曲线。/ Journal intent before overwriting both slots; resume across boots without restoring obsolete curves.
+bool batt_cal_reset_persist(batt_cal_t *s, const batt_cal_storage_t *storage, int64_t now);

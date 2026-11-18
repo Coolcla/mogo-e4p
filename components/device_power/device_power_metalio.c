@@ -589,7 +589,7 @@ static int bq_read_soc(void) {
 
 // 电量持久化到 NVS，供深睡唤醒后恢复显示。 / Persist the percent to NVS for deep-standby wake restore.
 static int32_t s_batt_persisted_permille = -1;
-static uint32_t s_batt_persisted_model;
+static uint32_t s_batt_persisted_model, s_batt_display_model;
 // 0 未首采、1 采用、2 无记录/读取失败、3 版本不符、4 数值非法、5 超容差。
 // 0 pending, 1 accepted, 2 absent/read error, 3 version mismatch, 4 invalid, 5 outside tolerance.
 static uint8_t s_batt_restore;
@@ -604,7 +604,7 @@ typedef struct {
 } batt_soc_checkpoint_t;
 
 static void batt_save(int32_t permille) {
-    const uint32_t model = batt_cal_model_id(&s_batt_cal);
+    const uint32_t model = s_batt_display_model;
     if (permille < 0 || permille > 1000 ||
         (permille == s_batt_persisted_permille && model == s_batt_persisted_model)) return;
     nvs_handle_t nvs;
@@ -694,8 +694,31 @@ static bool batt_cal_write_slot(void *ctx, unsigned slot, const batt_cal_record_
     return ok;
 }
 
+static batt_cal_reset_state_t batt_cal_read_reset(void *ctx) {
+    (void)ctx;
+    nvs_handle_t nvs;
+    const esp_err_t opened = nvs_open("battcal", NVS_READONLY, &nvs);
+    if (opened == ESP_ERR_NVS_NOT_FOUND) return BATT_CAL_RESET_NONE;
+    if (opened != ESP_OK) return BATT_CAL_RESET_UNREADABLE;
+    uint8_t state = 0;
+    const esp_err_t read = nvs_get_u8(nvs, "reset", &state);
+    nvs_close(nvs);
+    if (read == ESP_ERR_NVS_NOT_FOUND) return BATT_CAL_RESET_NONE;
+    return read == ESP_OK && state <= BATT_CAL_RESET_ON ? (batt_cal_reset_state_t)state : BATT_CAL_RESET_UNREADABLE;
+}
+
+static bool batt_cal_write_reset(void *ctx, batt_cal_reset_state_t state) {
+    (void)ctx;
+    nvs_handle_t nvs;
+    if (nvs_open("battcal", NVS_READWRITE, &nvs) != ESP_OK) return false;
+    const bool ok = nvs_set_u8(nvs, "reset", (uint8_t)state) == ESP_OK && nvs_commit(nvs) == ESP_OK;
+    nvs_close(nvs);
+    return ok;
+}
+
 static const batt_cal_storage_t s_batt_cal_storage = {
     .read = batt_cal_read_slot, .write = batt_cal_write_slot,
+    .read_reset = batt_cal_read_reset, .write_reset = batt_cal_write_reset,
 };
 
 static void batt_save_current(void) {
@@ -718,6 +741,8 @@ esp_err_t device_power_set_batt_calibration(bool enabled) {
     const bool previous = s_batt_cal.record.enabled != 0;
     if (previous == enabled) return ESP_OK;
     const int64_t now = esp_timer_get_time();
+    if (s_batt_cal.reset_state != BATT_CAL_RESET_NONE &&
+        !batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true)) return ESP_FAIL;
     batt_cal_enable(&s_batt_cal, enabled, now);
     if (batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true)) return ESP_OK;
     s_batt_cal.record.enabled = previous;
@@ -726,18 +751,7 @@ esp_err_t device_power_set_batt_calibration(bool enabled) {
 
 esp_err_t device_power_reset_batt_calibration(void) {
     if (!s_batt_cal.base) return ESP_ERR_INVALID_STATE;
-    const batt_cal_t previous = s_batt_cal;
-    const int64_t now = esp_timer_get_time();
-    batt_cal_reset(&s_batt_cal, now);
-    if (!batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true)) {
-        s_batt_cal = previous;
-        s_batt_cal.save_error = true;
-        return ESP_FAIL;
-    }
-    // 两槽都刷新为基线，正常重置后不让备用记录恢复出旧曲线。
-    // Refresh both slots to the baseline so a completed reset cannot resurrect the old backup curve.
-    s_batt_cal.dirty = true;
-    return batt_cal_save(&s_batt_cal, &s_batt_cal_storage, now, true) ? ESP_OK : ESP_FAIL;
+    return batt_cal_reset_persist(&s_batt_cal, &s_batt_cal_storage, esp_timer_get_time()) ? ESP_OK : ESP_FAIL;
 }
 
 void device_power_batt_calibration_lock(bool locked) {
@@ -1260,11 +1274,16 @@ static void poll_battery(void) {
             s_batt_restore = delta <= BATT_RESTORE_TOL_PERMILLE &&
                              delta >= -BATT_RESTORE_TOL_PERMILLE ? 1 : 5;
         }
+        const bool had_display = s_batt_filter.inited;
         batt_filter_step(&s_batt_filter, now, mv, have_i, ma, charging, charge_done,
                          s_batt_saved_permille, &ocv_mv, &disp);
         s_batt_saved_permille = -1;  // 恢复值只喂首采。 / The restore value feeds the first sample only.
         s_snap.battery_mv = (uint16_t)ocv_mv;
         s_snap.battery_raw = mv;
+        // 仅在产生新显示值时更新归属；重置或学习不能给保留的旧值换曲线身份。
+        // Update provenance only when publishing a new value; never relabel a held value after reset or learning.
+        if (!had_display || s_snap.soc_permille != (uint16_t)disp)
+            s_batt_display_model = batt_cal_model_id(&s_batt_cal);
         s_snap.soc_permille = (uint16_t)disp;
         s_snap.flags |= PMU_STATUS_BATTERY_VALID;
         s_snap.status_ok = true;

@@ -101,8 +101,10 @@ static bool cellular_service_pause_for_sleep(void){assert(pause==1&&!resume&&!pr
 static void cellular_service_resume_after_sleep(void){assert(cellular_pause==1&&!resume);++cellular_resume;}
 static void wifi_transfer_resume_after_sleep(void){assert(cellular_pause==1&&cellular_resume==(cellular_ok?1u:0u));++resume;}
 static void pico_boot_clear_resume(void){++clear_resume;}
+static bool calibration_locked;
+static void device_power_batt_calibration_lock(bool locked){assert(locked!=calibration_locked);calibration_locked=locked;}
 static void app_lock_wait_key_idle(int ms){assert(ms==800);}
-static app_wake_source_t app_light_sleep_wait(void *acc){(void)acc;assert(!key_sampling);return APP_WAKE_KEY;}
+static app_wake_source_t app_light_sleep_wait(void *acc){(void)acc;assert(!key_sampling&&calibration_locked);return APP_WAKE_KEY;}
 static app_wake_source_t app_lock_sleep_wait(EpdiyHighlevelState *hl,void *acc){assert(hl);return app_light_sleep_wait(acc);}
 static bool app_shutdown_present(EpdiyHighlevelState *hl){assert(hl);off_attempted=true;++off_presents;return true;}
 static int app_enter_host_sleep(int mode){assert(mode==APP_SLEEP_OFF&&off_presents==1);if(deep_fail)return -1;longjmp(deep,1);}
@@ -115,7 +117,7 @@ static void app_weather_cancel_join(void){}
 static void app_time_service_cancel(void){++time_cancels;}
 static int64_t esp_timer_get_time(void){return 2000000;}
 static bool lock_screen_restore(uint8_t *fb){if(style==APP_LOCK_STYLE_CLOCK||!cache_ok||cached_style!=style)return false;memset(fb,0x10+style,FRAME_BYTES);return true;}
-static void lock_screen_authenticate(void *h,void *tp,void *acc,bool boot){(void)h;assert(tp==(void*)2&&acc==(void*)1);assert(pin);assert(boot==boot_cache);assert(pixels[0]==(draw_ok?0x10+style:0xfe));++auths;}
+static void lock_screen_authenticate(void *h,void *tp,void *acc,bool boot){assert(calibration_locked);(void)h;assert(tp==(void*)2&&acc==(void*)1);assert(pin);assert(boot==boot_cache);assert(pixels[0]==(draw_ok?0x10+style:0xfe));++auths;}
 static int board_sd_get_info(board_sd_info_t *i){i->mounted=true;return 0;}
 static void vTaskDelay(int ms){(void)ms;}
 static int epd_width(void){return 684;}
@@ -125,7 +127,8 @@ unit += function('app_lifecycle_pause_for_lock', ROOT/'main/app/app_lifecycle.c'
 for name in ('draw_wallpaper', 'enter_lock_and_sleep', 'app_lock_boot_gate'):
     unit += function(name, ROOT/'main/power/sleep.c') + '\n'
 unit += r'''
-static void reset(void){off_attempted=false;off_presents=0;key_sampling=true;key_consumes=0;current_background=0x32;bookmark_mode=APP_BOOKMARK_MODE_FIT;memset(draws,0,sizeof(draws));fallback=presents=auths=font_begin=font_end=pause=resume=clear_resume=0;cellular_pause=cellular_resume=0;cellular_ok=true;memset(pixels,0x32,FRAME_BYTES);memset(panel,0x32,FRAME_BYTES);frame_ready=s_lock_feedback_visible=feedback_seen=false;full_presents=entry_clears=0;final_ok=true;draw_ok=transfer_ok=true;deep_fail=false;reader=boot_cache=cache_ok=false;}
+static void reset(void){
+ calibration_locked=false;off_attempted=false;off_presents=0;key_sampling=true;key_consumes=0;current_background=0x32;bookmark_mode=APP_BOOKMARK_MODE_FIT;memset(draws,0,sizeof(draws));fallback=presents=auths=font_begin=font_end=pause=resume=clear_resume=0;cellular_pause=cellular_resume=0;cellular_ok=true;memset(pixels,0x32,FRAME_BYTES);memset(panel,0x32,FRAME_BYTES);frame_ready=s_lock_feedback_visible=feedback_seen=false;full_presents=entry_clears=0;final_ok=true;draw_ok=transfer_ok=true;deep_fail=false;reader=boot_cache=cache_ok=false;}
 int main(void){
  EpdiyHighlevelState hl={0};int64_t ignore=0;
  // 两种来源的阅读背景只影响票根内容，不决定样式。/ Reader provenance affects ticket content, never the style.
@@ -136,7 +139,7 @@ int main(void){
   // 透明票根和透明书封用差分整屏GC16，不再epd_clear；其余样式保留清白。
   // Transparent tickets and covers use differential full GC16 without epd_clear; other styles keep the clear.
   assert(entry_clears==(overlay()?0u:1u));
-  assert(auths==password&&pause==1&&resume==1&&clear_resume==1&&ignore==4000);
+  assert(auths==password&&pause==1&&resume==1&&clear_resume==1&&ignore==4000&&!calibration_locked);
   assert(cellular_pause==1&&cellular_resume==1);
   assert(key_sampling&&key_consumes==1);
   assert(font_begin==(s==0||s==2||s==4||s==5||password)&&font_end==font_begin&&app_settings_lock_style()==s);
@@ -167,14 +170,14 @@ int main(void){
  for(unsigned s=0;s<6;++s){reset();style=s;pin=false;deep_fail=true;enter_lock_and_sleep(&hl,&ignore,(void*)1,(void*)2,false,false);assert(presents==1&&draws[s]==1&&style==s&&pause==1&&resume==1&&clear_resume==1&&ignore==4000&&off_presents==1&&entry_clears==1);}
  // 待机方式「仅浅睡」：无期限浅睡永不下电，正常解锁恢复。/ Standby "light-only": deadline-free sleep never powers down and unlocks normally.
  reset();style=1;pin=false;enter_lock_and_sleep(&hl,&ignore,(void*)1,(void*)2,false,true);assert(presents==1&&draws[1]==1&&pause==1&&resume==1&&clear_resume==1);
- reset();style=0;pin=true;enter_lock_and_sleep(&hl,&ignore,(void*)1,(void*)2,false,true);assert(presents==1&&draws[0]==1&&auths==1&&resume==1&&clear_resume==1); // 密码冷启动：同样式缓存才命中，跨样式/损坏时重画当前选择。/ Cold PIN gate redraws the current choice for stale/corrupt cache.
+ reset();style=0;pin=true;enter_lock_and_sleep(&hl,&ignore,(void*)1,(void*)2,false,true);assert(presents==1&&draws[0]==1&&auths==1&&resume==1&&clear_resume==1&&!calibration_locked); // 密码冷启动：同样式缓存才命中，跨样式/损坏时重画当前选择。/ Cold PIN gate redraws the current choice for stale/corrupt cache.
  for(ticket_background=0;ticket_background<2;++ticket_background)for(unsigned s=0;s<6;++s)for(unsigned previous=0;previous<6;++previous){
   reset();style=s;pin=boot_cache=cache_ok=true;cached_style=previous;
   app_lock_boot_gate(&hl,(void*)2,(void*)1);
-  assert(auths==1&&font_begin==1&&font_end==1&&!presents&&!fallback&&style==s);
+  assert(auths==1&&font_begin==1&&font_end==1&&!presents&&!fallback&&style==s&&!calibration_locked);
   assert(draws[s]==(previous!=s||s==APP_LOCK_STYLE_CLOCK)&&draws[(s+1)%6]==0&&draws[(s+2)%6]==0);
  }
- for(unsigned s=0;s<6;++s){reset();style=s;pin=boot_cache=true;draw_ok=false;app_lock_boot_gate(&hl,(void*)2,(void*)1);assert(auths==1&&draws[s]==1&&fallback==1&&style==s);}
+ for(unsigned s=0;s<6;++s){reset();style=s;pin=boot_cache=true;draw_ok=false;app_lock_boot_gate(&hl,(void*)2,(void*)1);assert(auths==1&&draws[s]==1&&fallback==1&&style==s&&!calibration_locked);}
  reset();pin=false;app_lock_boot_gate(&hl,(void*)2,(void*)1);assert(!auths&&!font_begin);
  puts("PASS: real single-pass final collage retains white/badge history, avoids duplicate entry clear, recovers final faults and consumes feedback before cache/PIN; auto/manual lock entry chooses ticket/wallpaper/collage with/without PIN and reader background; upload deferral; full-off powers down at once and a failed handoff stays locked; light-only never hands off with or without PIN; cold gate cache/fault fallback keeps selected style");
 }

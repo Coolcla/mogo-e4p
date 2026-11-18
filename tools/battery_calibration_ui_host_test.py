@@ -46,11 +46,15 @@ unit += r'''
 int main(void){
     uint8_t fb=0;
     batt_calibration_render(&fb);assert(queries==1&&!toggles&&!resets);
-    assert(strstr(painted,"等待有效样本")&&strstr(painted,"0 / 21")&&strstr(painted,"停止学习"));
+    assert(strstr(painted,"自动电量校准(beta)")&&strstr(painted,"学习已停止")&&strstr(painted,"0 / 21"));
     assert(batt_calibration_touch(48,300)==APP_REDRAW_PAGE&&status.enabled&&toggles==1);
     assert(strstr(s_notice,"已开启"));
     status.sampled_bins=4;status.trusted_bins=3;painted[0]=0;
     batt_calibration_render(&fb);assert(strstr(painted,"正在学习")&&strstr(painted,"4 / 21"));
+    assert(batt_calibration_touch(48,300)==APP_REDRAW_PAGE&&!status.enabled&&!status.applied);
+    painted[0]=0;batt_calibration_render(&fb);
+    assert(strstr(painted,"学习已停止")&&!strstr(painted,"正在学习")&&strstr(painted,"4 / 21"));
+    assert(batt_calibration_touch(48,300)==APP_REDRAW_PAGE&&status.enabled);
     status.applied=true;
     assert(batt_calibration_touch(48,300)==APP_REDRAW_PAGE&&!status.enabled&&status.applied);
     assert(strstr(s_notice,"已有校准继续生效"));painted[0]=0;

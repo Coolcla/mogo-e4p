@@ -320,8 +320,7 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc,int64_t dea
 # The driver model runs the real waiting loop; run the actual policy here to isolate shutdown success/failure boundaries.
 timed_unit += style_enum + '\nstatic app_shutdown_style_t s_shutdown_style;\n'
 timed_unit += function('app_settings_shutdown_minutes', ROOT / 'main/settings/settings.c') + '\n'
-for name in ('app_light_sleep_wait', 'app_lock_sleep_wait'):
-    timed_unit += function(name, sleep) + '\n'
+timed_unit += function('app_lock_sleep_wait', sleep) + '\n'
 timed_unit += r'''
 int main(void){
     EpdiyHighlevelState hl={0};

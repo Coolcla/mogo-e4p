@@ -42,6 +42,7 @@ static int s_batt_log_mux;
 static int32_t s_batt_saved_permille;
 static uint8_t s_batt_restore;
 static int32_t s_batt_persisted_permille;
+static uint32_t s_batt_display_model;
 static bool s_batt_charging_last;
 static int64_t s_batt_last_save_us, s_batt_ic_us, s_batt_full_since_us;
 static int64_t s_batt_poll_us;
@@ -102,6 +103,17 @@ int main(void) {
     poll_battery();
     assert(s_snap.status_ok && !s_snap.quick_ok && pmu_battery_percent(&s_snap) == 70);
     assert(s_snap.battery_raw == 4000 && !pmu_battery_charging(&s_snap));
+    // 曲线重置不能更换仍在显示的旧值身份。/ Reset must not relabel a held display value.
+    reset();s_batt_cal.record.soc[5]-=20;poll_battery();
+    const uint32_t old_model=s_batt_display_model;
+    assert(s_snap.soc_permille==675 && old_model==batt_cal_model_id(&s_batt_cal));
+    batt_cal_reset(&s_batt_cal,now_us);
+    s_batt_cal.dirty=false;
+    now_us+=1000000;poll_battery();
+    assert(s_snap.soc_permille==675 && s_batt_display_model==old_model);
+    assert(batt_cal_model_id(&s_batt_cal)!=old_model);
+    raw_mv=3900;now_us+=60000000;poll_battery();
+    assert(s_snap.soc_permille<675 && s_batt_display_model==batt_cal_model_id(&s_batt_cal));
     // 无效电压和 I2C 失败清有效位，不能继续显示上次电量。
     // Invalid voltage or failed I2C clears validity instead of presenting the last percent.
     const uint16_t invalid[] = {0, 2499, 5001, 65535};
@@ -216,13 +228,15 @@ typedef int nvs_handle_t;
 static pmu_snapshot_t s_snap;
 static int32_t s_batt_persisted_permille=-1, stored_soc=600;
 static uint32_t stored_ver, s_batt_restore_version;
-static uint32_t s_batt_persisted_model;
+static uint32_t s_batt_persisted_model, s_batt_display_model;
 static batt_soc_checkpoint_t stored_checkpoint;
 static bool have_checkpoint;
 static batt_cal_t s_batt_cal;
 static batt_cal_record_t saved_slots[2];
 static bool have_slots[2];
 static unsigned cal_writes, fail_cal_write;
+static uint8_t stored_reset;
+static bool reset_present, fail_reset_clear;
 static uint8_t s_batt_restore;
 static int32_t s_batt_restore_value;
 static unsigned opens, closes, commits, writes, restarts;
@@ -236,6 +250,17 @@ static int nvs_get_i32(nvs_handle_t h,const char *key,int32_t *v) {
 static int nvs_get_u32(nvs_handle_t h,const char *key,uint32_t *v) {
     assert(h==1&&!strcmp(key,"soc_ver"));if(fault==6)return ESP_FAIL;*v=stored_ver;
     return ESP_OK;
+}
+static int nvs_get_u8(nvs_handle_t h,const char *key,uint8_t *v) {
+    assert(h==1&&!strcmp(key,"reset"));
+    if(fault==9)return ESP_FAIL;
+    if(!reset_present)return ESP_ERR_NVS_NOT_FOUND;
+    *v=stored_reset;return ESP_OK;
+}
+static int nvs_set_u8(nvs_handle_t h,const char *key,uint8_t v) {
+    assert(h==1&&!strcmp(key,"reset"));
+    if(fault==2||(!v&&fail_reset_clear))return ESP_FAIL;
+    stored_reset=v;reset_present=true;return ESP_OK;
 }
 static int nvs_get_blob(nvs_handle_t h,const char *key,void *out,size_t *size) {
     assert(h==1);
@@ -265,15 +290,16 @@ esp_err_t device_power_power_off(void) {return ESP_OK;}
 static void esp_restart(void) {++restarts;}
 '''
 persist += defines + '\n' + curve + '\n#define ESP_ERR_INVALID_STATE -3\n'
-for name in ('batt_cal_read_slot', 'batt_cal_write_slot'):
+for name in ('batt_cal_read_slot', 'batt_cal_write_slot', 'batt_cal_read_reset', 'batt_cal_write_reset'):
     persist += function(name, backend) + '\n'
-persist += 'static const batt_cal_storage_t s_batt_cal_storage={.read=batt_cal_read_slot,.write=batt_cal_write_slot};\n'
+persist += 'static const batt_cal_storage_t s_batt_cal_storage={.read=batt_cal_read_slot,.write=batt_cal_write_slot,.read_reset=batt_cal_read_reset,.write_reset=batt_cal_write_reset};\n'
 for name in ('batt_save', 'batt_load', 'batt_save_current', 'device_power_get_batt_calibration',
              'device_power_set_batt_calibration', 'device_power_reset_batt_calibration', 'device_power_action'):
     persist += function(name, backend) + '\n'
 persist += r'''
 int main(void) {
     batt_cal_init(&s_batt_cal,s_soc_curve,0);
+    s_batt_display_model=batt_cal_model_id(&s_batt_cal);
     assert(batt_load()==-1 && s_batt_restore==3); // 不恢复旧曲线 / do not restore the old curve
     stored_ver=1;assert(batt_load()==-1); // 中低段重标后拒绝上一版百分比 / reject percentages from the prior curve
     stored_ver=2;assert(batt_load()==-1); // 本轮曲线不恢复版本2 / this curve rejects revision 2
@@ -307,6 +333,7 @@ int main(void) {
     stored_checkpoint.checksum=batt_cal_checksum(&stored_checkpoint,offsetof(batt_soc_checkpoint_t,checksum));
     have_checkpoint=false;assert(batt_load()==600);
     s_batt_cal.record.soc[5]-=20;assert(batt_load()==-1);
+    s_batt_display_model=batt_cal_model_id(&s_batt_cal);
     batt_save(740);assert(batt_load()==740);
     device_power_batt_calibration_status_t status;
     assert(device_power_set_batt_calibration(true)==ESP_OK);
@@ -319,14 +346,40 @@ int main(void) {
     fault=0;fail_cal_write=cal_writes+2;
     assert(device_power_reset_batt_calibration()!=ESP_OK);
     device_power_get_batt_calibration(&status);assert(status.enabled&&!status.applied&&status.save_error&&s_batt_cal.dirty);
+    assert(stored_reset==BATT_CAL_RESET_ON);
+    // 失败槽保留旧模型，且新槽在启动前损坏；重置意图仍须阻止回退。
+    // The failed slot retains the old model; even if the new slot corrupts before boot, the intent bars fallback.
+    saved_slots[s_batt_cal.slot].checksum^=1;
     fail_cal_write=0;
+    batt_cal_init(&s_batt_cal,s_soc_curve,0);assert(batt_cal_load(&s_batt_cal,&s_batt_cal_storage));
+    device_power_get_batt_calibration(&status);assert(status.enabled&&!status.applied&&status.save_error&&s_batt_cal.dirty);
+    unsigned saved=cal_writes;
+    assert(!batt_cal_save(&s_batt_cal,&s_batt_cal_storage,1,false)&&cal_writes==saved);
+    fail_reset_clear=true;
+    assert(!batt_cal_save(&s_batt_cal,&s_batt_cal_storage,BATT_CAL_SAVE_US,false));
+    assert(cal_writes==saved+2&&s_batt_cal.dirty&&s_batt_cal.save_error&&stored_reset==BATT_CAL_RESET_ON);
+    fail_reset_clear=false;
     assert(batt_cal_save(&s_batt_cal,&s_batt_cal_storage,BATT_CAL_SAVE_US,true));
-    assert(!s_batt_cal.dirty&&!s_batt_cal.save_error);
+    assert(cal_writes==saved+2&&!s_batt_cal.dirty&&!s_batt_cal.save_error&&!stored_reset);
     saved_slots[s_batt_cal.slot].checksum^=1;
     batt_cal_init(&s_batt_cal,s_soc_curve,0);assert(batt_cal_load(&s_batt_cal,&s_batt_cal_storage));
-    device_power_get_batt_calibration(&status);assert(status.enabled&&!status.applied);
-    unsigned saved=cal_writes;assert(device_power_reset_batt_calibration()==ESP_OK && cal_writes==saved+2);
-    device_power_get_batt_calibration(&status);assert(status.enabled&&!status.applied);
+    device_power_get_batt_calibration(&status);assert(status.enabled&&!status.applied&&!status.sampled_bins);
+    // 保留旧曲线的显示快照；在重置与下一次采样之间重启，不得按基线恢复旧值。
+    // Restart between a reset and the next sample; do not restore the old display under the baseline.
+    s_batt_cal.record.soc[5]-=20;
+    s_batt_display_model=batt_cal_model_id(&s_batt_cal);
+    s_snap.soc_permille=batt_cal_soc(&s_batt_cal,4000);
+    assert(s_snap.soc_permille==675);
+    saved=cal_writes;assert(device_power_reset_batt_calibration()==ESP_OK && cal_writes==saved+2);
+    assert(device_power_action(PMU_ACTION_HOST_NORMAL_RESTART,0,0)==ESP_OK);
+    batt_cal_init(&s_batt_cal,s_soc_curve,0);assert(batt_cal_load(&s_batt_cal,&s_batt_cal_storage));
+    assert(stored_checkpoint.model==s_batt_display_model && batt_load()==-1 && s_batt_restore==3);
+    fault=9;
+    batt_cal_init(&s_batt_cal,s_soc_curve,0);assert(!batt_cal_load(&s_batt_cal,&s_batt_cal_storage));
+    assert(s_batt_cal.save_error&&s_batt_cal.reset_state==BATT_CAL_RESET_UNREADABLE);
+    assert(device_power_set_batt_calibration(true)==ESP_FAIL);
+    fault=0;
+
     assert(writes && commits && closes<opens);
     puts("PASS: battery persistence, curve revision, invalid data, write failures/retries, write deduplication and restart checkpoint");
 }

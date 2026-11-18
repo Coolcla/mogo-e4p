@@ -113,6 +113,7 @@ static void adapt(batt_cal_t *s, uint32_t changed) {
 }
 
 void batt_cal_observe(batt_cal_t *s, int64_t now, int mv, int ma, bool valid, bool power) {
+    if (s->reset_state != BATT_CAL_RESET_NONE) return;
     if (valid) {
         if (!s->have_power || power != s->last_power) {
             interrupt(s);
@@ -235,13 +236,41 @@ static bool valid_record(const batt_cal_t *s, const batt_cal_record_t *r) {
 }
 
 bool batt_cal_load(batt_cal_t *s, const batt_cal_storage_t *storage) {
+    const batt_cal_reset_state_t reset = storage->read_reset(storage->ctx);
+    if (reset == BATT_CAL_RESET_UNREADABLE) {
+        s->reset_state = reset;
+        s->save_error = true;
+        return false;
+    }
     batt_cal_record_t a, b;
     const bool va = storage->read(storage->ctx, 0, &a) && valid_record(s, &a);
     const bool vb = storage->read(storage->ctx, 1, &b) && valid_record(s, &b);
+    if (va || vb) {
+        s->slot = vb && (!va || (int32_t)(b.sequence - a.sequence) > 0) ? 1 : 0;
+        s->record = s->slot ? b : a;
+    }
+    if (reset != BATT_CAL_RESET_NONE) {
+        // 槽只用来延续序号；存在重置意图时不能恢复旧模型。
+        // Use the slots only to continue the sequence; a reset intent bars restoring the old model.
+        batt_cal_reset(s, s->last_save_us);
+        s->record.enabled = reset == BATT_CAL_RESET_ON;
+        s->reset_state = reset;
+        s->save_error = true;
+        return true;
+    }
     if (!va && !vb) return false;
-    s->slot = vb && (!va || (int32_t)(b.sequence - a.sequence) > 0) ? 1 : 0;
-    s->record = s->slot ? b : a;
     s->dirty = false;
+    return true;
+}
+
+static bool save_slot(batt_cal_t *s, const batt_cal_storage_t *storage) {
+    batt_cal_record_t record = s->record;
+    ++record.sequence;
+    record.checksum = batt_cal_checksum(&record, offsetof(batt_cal_record_t, checksum));
+    const int slot = s->slot == 0 ? 1 : 0;
+    if (!storage->write(storage->ctx, (unsigned)slot, &record)) return false;
+    s->record = record;
+    s->slot = slot;
     return true;
 }
 
@@ -249,16 +278,32 @@ bool batt_cal_save(batt_cal_t *s, const batt_cal_storage_t *storage, int64_t now
     if (!s->dirty || (!force && now >= s->last_save_us && now - s->last_save_us < BATT_CAL_SAVE_US))
         return !s->save_error;
     s->last_save_us = now;
-    batt_cal_record_t record = s->record;
-    ++record.sequence;
-    record.checksum = batt_cal_checksum(&record, offsetof(batt_cal_record_t, checksum));
-    const int slot = s->slot == 0 ? 1 : 0;
-    if (!storage->write(storage->ctx, (unsigned)slot, &record)) {
-        s->save_error = true;
-        return false;
+    if (s->reset_state == BATT_CAL_RESET_NONE) {
+        if (!save_slot(s, storage)) goto fail;
+    } else {
+        if (s->reset_state == BATT_CAL_RESET_UNREADABLE) goto fail;
+        for (; s->reset_copies < 2; ++s->reset_copies)
+            if (!save_slot(s, storage)) goto fail;
+        if (!storage->write_reset(storage->ctx, BATT_CAL_RESET_NONE)) goto fail;
+        s->reset_state = BATT_CAL_RESET_NONE;
+        s->reset_copies = 0;
     }
-    s->record = record;
-    s->slot = slot;
     s->dirty = s->save_error = false;
     return true;
+fail:
+    s->save_error = true;
+    return false;
+}
+
+bool batt_cal_reset_persist(batt_cal_t *s, const batt_cal_storage_t *storage, int64_t now) {
+    if (s->reset_state == BATT_CAL_RESET_NONE || s->reset_state == BATT_CAL_RESET_UNREADABLE) {
+        const batt_cal_reset_state_t reset = s->record.enabled ? BATT_CAL_RESET_ON : BATT_CAL_RESET_OFF;
+        if (!storage->write_reset(storage->ctx, reset)) {
+            s->save_error = true;
+            return false;
+        }
+        batt_cal_reset(s, now);
+        s->reset_state = reset;
+    }
+    return batt_cal_save(s, storage, now, true);
 }

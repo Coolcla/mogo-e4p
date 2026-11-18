@@ -1138,11 +1138,11 @@ static app_redraw_t screen_offset_gesture(app_ctx_t *ctx, const ui_gesture_event
 static void batt_calibration_render(uint8_t *fb) {
     device_power_batt_calibration_status_t status;
     device_power_get_batt_calibration(&status);
-    back_header(fb, "自动电量校准");
-    setting_toggle(fb, 272, "自动电量校准", "按本机放电学习", status.enabled);
+    back_header(fb, "自动电量校准(beta)");
+    setting_toggle(fb, 272, "自动电量校准(beta)", "按本机放电学习", status.enabled);
     section(fb, 438, "学习状态");
     ui_text_box(fb, (EpdRect){48, 482, 588, 42}, 28, status.applied ? "已应用部分校准" :
-            status.sampled_bins ? "正在学习" : "等待有效样本", EPD_DRAW_ALIGN_LEFT, false);
+            !status.enabled ? "学习已停止" : status.sampled_bins ? "正在学习" : "等待有效样本", EPD_DRAW_ALIGN_LEFT, false);
     char coverage[96];
     snprintf(coverage, sizeof(coverage), "已有样本 %u / %u 个区间，可信 %u 个",
              (unsigned)status.sampled_bins, (unsigned)status.total_bins, (unsigned)status.trusted_bins);
@@ -1758,7 +1758,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     snprintf(batt_log_value,sizeof(batt_log_value),"%s",app_settings_batt_log()?"开启":"关闭");
     device_power_batt_calibration_status_t calibration;
     device_power_get_batt_calibration(&calibration);
-    const char *power_labels[]={"自动电量校准", "日志调试"};
+    const char *power_labels[]={"自动电量校准(beta)", "日志调试"};
     const char *power_values[]={calibration.enabled ? "学习中" : calibration.applied ? "已保留校准" : "关闭", batt_log_value};
     const int power_icons[]={20,20};
     setting_group(fb,SETTINGS_POWER_Y-49,"电源管理",SETTINGS_POWER_Y,

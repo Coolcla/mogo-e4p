@@ -161,8 +161,13 @@ static bool write_slot(void *ctx, unsigned slot, const batt_cal_record_t *record
     return true;
 }
 
+static batt_cal_reset_state_t read_no_reset(void *ctx) {
+    (void)ctx;
+    return BATT_CAL_RESET_NONE;
+}
+
 static void storage_and_reset(void) {
-    batt_cal_storage_t io = {.read = read_slot, .write = write_slot};
+    batt_cal_storage_t io = {.read = read_slot, .write = write_slot, .read_reset = read_no_reset};
     const int charge[4] = {10000, 20000, 40000, 41000};
     start();
     assert(!batt_cal_load(&cal, &io));

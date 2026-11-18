@@ -521,6 +521,7 @@ static bool batt_log_enabled(void){return logging;}
 static int64_t batt_log_wall(void){return 0;}
 static void batt_log_notify(void){}
 static int32_t s_batt_persisted_permille=-1;
+static uint32_t s_batt_display_model;
 static uint8_t s_batt_restore;
 static void batt_save(int32_t value){(void)value;}
 void batt_log_observe(batt_log_state_t *state,const batt_log_sample_t *sample){
@@ -672,8 +673,8 @@ static void sleep_test_log(const char *tag,const char *fmt,...){
 enum { DEVICE_POWER_BATT_LOG_LOCK=128, DEVICE_POWER_BATT_LOG_WAKE=256 };
 static unsigned log_locks, log_wakes;
 static bool calibration_locked;
-static void device_power_batt_calibration_lock(bool locked){calibration_locked=locked;}
-static void device_power_batt_log_event(int event){if(event==128){assert(calibration_locked);++log_locks;}else {assert(event==256&&!calibration_locked);++log_wakes;}}
+static void device_power_batt_calibration_lock(bool locked){assert(calibration_locked!=locked);calibration_locked=locked;}
+static void device_power_batt_log_event(int event){if(event==128){assert(calibration_locked);++log_locks;}else {assert(event==256&&calibration_locked);++log_wakes;}}
 typedef struct {int unused;} EpdiyHighlevelState;
 #define APP_LOCK_STYLE_CLOCK 5
 static bool clock_style;
@@ -743,13 +744,20 @@ static uint32_t esp_sleep_get_wakeup_causes(void){return wake_causes;}
     return code
 
 SLEEP_TEST = r"""
+static app_wake_source_t sleep_wait_as_locked(sc7a20h_handle_t acc,int64_t deadline,EpdiyHighlevelState *hl){
+    device_power_batt_calibration_lock(true);
+    const app_wake_source_t wake=light_sleep_wait_until(acc,deadline,hl);
+    assert(calibration_locked);
+    device_power_batt_calibration_lock(false);
+    return wake;
+}
 static void reset_sleep(int next){
     model_reset();now_us=1000;shared_irq=true;scenario=next;
     jobs_ready=ble_stopped=pickup_setting=true;key_pending=false;
     key_sampling=true;clock_style=false;clock_ticks=clock_refreshes=0;
     wake_causes=0;parked=no_ioe=false;
     suspend_count=resume_count=sleep_count=key_polls=cache_restores=last_wake=0;
-    log_locks=log_wakes=0;timer_us=0;
+    assert(!calibration_locked);log_locks=log_wakes=0;timer_us=0;
     nvs_fault=0;saved_size=pending_size=0;
     nvs_reads=nvs_writes=nvs_commits=nvs_closes=live_logs=saved_logs=0;
     summary[0]=0;devices[0x20].regs[1]=0xff;
@@ -875,7 +883,7 @@ int main(void){
     for(unsigned minutes=10;minutes<=60;minutes=minutes==10?30:minutes+30){
         reset_sleep(20);pickup_setting=false;
         int64_t deadline=now_us+(int64_t)minutes*60*1000000;
-        assert(light_sleep_wait_until(acc,deadline,NULL)==APP_WAKE_TIMEOUT);
+        assert(sleep_wait_as_locked(acc,deadline,NULL)==APP_WAKE_TIMEOUT);
         assert(now_us==deadline+30000+(CONFIG_APP_SLEEP_DIAGNOSTICS?70000:0));
         assert(sleep_count==minutes*30&&cache_restores==sleep_count&&last_wake==APP_WAKE_NONE);
         assert(key_sampling&&resume_count==1);
@@ -887,22 +895,22 @@ int main(void){
 #endif
     }
     reset_sleep(20);pickup_setting=false;
-    assert(light_sleep_wait_until(acc,1501000,NULL)==APP_WAKE_TIMEOUT&&timer_us==1500000);
+    assert(sleep_wait_as_locked(acc,1501000,NULL)==APP_WAKE_TIMEOUT&&timer_us==1500000);
     assert(now_us==1501000+30000+(CONFIG_APP_SLEEP_DIAGNOSTICS?70000:0));
     check_trace(1,1,0,SLEEP_TRACE_TIMEOUT);
     reset_sleep(21);pickup_setting=false;
-    assert(light_sleep_wait_until(acc,now_us+600000000,NULL)==APP_WAKE_KEY&&sleep_count==1);
+    assert(sleep_wait_as_locked(acc,now_us+600000000,NULL)==APP_WAKE_KEY&&sleep_count==1);
     check_trace(1,1,0,SLEEP_TRACE_KEY);
     // 截止同一轮真实按键/拿起优先，保留按键锁存与诊断退出类型。
     // Key/pickup events at expiry win, preserving key capture and diagnostic exit types.
     reset_sleep(21);pickup_setting=false;
-    assert(light_sleep_wait_until(acc,now_us+2000000,NULL)==APP_WAKE_KEY);
+    assert(sleep_wait_as_locked(acc,now_us+2000000,NULL)==APP_WAKE_KEY);
     check_trace(1,1,0,SLEEP_TRACE_KEY);
     reset_sleep(22);
-    assert(light_sleep_wait_until(acc,now_us+2000000,NULL)==APP_WAKE_PICKUP);
+    assert(sleep_wait_as_locked(acc,now_us+2000000,NULL)==APP_WAKE_PICKUP);
     check_trace(1,1,0,SLEEP_TRACE_PICKUP);
     reset_sleep(14);pickup_setting=false;
-    assert(light_sleep_wait_until(acc,now_us+100000,NULL)==APP_WAKE_KEY&&sleep_count==1);
+    assert(sleep_wait_as_locked(acc,now_us+100000,NULL)==APP_WAKE_KEY&&sleep_count==1);
     check_trace(1,1,0,SLEEP_TRACE_KEY);
 #if CONFIG_APP_SLEEP_DIAGNOSTICS
     assert(saved_trace().key_latched==1);
@@ -910,13 +918,13 @@ int main(void){
     puts("PASS: actual sleep/SC shared IRQ key and pickup, prelatched motion before IOE checks, short-sleep filtering, arm/config failures, bounded stuck line, BLE/jobs fallback and sleep errors");
     EpdiyHighlevelState hl={0};
     reset_sleep(23);clock_style=true;pickup_setting=false;
-    assert(light_sleep_wait_until(acc,now_us+600000000,&hl)==APP_WAKE_KEY);
+    assert(sleep_wait_as_locked(acc,now_us+600000000,&hl)==APP_WAKE_KEY);
     assert(clock_refreshes==1&&!sleep_count&&resume_count==1&&key_sampling);
     reset_sleep(24);clock_style=true;
-    assert(light_sleep_wait_until(acc,now_us+600000000,&hl)==APP_WAKE_PICKUP&&clock_refreshes==1&&!sleep_count);
+    assert(sleep_wait_as_locked(acc,now_us+600000000,&hl)==APP_WAKE_PICKUP&&clock_refreshes==1&&!sleep_count);
     reset_sleep(25);clock_style=true;pickup_setting=false;
     int64_t original_deadline=now_us+600000000;
-    assert(light_sleep_wait_until(acc,original_deadline,&hl)==APP_WAKE_TIMEOUT);
+    assert(sleep_wait_as_locked(acc,original_deadline,&hl)==APP_WAKE_TIMEOUT);
     assert(clock_refreshes==1200&&!sleep_count&&resume_count==1);
     puts("PASS: GPIO P17 capture before release, motion-only/unknown/read-error/stale wake causes, diagnostic on/off, summary accounting and NVS/replay failure boundaries");
 }

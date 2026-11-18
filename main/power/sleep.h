@@ -56,6 +56,7 @@ void app_lock_wait_key_idle(int timeout_ms);
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc);
 /// 锁屏浅睡按待机设置计时；超时保存锁屏并关机，失败回退原有无期限锁屏等待及故障恢复，不因超时解锁。
 /// Count the configured locked light sleep; expiry saves the art and powers off. Failure uses the existing untimed locked wait/recovery, never unlocking merely on timeout.
+/// 调用方持有整个校准锁，浅睡返回不代表实际解锁。/ The caller owns the calibration lock; return from light sleep is not an unlock.
 app_wake_source_t app_lock_sleep_wait(EpdiyHighlevelState *hl, sc7a20h_handle_t acc);
 app_wake_source_t app_last_wake_source(void);
 /// 软睡/关机前停用外设并落盘；成功不返回，交接失败恢复外设并返回错误。保留调用方的阅读/密码上下文。

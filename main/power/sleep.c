@@ -439,7 +439,6 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc, int64_t de
     unsigned sleep_errors = 0;
     esp_err_t last_sleep_error = ESP_OK;
     int64_t last_sleep_error_log_ms = 0;
-    device_power_batt_calibration_lock(true);
     device_power_batt_log_event(DEVICE_POWER_BATT_LOG_LOCK);
     for (;;) {
         int64_t now_us = esp_timer_get_time();
@@ -592,7 +591,6 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc, int64_t de
         }
     }
 
-    device_power_batt_calibration_lock(false);
     device_power_batt_log_event(DEVICE_POWER_BATT_LOG_WAKE);
 #if CONFIG_APP_LOCK_SLEEP_TRACE
     lock_sleep_trace_mark(LOCK_TRACE_EXIT, (int32_t)exit);
@@ -616,7 +614,10 @@ static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc, int64_t de
 }
 
 app_wake_source_t app_light_sleep_wait(sc7a20h_handle_t acc) {
-    return light_sleep_wait_until(acc, 0, NULL);
+    device_power_batt_calibration_lock(true);
+    const app_wake_source_t wake = light_sleep_wait_until(acc, 0, NULL);
+    device_power_batt_calibration_lock(false);
+    return wake;
 }
 
 bool app_shutdown_present(EpdiyHighlevelState *hl) {
@@ -765,6 +766,9 @@ void enter_lock_and_sleep(
         ESP_LOGW(TAG, "lock postponed while transfer is busy");
         return;
     }
+    // 浅睡唤醒后可能仍需 PIN 验证；校准锁由整个锁屏会话持有。
+    // Waking can still require PIN verification; keep calibration locked for the whole session.
+    device_power_batt_calibration_lock(true);
     const bool key_sampling = device_power_key_sampler_enable(false);
     const int64_t lock_t_prep = esp_timer_get_time();
     uint8_t* framebuffer = epd_hl_get_framebuffer(hl);
@@ -848,6 +852,7 @@ void enter_lock_and_sleep(
     } else {
         (void)app_lock_sleep_wait(hl, acc);
     }
+    device_power_batt_calibration_lock(false);
     pico_boot_clear_resume();
     if (system_lock) app_font_end_lock(&lock_font);
     cellular_service_resume_after_sleep();
@@ -879,6 +884,7 @@ void enter_lock_and_sleep(
 
 void app_lock_boot_gate(EpdiyHighlevelState *hl, cst836u_handle_t touch, sc7a20h_handle_t acc) {
     if (!lock_pin_enabled()) return;
+    device_power_batt_calibration_lock(true);
     // 卡挂载有界等待仅为了字体/锁屏图；没有卡仍必须验证。
     // Bound mount waiting for the face/art only; absent media still requires authentication.
     board_sd_info_t info;
@@ -900,5 +906,6 @@ void app_lock_boot_gate(EpdiyHighlevelState *hl, cst836u_handle_t touch, sc7a20h
         if (!drawn) { memset(fb, 255, (size_t)epd_width() * epd_height() / 2); (void)ui_builtin_image_draw(fb, UI_BUILTIN_IMAGE_LOCK); }
     }
     lock_screen_authenticate(hl, touch, acc, true);
+    device_power_batt_calibration_lock(false);
     app_font_end_lock(&saved);
 }

@@ -6,6 +6,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-18
 
 - 新增默认关闭的自动电量校准，按本机有效放电区间逐步学习；支持查看覆盖、关闭后保留结果和确认重置，数据仅留本机，显示平滑与充电保护保持不变。/ Add opt-in automatic battery calibration from eligible local discharge intervals, coverage status, retained results after disabling and confirmed reset; keep data local and retain display smoothing and charger protection.
+- 设置将自动电量校准标为 `(beta)` 测试版；修复关闭状态提示、PIN 解锁前写入、显示检查点归属及双槽重置中断后的恢复。/ Mark automatic battery calibration as `(beta)` in Settings; fix disabled status, writes before PIN unlock, checkpoint provenance, and recovery from an interrupted dual-slot reset.
 - 根据新一轮连续放电日志微调中低电量曲线，减少低电尾段偏高；更新电量缓存版本，首次启动按新曲线估算。/ Refine the middle/lower battery curve from another continuous discharge to reduce an overstated tail; revise saved-SOC compatibility so the first start uses the new curve.
 
 ## v1.1.4 · 2026-11-18
