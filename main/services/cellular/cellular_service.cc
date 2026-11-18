@@ -29,7 +29,7 @@ namespace {
 
 constexpr char kTag[] = "cellular_service";
 constexpr int64_t kProbeTimeoutUs = 15000000;
-constexpr int64_t kSignalPollIntervalUs = 10000000;
+constexpr int64_t kRetryIntervalUs = 10000000;
 constexpr gpio_num_t kTx = (gpio_num_t)BOARD_CELLULAR_UART_TX_GPIO;
 constexpr gpio_num_t kRx = (gpio_num_t)BOARD_CELLULAR_UART_RX_GPIO;
 constexpr gpio_num_t kMrdy = (gpio_num_t)BOARD_CELLULAR_MRDY_GPIO;
@@ -41,12 +41,12 @@ struct Service {
     std::unique_ptr<UartEthModem> modem;
     cellular_service_status_t status = {};
     bool user_enabled = false;
+    bool temporary = false;
     bool probe_active = false;
     bool stop_after_probe = false;
     bool paused = false;
     bool capability_persisted = false;
     int64_t probe_deadline_us = 0;
-    int64_t next_signal_poll_us = 0;
     int64_t retry_start_us = 0;
 };
 
@@ -60,6 +60,7 @@ void set_detail(cellular_service_status_t *status, const std::string &detail) {
 void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &detail) {
     std::lock_guard<std::mutex> lock(s_service.mutex);
     if (!s_service.modem) return;
+    const bool wanted = s_service.user_enabled || s_service.temporary;
     const bool module_replied = event != UartEthModem::UartEthModemEvent::ErrorInitFailed ||
         detail.find("Modem not detected") == std::string::npos;
     switch (event) {
@@ -69,7 +70,7 @@ void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &de
             s_service.status.state = CELLULAR_SERVICE_STARTING;
             s_service.status.ready = false;
             s_service.probe_active = false;
-            s_service.stop_after_probe = !s_service.user_enabled;
+            s_service.stop_after_probe = !wanted;
             break;
         case UartEthModem::UartEthModemEvent::Connected:
             s_service.status.capability_known = true;
@@ -77,7 +78,7 @@ void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &de
             s_service.status.state = CELLULAR_SERVICE_READY;
             s_service.status.ready = true;
             s_service.probe_active = false;
-            s_service.stop_after_probe = !s_service.user_enabled;
+            s_service.stop_after_probe = !wanted;
             break;
         case UartEthModem::UartEthModemEvent::ErrorNoSim:
         case UartEthModem::UartEthModemEvent::ErrorSimNotReady:
@@ -87,7 +88,7 @@ void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &de
                 ? CELLULAR_SERVICE_NO_SIM : CELLULAR_SERVICE_SIM_NOT_READY;
             s_service.status.ready = false;
             s_service.probe_active = false;
-            s_service.stop_after_probe = !s_service.user_enabled;
+            s_service.stop_after_probe = !wanted;
             break;
         case UartEthModem::UartEthModemEvent::ErrorRegistrationDenied:
             s_service.status.capability_known = true;
@@ -95,16 +96,23 @@ void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &de
             s_service.status.state = CELLULAR_SERVICE_NO_REGISTRATION;
             s_service.status.ready = false;
             s_service.probe_active = false;
-            s_service.stop_after_probe = !s_service.user_enabled;
+            s_service.stop_after_probe = !wanted;
             break;
         case UartEthModem::UartEthModemEvent::ErrorInitFailed:
             s_service.status.startup_failed = true;
+            if (s_service.temporary) {
+                // 保留已确认的硬件能力，失败会话由租约释放，不做后台重试。
+                // Preserve known hardware capability; the lease releases failures without background retries.
+                s_service.status.state = CELLULAR_SERVICE_ERROR;
+                s_service.status.ready = false;
+                break;
+            }
             if (detail == "移动网络检测内存不足") {
                 s_service.status.state = CELLULAR_SERVICE_ERROR;
                 s_service.status.ready = false;
                 s_service.probe_active = false;
                 s_service.stop_after_probe = true;
-                s_service.retry_start_us = esp_timer_get_time() + kSignalPollIntervalUs;
+                s_service.retry_start_us = esp_timer_get_time() + kRetryIntervalUs;
                 break;
             }
             s_service.status.capability_known = true;
@@ -116,7 +124,7 @@ void on_modem_event(UartEthModem::UartEthModemEvent event, const std::string &de
             break;
         case UartEthModem::UartEthModemEvent::Disconnected:
         default:
-            s_service.status.state = s_service.status.enabled
+            s_service.status.state = (s_service.status.enabled || s_service.temporary)
                 ? CELLULAR_SERVICE_STARTING : CELLULAR_SERVICE_STOPPED;
             s_service.status.ready = false;
             break;
@@ -158,7 +166,7 @@ struct StartupBlePause {
     ~StartupBlePause() { if (held) ble_pt_cellular_release(); }
 };
 
-esp_err_t start_modem(bool enabled, bool probing, memory_peak_token_t *admitted = nullptr) {
+esp_err_t start_modem(bool enabled, bool probing, memory_peak_token_t *admitted = nullptr, bool temporary = false) {
     std::lock_guard<std::recursive_mutex> lifecycle_lock(s_service.lifecycle);
     {
         std::lock_guard<std::mutex> lock(s_service.mutex);
@@ -198,6 +206,7 @@ esp_err_t start_modem(bool enabled, bool probing, memory_peak_token_t *admitted 
         // check; let the temporary object clean itself up before returning.
         if (s_service.modem) return ESP_OK;
         s_service.modem = std::move(modem);
+        s_service.temporary = temporary;
         s_service.status.enabled = enabled;
         s_service.status.ready = false;
         s_service.status.startup_failed = false;
@@ -217,8 +226,10 @@ esp_err_t start_modem(bool enabled, bool probing, memory_peak_token_t *admitted 
     }
     const bool stopped = raw_modem->Stop() == ESP_OK;
     std::lock_guard<std::mutex> lock(s_service.mutex);
-    if (stopped) s_service.modem.reset();
-    else pause.held = false;
+    if (stopped) {
+        s_service.modem.reset();
+        s_service.temporary = false;
+    } else pause.held = false;
     s_service.status.running = !stopped;
     s_service.status.enabled = false;
     s_service.status.ready = false;
@@ -248,7 +259,6 @@ bool stop_modem(bool preserve_status) {
         s_service.probe_active = false;
         s_service.stop_after_probe = false;
         s_service.probe_deadline_us = 0;
-        s_service.next_signal_poll_us = 0;
     }
     const bool had_modem = modem != nullptr;
     const bool stopped = !modem || modem->Stop() == ESP_OK;
@@ -263,6 +273,7 @@ bool stop_modem(bool preserve_status) {
         {
             std::lock_guard<std::mutex> lock(s_service.mutex);
             s_service.status.running = false;
+            s_service.temporary = false;
         }
         ble_pt_cellular_release();
     }
@@ -274,7 +285,7 @@ void start_background(bool enabled, bool probing) {
     if (result == ESP_OK) return;
     if (memory_peak_is_busy(result) || memory_peak_is_memory_error(result) || result == MEMORY_PEAK_CONFLICT) {
         std::lock_guard<std::mutex> lock(s_service.mutex);
-        s_service.retry_start_us = esp_timer_get_time() + kSignalPollIntervalUs;
+        s_service.retry_start_us = esp_timer_get_time() + kRetryIntervalUs;
     }
 }
 
@@ -325,6 +336,7 @@ static esp_err_t set_enabled(bool enabled, memory_peak_token_t *admitted) {
             s_service.user_enabled = true;
             s_service.stop_after_probe = false;
             if (s_service.modem) {
+                s_service.temporary = false;
                 s_service.status.enabled = true;
                 if (s_service.status.state == CELLULAR_SERVICE_STOPPED)
                     s_service.status.state = CELLULAR_SERVICE_STARTING;
@@ -355,6 +367,31 @@ static esp_err_t set_enabled(bool enabled, memory_peak_token_t *admitted) {
 
 extern "C" esp_err_t cellular_service_set_enabled(bool enabled) {
     return set_enabled(enabled, nullptr);
+}
+
+extern "C" esp_err_t cellular_service_start_temporary(void) {
+    std::lock_guard<std::recursive_mutex> lifecycle_lock(s_service.lifecycle);
+    {
+        std::lock_guard<std::mutex> lock(s_service.mutex);
+        if (s_service.paused || s_service.user_enabled || !s_service.status.capability_known)
+            return ESP_ERR_INVALID_STATE;
+        if (!s_service.status.capable) return ESP_ERR_NOT_SUPPORTED;
+        if (s_service.modem) {
+            const auto state = s_service.status.state;
+            return s_service.temporary && (state == CELLULAR_SERVICE_STARTING || state == CELLULAR_SERVICE_READY)
+                ? ESP_OK : ESP_ERR_INVALID_STATE;
+        }
+    }
+    return start_modem(false, false, nullptr, true);
+}
+
+extern "C" bool cellular_service_stop_temporary(void) {
+    std::lock_guard<std::recursive_mutex> lifecycle_lock(s_service.lifecycle);
+    {
+        std::lock_guard<std::mutex> lock(s_service.mutex);
+        if (!s_service.temporary) return true;
+    }
+    return stop_modem(false);
 }
 
 extern "C" esp_err_t cellular_service_enable_admitted(memory_peak_token_t *admitted) {
@@ -407,7 +444,6 @@ extern "C" void cellular_service_poll(bool allow_start) {
     UartEthModem *modem = nullptr;
     bool stop_pending = false;
     bool probe_timed_out = false;
-    bool sample_signal = false;
     bool record_capability = false;
     bool capability = false;
     bool retry = false, retry_enabled = false, retry_probe = false;
@@ -418,23 +454,16 @@ extern "C" void cellular_service_poll(bool allow_start) {
         probe_timed_out = s_service.probe_active && esp_timer_get_time() >= s_service.probe_deadline_us;
         const int64_t now = esp_timer_get_time();
         if (!s_service.paused && !modem && s_service.retry_start_us && now >= s_service.retry_start_us) {
-            s_service.retry_start_us = allow_start ? 0 : now + kSignalPollIntervalUs;
+            s_service.retry_start_us = allow_start ? 0 : now + kRetryIntervalUs;
             retry_probe = !s_service.status.capability_known;
             retry_enabled = s_service.user_enabled;
             retry = allow_start && (retry_probe || (retry_enabled && s_service.status.capable));
         }
-        sample_signal = modem && modem->IsInitialized() && now >= s_service.next_signal_poll_us;
-        if (sample_signal) s_service.next_signal_poll_us = now + kSignalPollIntervalUs;
         if (s_service.status.capability_known && !s_service.capability_persisted) {
             record_capability = true;
             capability = s_service.status.capable;
             s_service.capability_persisted = true;
         }
-    }
-    if (sample_signal) {
-        const int signal = modem->GetSignalStrength();
-        std::lock_guard<std::mutex> lock(s_service.mutex);
-        s_service.status.signal_strength = signal;
     }
     if (probe_timed_out) {
         ESP_LOGW(kTag, "runtime cellular probe timed out");
@@ -456,6 +485,7 @@ extern "C" void cellular_service_get_status(cellular_service_status_t *out) {
     if (!out) return;
     std::lock_guard<std::mutex> lock(s_service.mutex);
     *out = s_service.status;
+    if (s_service.modem) out->signal_strength = s_service.modem->GetSignalStrength();
 }
 
 extern "C" bool cellular_service_capable(void) {

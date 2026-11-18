@@ -1302,6 +1302,7 @@ void crash_note_log(void){}
 void app_time_service_poll(bool idle) { (void)idle; }
 void app_time_service_cancel(void) {}
 void pico_ota_auto_poll(bool idle) { (void)idle; }
+void pico_ota_auto_request_cancel(void) {}
 void pico_ota_auto_cancel(void) {}
 bool pico_ota_auto_pending(void) { return auto_update_pending; }
 void pico_ota_auto_acknowledge(void) { auto_update_pending=false; ++auto_update_acks; }

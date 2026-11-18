@@ -733,7 +733,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
 static bool no_menu_handle(app_ctx_t *ctx) {(void)ctx;return false;}
 static bool main_page_visible(app_ctx_t *ctx) {(void)ctx;return true;}
 static display_rect_t area_hint(app_ctx_t *ctx) {(void)ctx;return display_rect_from_epd(s_area);}
-static void home_before_lock(app_ctx_t *ctx){(void)ctx;mini_cancel();app_weather_cancel_join();(void)app_reading_journal_flush();}
+static void home_before_lock(app_ctx_t *ctx){(void)ctx;mini_cancel();app_weather_cancel();(void)app_reading_journal_flush();}
 static void home_exit(app_ctx_t *ctx){home_before_lock(ctx);home_library_leave();ui_weather_release();book_cover_jobs_cancel(s_cover_generation);s_cover_generation=0;}
 const app_desc_t app_dashboard={
     .title="首页 Home",.detail="继续阅读",.enter_full=false,.owns_keys=true,.menu_handle_enabled=no_menu_handle,

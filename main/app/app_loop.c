@@ -780,6 +780,7 @@ void app_loop_run(const app_loop_config_t* config) {
         app_navigation_observe_contact(err, touch.touched);
         if (ctx.now_ms - last_network_poll_ms >= 500) {
             last_network_poll_ms = ctx.now_ms;
+            app_weather_reap_cancelled();
             network_service_poll();
             TD_TIME("transfer_poll", wifi_transfer_service_poll());
             pico_ota_auto_poll(!app_weather_busy() && !touch.touched && ctx.now_ms - last_input_ms >= 10000 &&

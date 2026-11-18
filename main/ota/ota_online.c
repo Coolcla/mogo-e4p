@@ -2,7 +2,8 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  * 中文：HTTPS 分块下载、完整性校验和可取消升级任务。/ English: streamed HTTPS updates, integrity checks and cancellable workers.
- * 冻结：禁止覆盖当前槽；离页或锁屏先等待任务结束。/ Frozen: never overwrite the running slot; join before leaving or locking.
+ * 冻结：禁止覆盖当前槽；手动升级离页及锁屏仍确认任务结束。自动查清单离页只通知取消，避免弱网阻塞导航。
+ * Frozen: Never overwrite the running slot; manual OTA exit and locking still join. Automatic manifest checks cancel asynchronously on navigation to avoid blocking on weak links.
  * 用户修订：分段擦除并串行化闪存与屏幕推送，启动前检查连续内存，低内存安全失败。
  * User revision: erase incrementally and serialize flash with display output; require memory headroom and fail safely on shortage.
  */
@@ -17,9 +18,9 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "wifi_transfer.h"
+#include "memory_peak.h"
 #ifdef ESP_PLATFORM
 #include "network_service.h"
-#include "memory_peak.h"
 #include "cellular_service.h"
 #include "esp_log.h"
 #endif
@@ -48,6 +49,7 @@ static network_http_session_t s_http_session;
 #ifdef ESP_PLATFORM
 static network_lease_t s_network_lease;
 static bool s_network_lease_active;
+static network_use_t s_network_use;
 #endif
 
 // TLS and Wi-Fi need a larger contiguous internal block than the OTA task itself.
@@ -183,12 +185,12 @@ static const char *network_unavailable_notice(esp_err_t error) {
     if (network.route == NETWORK_ROUTE_CELLULAR) {
         if (!network.cellular_capability_known) return "正在检测移动网络，请稍后重试";
         if (!network.cellular_capable) return "未检测到4G模块，请选择Wi-Fi联网";
-        if (!network.cellular_enabled) return "已选择4G，请先开启移动网络";
+        if (s_network_use == NETWORK_USE_OTA && !network.cellular_enabled) return "已选择4G，请先开启移动网络";
         switch (network.cellular_state) {
             case CELLULAR_SERVICE_NO_SIM: return "未检测到SIM卡，请检查移动网络";
             case CELLULAR_SERVICE_SIM_NOT_READY: return "SIM卡未就绪，请检查移动网络";
             case CELLULAR_SERVICE_NO_REGISTRATION: return "移动网络注册失败，请检查网络设置";
-            case CELLULAR_SERVICE_ERROR: return "移动网络连接失败，请重新开启后重试";
+            case CELLULAR_SERVICE_ERROR: return "移动网络连接失败，请稍后重试";
             default: break;
         }
     } else {
@@ -207,13 +209,15 @@ static const char *network_unavailable_notice(esp_err_t error) {
     return "联网失败，请检查所选网络后重试";
 }
 #endif
+static bool ota_cancelled(void) { return atomic_load(&s_cancel); }
+
 static bool online(bool *owned) {
 #ifdef ESP_PLATFORM
     (void)owned;
     // OTA owns one route for the complete check/download, including range retries.
     // The selected route is never silently replaced by the other bearer.
     memset(&s_network_lease, 0, sizeof(s_network_lease));
-    esp_err_t error = network_service_acquire(NETWORK_USE_OTA, &s_network_lease);
+    esp_err_t error = network_service_acquire(s_network_use, &s_network_lease);
     if (error != ESP_OK) {
         ESP_LOGW("ota", "network acquire failed error=%s", esp_err_to_name(error));
         network_diagnostics_snapshot("ota", NETWORK_BEARER_NONE);
@@ -221,15 +225,16 @@ static bool online(bool *owned) {
         return false;
     }
     s_network_lease_active = true;
-    if (!network_service_wait_ready(&s_network_lease, 30000)) {
+    if (!network_service_wait_ready_cancelable(&s_network_lease, 30000, ota_cancelled)) {
+        const char *notice = network_unavailable_notice(ESP_ERR_TIMEOUT);
         network_service_release(&s_network_lease);
         s_network_lease_active = false;
-        state(PICO_UPDATE_FAILED, network_unavailable_notice(ESP_ERR_TIMEOUT));
+        state(PICO_UPDATE_FAILED, notice);
         return false;
     }
     if (time(NULL) < 1704067200) {
         uint32_t utc = 0;
-        if (network_service_sync_time_on_lease(&s_network_lease, &utc) != ESP_OK) {
+        if (network_service_sync_time_on_lease(&s_network_lease, &utc, ota_cancelled) != ESP_OK) {
             state(PICO_UPDATE_FAILED, "网络对时失败，请对时后重试");
             return false;
         }
@@ -346,7 +351,7 @@ static esp_http_client_handle_t open_http(const char *url, int *status, int64_t 
 static bool wait_network(void) {
 #ifdef ESP_PLATFORM
     if (!s_network_lease_active || atomic_load(&s_cancel)) return false;
-    return network_service_wait_ready(&s_network_lease, 30000);
+    return network_service_wait_ready_cancelable(&s_network_lease, 30000, ota_cancelled);
 #else
     int64_t deadline = esp_timer_get_time() + 30000000;
     while (!atomic_load(&s_cancel) && esp_timer_get_time() < deadline) {
@@ -555,12 +560,13 @@ failed:
     heap_caps_free(release); heap_caps_free(buffer); heap_caps_free(header);
     return false;
 }
-static void worker(void *unused) {
-    (void)unused;
+static void worker(void *arg) {
+    // 已分配任务栈，释放启动名额再申请无线。/ The stack exists; release startup admission before acquiring a radio.
+    memory_peak_finish((memory_peak_token_t)(uintptr_t)arg);
     bool owned = false;
     wifi_ps_type_t previous_ps = WIFI_PS_MIN_MODEM;
     bool restore_ps = false;
-    if (online(&owned) && !atomic_load(&s_cancel)) {
+    if (!ota_cancelled() && online(&owned) && !ota_cancelled()) {
         // 更新期间关闭无线省电；完成、取消和失败均恢复原策略。
         // Disable radio power saving for updates, then restore it on success, cancellation or failure.
         restore_ps = esp_wifi_get_ps(&previous_ps) == ESP_OK && esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
@@ -582,39 +588,74 @@ static void worker(void *unused) {
     xSemaphoreGive(s_done);
     vTaskDelete(NULL);
 }
-static esp_err_t start(bool downloading) {
-    if (!initialize()) return ESP_ERR_NO_MEM;
+static esp_err_t start(bool downloading, bool automatic) {
+    memory_peak_token_t peak = 0;
+    if (automatic) {
+        // 自动任务不驱逐文件任务或等待其他业务。/ Automatic checks neither evict file jobs nor wait for other work.
+        if (app_weather_busy() || app_time_service_busy() || pico_online_busy()) return MEMORY_PEAK_BUSY;
+        const esp_err_t admitted = memory_peak_try_begin(MEMORY_PEAK_OTA_CHECK, &peak);
+        if (admitted != ESP_OK) return admitted;
+        if (!memory_available(kOtaStartInternalFree, kOtaStartInternalBlock, 524288)) {
+            memory_peak_finish(peak);
+            return ESP_ERR_NO_MEM;
+        }
+    }
+    if (!initialize()) { memory_peak_finish(peak); return ESP_ERR_NO_MEM; }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool busy = s_status->busy;
     bool available = s_status->state == PICO_UPDATE_AVAILABLE;
     xSemaphoreGive(s_mutex);
-    if (busy || (downloading && !available)) return ESP_ERR_INVALID_STATE;
-    if (s_joinable) { xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false; }
-    if (!release_nonessential_resources()) return ESP_ERR_INVALID_STATE;
+    if (busy || (downloading && !available)) {
+        memory_peak_finish(peak);
+        return automatic ? MEMORY_PEAK_BUSY : ESP_ERR_INVALID_STATE;
+    }
+    if (s_joinable) {
+        if (xSemaphoreTake(s_done, automatic ? 0 : portMAX_DELAY) != pdTRUE) {
+            memory_peak_finish(peak);
+            return MEMORY_PEAK_BUSY;
+        }
+        s_joinable = false;
+    }
+    if (!automatic) {
+        if (!release_nonessential_resources()) return ESP_ERR_INVALID_STATE;
+        const esp_err_t admitted = memory_peak_try_begin(MEMORY_PEAK_OTA_CHECK, &peak);
+        if (admitted != ESP_OK) {
+            const char *hint = memory_peak_hint(admitted);
+            if (hint) state(PICO_UPDATE_FAILED, hint);
+            return admitted;
+        }
+    }
     if (!memory_available(kOtaStartInternalFree, kOtaStartInternalBlock, 524288)) {
-        state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试");
+        if (!automatic) state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试");
+        memory_peak_finish(peak);
         return ESP_ERR_NO_MEM;
     }
     atomic_store(&s_cancel, false);
     s_download = downloading; s_verified = NULL;
+#ifdef ESP_PLATFORM
+    s_network_use = automatic ? NETWORK_USE_OTA : NETWORK_USE_OTA_MANUAL;
+#endif
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     s_status->busy = true; s_status->received = 0;
     xSemaphoreGive(s_mutex);
     state(downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING,
           downloading ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
-    BaseType_t task_result = xTaskCreate(worker, "mogo_ota", 12288, NULL, 4, NULL);
+    BaseType_t task_result = xTaskCreate(worker, "mogo_ota", 12288, (void *)(uintptr_t)peak, 4, NULL);
     if (task_result != pdPASS) {
+        memory_peak_finish(peak);
         xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; xSemaphoreGive(s_mutex);
         state(PICO_UPDATE_FAILED, "内存不足，无法开始升级"); return ESP_ERR_NO_MEM;
     }
     s_joinable = true;
     return ESP_OK;
 }
-esp_err_t pico_online_check(void) { return start(false); }
-esp_err_t pico_online_download(void) { return start(true); }
+esp_err_t pico_online_check(void) { return start(false, false); }
+esp_err_t pico_online_check_auto(void) { return start(false, true); }
+esp_err_t pico_online_download(void) { return start(true, false); }
+void pico_online_request_cancel(void) { atomic_store(&s_cancel, true); }
 void pico_online_cancel_join(void) {
     if (s_joinable) {
-        atomic_store(&s_cancel, true);
+        pico_online_request_cancel();
         xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false;
     }
     s_verified = NULL;

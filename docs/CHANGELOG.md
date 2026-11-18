@@ -5,6 +5,9 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-18
 
+- 手动网络对时、检查更新和确认下载可按业务联网方式自动临时联网，不改无线开关；对时在后台等网络，设置页可继续操作。/ Manual time sync, update checks and confirmed downloads can connect temporarily without changing radio toggles; time sync waits for connectivity off the UI task.
+- 修复移动网络关闭时手动刷新天气无法临时启动 4G 的问题；按业务联网方式连接，结束后自动归还临时网络，不改开关设置。/ Allow manual weather refresh to start cellular temporarily when selected by the business route, then release it without changing radio settings.
+- 天气和自动检查更新按内存余量避让；离页取消不再等待弱网请求，4G 信号改在后台查询。/ Weather and automatic update checks defer on memory pressure; navigation no longer waits for cancelled network checks, and cellular signal is sampled in the background.
 - 开书和无线启动共用内存高峰准入；Wi-Fi 不再自动断开正在使用的蓝牙翻页器。/ Coordinate book-open and radio-start memory peaks; Wi-Fi no longer disconnects an active Bluetooth page-turner.
 - Wi-Fi 占用或不满足起栈内存条件时，快捷栏和设置页直接提示并拒绝开启蓝牙，不保存无效开关；快捷开启网络遇到驱动内存不足时单独提示。/ Quick controls and Settings reject Bluetooth enable with an immediate Wi-Fi or memory hint and leave the setting unchanged; network startup reports driver out-of-memory separately.
 - 将 S31 的 4G 收发数据优先放入 PSRAM，减少片内 DMA 内存占用；让天气任务与系统空闲任务共享 CPU 时间，避免慢 TLS 运算饿死空闲任务。/ Prefer PSRAM for S31 cellular payloads to reduce internal DMA memory use, and let idle tasks run during slow weather TLS operations.

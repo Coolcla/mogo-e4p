@@ -48,6 +48,9 @@ void cellular_service_poll(bool allow_start);
 /// 仅为替代承载交还无数据链路的终止会话，保留用户设置。/ Yield only a terminal data-less session, retaining preferences.
 bool cellular_service_yield_idle(void);
 esp_err_t cellular_service_set_enabled(bool enabled);
+/// 仅供持有承载控制门的临时业务会话，不改用户开关。/ Temporary bearer starts/stops under the bearer gate without changing user settings.
+esp_err_t cellular_service_start_temporary(void);
+bool cellular_service_stop_temporary(void);
 /// 成功异步启动会接管外层代次。/ Successful asynchronous startup takes the outer token.
 esp_err_t cellular_service_enable_admitted(memory_peak_token_t *admitted);
 /// Stop the modem before board_ioe_sleep without changing the user's setting.

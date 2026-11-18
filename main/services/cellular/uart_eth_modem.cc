@@ -511,25 +511,29 @@ std::string UartEthModem::GetModuleRevision() {
     return module_revision_;
 }
 
-int UartEthModem::GetSignalStrength() {
-    if (!initialized_.load()) {
-        return 99;
-    }
-    if (cell_info_.stat == 2) {
-        return 99;
-    }
+int UartEthModem::GetSignalStrength() const {
+    return initialized_.load() && network_event_.load() == UartEthModemEvent::Connected
+        ? signal_strength_.load() : 99;
+}
 
-    std::string resp;
-    if (SendAt("AT+CSQ", resp, 500) == ESP_OK) {
-        // Parse +CSQ: rssi,ber
-        auto pos = resp.find("+CSQ:");
-        if (pos != std::string::npos) {
-            int rssi = 99;
-            sscanf(resp.c_str() + pos, "+CSQ: %d", &rssi);
-            signal_strength_ = rssi;
+void UartEthModem::PollSignalUntilStop() {
+    // 复用初始化任务，避免每次采样创建栈，也不占用 RX/TX 任务或承载控制门。
+    // Reuse the init task: no per-sample stack and no blocking the RX/TX tasks or bearer gate.
+    while (!stop_flag_.load()) {
+        if (initialized_.load() && network_event_.load() == UartEthModemEvent::Connected) {
+            std::string response;
+            if (SendAt("AT+CSQ", response, 500) == ESP_OK) {
+                const auto offset = response.find("+CSQ:");
+                int rssi = 99;
+                if (offset != std::string::npos && sscanf(response.c_str() + offset, "+CSQ: %d", &rssi) == 1 &&
+                    ((rssi >= 0 && rssi <= 31) || rssi == 99)) signal_strength_.store(rssi);
+            }
+        } else {
+            signal_strength_.store(99);
         }
+        if (stop_flag_.load() || (xEventGroupWaitBits(event_group_, kEventStop, pdFALSE, pdFALSE,
+                pdMS_TO_TICKS(10000)) & kEventStop)) break;
     }
-    return signal_strength_;
 }
 
 UartEthModem::CellInfo UartEthModem::GetCellInfo() {
@@ -1329,11 +1333,14 @@ void UartEthModem::InitTaskRun() {
     }
 
 exit:
-    ESP_LOGD(kTag, "Init task exiting");
     // 只有已完成且未被取消的初始化可自行归还；失败由 Stop 汇合并清理后归还。
     // Only completed, uncancelled initialization can release here; Stop joins and cleans up failures.
     const bool committed = result == ESP_OK && init_can_commit_.exchange(false);
-    if (committed) memory_peak_finish(init_peak_.exchange(0));
+    if (committed) {
+        memory_peak_finish(init_peak_.exchange(0));
+        if (handshake_done_.load()) PollSignalUntilStop();
+    }
+    ESP_LOGD(kTag, "Init task exiting");
     xEventGroupSetBits(event_group_, kEventInitTaskDone);
 }
 

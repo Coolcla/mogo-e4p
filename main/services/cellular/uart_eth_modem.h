@@ -189,7 +189,7 @@ public:
     std::string GetIccid();
     std::string GetCarrierName();
     std::string GetModuleRevision();
-    int GetSignalStrength();  // CSQ value (0-31, 99=unknown)
+    int GetSignalStrength() const;  // 缓存 CSQ / Cached CSQ (0-31, 99=unknown)
     CellInfo GetCellInfo();
     /**
      * @brief Get network event name for logging
@@ -280,6 +280,7 @@ private:
     // Task implementation (single task with UHCI DMA)
     void MainTaskRun();
     void InitTaskRun();
+    void PollSignalUntilStop();
     void TxTaskRun();  // Dedicated TX task for non-blocking transmit
 
     // Event handling
@@ -400,7 +401,7 @@ private:
     std::string imsi_;
     std::string carrier_name_;
     std::string module_revision_;
-    int signal_strength_ = 99;
+    std::atomic<int> signal_strength_{99};
     CellInfo cell_info_;
     uint8_t mac_addr_[6] = {0};
 

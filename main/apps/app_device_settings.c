@@ -233,7 +233,7 @@ static app_redraw_t pin_setup_tick(app_ctx_t *ctx) {
 static int s_style_scroll, s_main_scroll;
 static bool s_scroll_drag_consumed, s_scroll_present_pending;
 static int s_font_page, s_wallpaper_page;
-static bool s_sync_pending;
+static bool s_sync_pending, s_sync_waiting;
 static bool s_font_sync_confirm;
 static char s_font_sync_path[TTF_FONT_PATH_MAX];
 static bool s_config_confirm;
@@ -1529,7 +1529,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         time_auto_hint(line, sizeof(line));
         ui_text(fb, 54, TIME_HINT_LINE_Y, 21, line, EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 54, TIME_ADVICE_LINE_Y, 21, "长时间离线可能产生误差，建议定期重新对时。", EPD_DRAW_ALIGN_LEFT, false);
-        if (s_notice[0]) ui_text(fb, 54, TIME_NOTICE_LINE_Y, 22, s_notice, EPD_DRAW_ALIGN_LEFT, false);
+        if (s_sync_pending || s_sync_waiting || s_notice[0])
+            ui_text(fb, 54, TIME_NOTICE_LINE_Y, 22, s_sync_pending || s_sync_waiting ? "正在获取网络时间…" : s_notice,
+                    EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -2021,14 +2023,30 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         if (redraw == APP_REDRAW_AREA) draw_upgrade_progress_delta(ctx->fb);
         return redraw;
     }
-    if (!s_sync_pending) return APP_REDRAW_NONE;
-    s_sync_pending = false;
-    app_time_sync_result_t result = app_time_service_sync_manual();
+    if (s_page != SETTINGS_TIME) {
+        s_sync_pending = false;
+        return APP_REDRAW_NONE;
+    }
+    app_time_sync_result_t result = {0};
+    if (s_sync_pending) {
+        s_sync_pending = false;
+        result.error = pico_online_busy() ? MEMORY_PEAK_BUSY : app_time_service_start_manual();
+        if (result.error == ESP_OK) {
+            s_sync_waiting = true;
+            return APP_REDRAW_NONE;
+        }
+    } else if (!s_sync_waiting || !app_time_service_take_manual_result(&result)) {
+        return APP_REDRAW_NONE;
+    }
+    s_sync_waiting = false;
     esp_err_t err = result.error;
     bool network_time_received = result.network_time_received;
+    const char *hint = memory_peak_hint(err);
     const char *notice = err == ESP_OK ? "网络对时完成，内部时钟已接管" :
         network_time_received ? "已获取网络时间，内部时钟写入失败" :
-        err == ESP_ERR_NOT_FOUND ? "请先启用可用的网络方式" :
+        hint ? hint :
+        err == ESP_ERR_NO_MEM ? "内存不足，请稍后重试" :
+        err == ESP_ERR_NOT_FOUND ? "所选网络不可用，请检查网络设置" :
         err == ESP_ERR_INVALID_STATE ? "网络尚未连接，请稍后再试" :
         err == ESP_ERR_TIMEOUT ? "网络对时超时，请检查网络后重试" :
         "网络对时失败，请检查网络后重试";
@@ -2539,11 +2557,14 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             return APP_REDRAW_PAGE;
         }
         if (y >= TIME_ROW_WIFI_Y && y < TIME_ROW_WIFI_Y + TIME_ROW_HIT_H) {
+            if (s_sync_pending || s_sync_waiting) return APP_REDRAW_NONE;
             s_notice[0] = 0; s_sync_pending = true;
-            snprintf(s_notice, sizeof(s_notice), "正在获取网络时间…");
             return APP_REDRAW_PAGE;
         }
-        if (y >= TIME_ROW_MANUAL_Y && y < TIME_ROW_MANUAL_Y + TIME_ROW_HIT_H) { time_open(); return APP_REDRAW_PAGE; }
+        if (y >= TIME_ROW_MANUAL_Y && y < TIME_ROW_MANUAL_Y + TIME_ROW_HIT_H) {
+            if (s_sync_pending || s_sync_waiting) return APP_REDRAW_NONE;
+            time_open(); return APP_REDRAW_PAGE;
+        }
         return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_POWER_SLEEP) {

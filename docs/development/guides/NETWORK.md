@@ -12,6 +12,10 @@ S31 的 Wi-Fi 管理帧和 NT26 DMA 共用片内 RAM。产品配置沿用原厂�
 
 日期对时、天气和联网 OTA 通过 `network_service` 租约使用选定承载。租约存续期间快捷栏不能关闭对应无线；本地传书仍只使用 Wi-Fi。进入浅睡、锁屏或关机前先停止移动模块，唤醒后按用户开关恢复，避免 P14 共享电源轨在模组任务仍运行时被板级睡眠流程切断。
 
+主动刷新天气、点击「通过网络对时」或手动检查和确认下载更新，可按业务联网方式临时连接已保存的 Wi-Fi，或在确认有模组时临时启动关闭的 4G；后台任务不因此获得启动已关闭 4G 的权限。临时会话共用承载、内存及蓝牙准入，不改开关或路由设置；最后一个租约归还后关闭，取消和失败也走相同回收路径。/ Explicit forecast refresh, manual network time sync, manual update checks and confirmed downloads may connect to saved Wi-Fi or start switched-off cellular with a confirmed modem, using the configured route. Background work does not gain permission to start switched-off cellular. Temporary sessions share bearer, memory and Bluetooth admission, preserve switch and route settings, and stop after the last lease, including on cancellation or failure.
+
+手动对时在后台等待无线就绪和 SNTP，设置页仅显示状态并在 UI 任务写入、回读内部时钟；只有完整交接成功才更新「上次对时」。/ Manual time sync waits for connectivity and SNTP in a worker. Settings shows the result and the UI task writes and reads back the internal clock; only successful handoff updates the last-sync record.
+
 已有 STA 正在连接时，业务借用该会话并等待取得 IP，不提前拒绝，也不重启或在结束时关闭用户开启的 Wi-Fi。上次失败的 STA 只有在纯联网、没有其他 Wi-Fi 租约且允许停止时才能重建；热点、文件服务及忙碌会话不自动重启。租约准入与手动无线切换共用控制门，防止恢复过程与新租约交错。自动模式仍按优先级回退，强制路由不跨承载；回退承载不存在时保留原始启动错误。
 Business requests borrow an already-connecting STA and wait for IP without rejecting, restarting or later stopping user-enabled Wi-Fi. Rebuild a failed STA only when it is network-only, has no other Wi-Fi leases and can stop safely; never automatically restart AP, file-server or busy sessions. Admission and manual radio changes share a control gate. Auto retains its fallback policy, forced routes never cross bearers, and an absent fallback does not hide the original startup error.
 
@@ -21,8 +25,8 @@ Leases, manual changes, background NT26 probe/retry and wake share one bearer ga
 传书页面只负责自己启动的会话。离页和拔卡不会关闭仅被观察、并非本页拥有的 STA；若其他业务正借用本页的 STA，则仅关闭文件服务，保留联网直到最后一个租约归还。拔卡禁止旧根上的新文件操作，随后退场文件服务，不切换进行中请求的存储根。
 The transfer page owns only the session it started. Page exit and media loss leave STA observed by, but not owned by, the page untouched. If another service borrows a page-owned STA, close only HTTP and retain connectivity until the last lease returns. Media loss rejects new operations on the old root and closes the file server without redirecting in-flight requests to a different root.
 
-联网 OTA 的准入失败提示区分未配网、热点占用、网络切换或忙碌、启动内存不足，以及强制 4G 下的模块检测、未开启、SIM 未就绪和注册失败；同时记录启动错误码和网络诊断。提示仅说明当前软件状态，不代替实际网络、SIM 或射频排查。
-OTA admission failures distinguish missing Wi-Fi configuration, AP use, busy/switching radios, startup memory shortage and forced-cellular hardware, enable, SIM and registration states, recording the startup error and network diagnostics. These notices describe software state, not a confirmed network, SIM or radio root cause.
+联网 OTA 的准入失败提示区分未配网、热点占用、网络切换或忙碌、启动内存不足，以及强制 4G 下的模块检测、SIM 未就绪和注册失败；手动检查不以开关关闭为由要求用户先开启 4G。不自动下载或安装发现的版本。提示仅说明当前软件状态，不代替实际网络、SIM 或射频排查。
+OTA admission failures distinguish missing Wi-Fi configuration, AP use, busy/switching radios, startup memory shortage and forced-cellular hardware, SIM and registration states. Manual checks do not ask users to turn on 4G just because its switch is off. Finding an update does not automatically download or install it. Notices describe software state, not a confirmed network, SIM or radio root cause.
 
 租约等待取得 IP 后，须成功将该接口设为默认网卡才允许开始 DNS、TCP 或 TLS。无可用承载时不强行切到 Wi-Fi；自动模式回退后，首选无线恢复也不抢占正在使用的租约。产品启用 `CONFIG_ESP_NETIF_SET_DNS_PER_DEFAULT_NETIF`，分别保存各接口的 DHCP DNS，并随默认网卡切换解析服务器；已有本地 `sdkconfig` 须同步该选项。
 
@@ -45,6 +49,8 @@ NT26 UART TX writes the FIFO on the CPU, so queued TX frames and reassembly pref
 AT 查询的数据与最终 `OK` 允许分帧返回；响应缓冲受独立互斥保护并限制大小，保留 `ECSIMCFG`、`CPIN`、`CEREG` 等查询的前置数据，避免只拿到最后一帧 `OK` 而误判卡槽或注册状态。
 
 每次启动后，SIM 就绪检测最多等待 10 秒，期间的无卡、卡忙及查询失败允许重试，不因第一次失败立即判定无卡。只有最后一次查询明确返回无卡才显示“未检测到 SIM 卡”；PIN/PUK、其他锁定、卡忙、读取故障及查询失败分别提示，保留 AT 通道。不自动提交 PIN/PUK，也不自动重启设备。关闭开关或休眠取消初始化时不报告注册超时。
+
+已连接的 NT26 复用初始化任务在后台查询信号，界面和承载轮询只读取缓存；重试与停止仍由原有生命周期管理。/ A connected NT26 reuses its init task for background signal queries; UI and bearer polling use the cache, with retries and stop still owned by the existing lifecycle.
 
 NT26 驱动在注册 SRDY 引脚中断前安装共享 GPIO 中断服务，兼容加速度计先启动的情况；停止模组时只移除自己的引脚处理器。产品日志使用 USB Serial/JTAG 控制台，GPIO58/59 专用于 NT26，避免默认 UART0 控制台占用同一组引脚。已有本地 `sdkconfig` 在更新默认配置后也须同步这两项控制台选择。
 

@@ -836,7 +836,7 @@ static esp_err_t sync_time_online_impl(uint32_t *utc_seconds) {
     return time_sync_ntp(utc_seconds);
 }
 
-static esp_err_t sync_time_run(uint32_t *utc_seconds, bool online_only, bool automatic) {
+static esp_err_t sync_time_run(uint32_t *utc_seconds, bool online_only, bool automatic, bool publish_result) {
     if (!utc_seconds) return ESP_ERR_INVALID_ARG;
     *utc_seconds = 0;
     // 手动操作优先于自动任务；配置和对时的准入在同一个锁下，防止双初始化。
@@ -857,19 +857,24 @@ static esp_err_t sync_time_run(uint32_t *utc_seconds, bool online_only, bool aut
     if (!available) return ESP_ERR_INVALID_STATE;
     esp_err_t err = online_only ? sync_time_online_impl(utc_seconds) : sync_time_impl(utc_seconds);
     portENTER_CRITICAL(&s_lock);
-    if (err == ESP_OK) s_time_pending_utc = *utc_seconds;
+    if (err == ESP_OK && publish_result) s_time_pending_utc = *utc_seconds;
     s_time_active = s_time_automatic = s_config_busy = false;
     portEXIT_CRITICAL(&s_lock);
     return err;
 }
 esp_err_t wifi_transfer_sync_time(uint32_t *utc_seconds) {
-    return sync_time_run(utc_seconds, false, false);
+    return sync_time_run(utc_seconds, false, false, true);
 }
 esp_err_t wifi_transfer_sync_time_online(uint32_t *utc_seconds) {
-    return sync_time_run(utc_seconds, true, false);
+    return sync_time_run(utc_seconds, true, false, true);
+}
+esp_err_t wifi_transfer_sync_time_online_manual(uint32_t *utc_seconds) {
+    // 由上层租约保护，仍可取消；手动交接自行写入并回读 PMU，不另外发布自动事件。
+    // Protected by the caller's lease but cancellable; the manual PMU handoff consumes the result directly.
+    return sync_time_run(utc_seconds, true, true, false);
 }
 esp_err_t wifi_transfer_sync_time_auto(uint32_t *utc_seconds) {
-    return sync_time_run(utc_seconds, false, true);
+    return sync_time_run(utc_seconds, false, true, true);
 }
 /// 取消在途后台对时；仅自动任务可被打断，返回是否已无活动任务。
 /// Cancel an in-flight background sync; only an automatic run may be interrupted. True when idle.

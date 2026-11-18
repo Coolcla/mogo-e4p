@@ -49,8 +49,9 @@ bool pmu_battery_charging(const pmu_snapshot_t *);
 #include \"wifi_transfer.h\"
 extern bool weather_test_cellular;
 extern unsigned weather_regular_acquires;
+extern network_use_t weather_last_use;
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
-    (void)use;
+    weather_last_use = use;
     ++weather_regular_acquires;
     if (!lease) return ESP_ERR_INVALID_ARG;
     *lease = (network_lease_t){0};
@@ -70,12 +71,14 @@ esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     if (wifi_transfer_start(&cfg) != ESP_OK) return ESP_ERR_NOT_FOUND;
     lease->bearer = NETWORK_BEARER_WIFI; lease->owns_wifi = true; lease->active = true; return ESP_OK;
 }
-bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
+extern void vTaskDelay(unsigned ms);
+bool network_service_wait_ready_cancelable(network_lease_t *lease, uint32_t timeout_ms, bool (*cancelled)(void)) {
     (void)timeout_ms;
-    if (!lease || !lease->active) return false;
+    if (!lease || !lease->active || cancelled()) return false;
     wifi_transfer_status_t status = {0}; wifi_transfer_get_status(&status);
-    return lease->bearer == NETWORK_BEARER_CELLULAR ||
-        (lease->bearer == NETWORK_BEARER_WIFI && status.network_ready);
+    if (lease->bearer == NETWORK_BEARER_CELLULAR || status.network_ready) return true;
+    vTaskDelay(100);
+    return false;
 }
 void network_service_release(network_lease_t *lease) {
     if (!lease || !lease->active) return;

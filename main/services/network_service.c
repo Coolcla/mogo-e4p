@@ -26,13 +26,13 @@
 
 static _Atomic network_route_t s_route = NETWORK_ROUTE_AUTO;
 static _Atomic network_auto_priority_t s_priority = NETWORK_AUTO_WIFI_FIRST;
-static atomic_bool s_time_cancel;
 static atomic_uint s_cellular_time_pending;
 static atomic_bool s_time_active;
 static atomic_uint s_wifi_leases;
 static atomic_uint s_cellular_leases;
 static atomic_bool s_cellular_control;
 static atomic_bool s_wifi_owned_by_business;
+static bool s_cellular_owned_by_business; // 受承载控制门保护。/ Protected by the bearer gate.
 static atomic_bool s_resume_pending;
 static int64_t s_resume_retry_at;
 static bool s_radios_paused;
@@ -46,12 +46,8 @@ static struct {
     int64_t retry_at;
 } s_switch;
 
-static bool time_cancelled(void) {
-    return atomic_load(&s_time_cancel);
-}
-
-static esp_err_t sync_time_cellular(uint32_t *utc_seconds) {
-    if (!utc_seconds || time_cancelled()) return ESP_ERR_INVALID_STATE;
+static esp_err_t sync_time_cellular(uint32_t *utc_seconds, bool (*cancelled)(void)) {
+    if (!utc_seconds || (cancelled && cancelled())) return ESP_ERR_INVALID_STATE;
     *utc_seconds = 0;
     esp_sntp_config_t config = ESP_NETIF_SNTP_DEFAULT_CONFIG_MULTIPLE(3,
         ESP_SNTP_SERVER_LIST("203.107.6.88", "162.159.200.123", "ntp.aliyun.com"));
@@ -59,10 +55,10 @@ static esp_err_t sync_time_cellular(uint32_t *utc_seconds) {
     if (err != ESP_OK) return err;
     const int64_t deadline = esp_timer_get_time() + 20000000;
     do {
-        if (time_cancelled()) { err = ESP_ERR_INVALID_STATE; break; }
+        if (cancelled && cancelled()) { err = ESP_ERR_INVALID_STATE; break; }
         err = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(100));
     } while (err == ESP_ERR_TIMEOUT && esp_timer_get_time() < deadline);
-    if (err == ESP_OK && time_cancelled()) err = ESP_ERR_INVALID_STATE;
+    if (err == ESP_OK && cancelled && cancelled()) err = ESP_ERR_INVALID_STATE;
     if (err == ESP_OK) {
         time_t now = time(NULL);
         if (now >= 1704067200 && now <= 4102444799U) {
@@ -75,16 +71,27 @@ static esp_err_t sync_time_cellular(uint32_t *utc_seconds) {
     return err;
 }
 
-esp_err_t network_service_sync_time_on_lease(network_lease_t *lease, uint32_t *utc_seconds) {
+static esp_err_t sync_time_on_lease(network_lease_t *lease, uint32_t *utc_seconds, bool (*cancelled)(void)) {
     if (!lease || !lease->active || !utc_seconds) return ESP_ERR_INVALID_ARG;
     *utc_seconds = 0;
-    if (time_cancelled()) return ESP_ERR_INVALID_STATE;
-    if (!network_service_wait_ready(lease, 30000)) return ESP_ERR_TIMEOUT;
-    if (lease->bearer == NETWORK_BEARER_WIFI)
+    if (cancelled && cancelled()) return ESP_ERR_INVALID_STATE;
+    if (!network_service_wait_ready_cancelable(lease, 30000, cancelled))
+        return cancelled && cancelled() ? ESP_ERR_INVALID_STATE : ESP_ERR_TIMEOUT;
+    if (lease->bearer == NETWORK_BEARER_WIFI) {
+        if (lease->use == NETWORK_USE_TIME_MANUAL) return wifi_transfer_sync_time_online_manual(utc_seconds);
         return wifi_transfer_sync_time_online(utc_seconds);
+    }
     if (lease->bearer == NETWORK_BEARER_CELLULAR)
-        return sync_time_cellular(utc_seconds);
+        return sync_time_cellular(utc_seconds, cancelled);
     return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t network_service_sync_time_on_lease(network_lease_t *lease, uint32_t *utc_seconds, bool (*cancelled)(void)) {
+    bool expected = false;
+    if (!atomic_compare_exchange_strong(&s_time_active, &expected, true)) return ESP_ERR_INVALID_STATE;
+    const esp_err_t err = sync_time_on_lease(lease, utc_seconds, cancelled);
+    atomic_store(&s_time_active, false);
+    return err;
 }
 
 static network_bearer_t resolve_ready_bearer(const network_status_t *status) {
@@ -146,7 +153,7 @@ static bool select_bearer_netif(network_bearer_t bearer) {
     return netif && esp_netif_set_default_netif((esp_netif_t *)netif) == ESP_OK;
 }
 
-static esp_err_t acquire_bearer(network_bearer_t bearer, network_lease_t *lease) {
+static esp_err_t acquire_bearer(network_bearer_t bearer, network_use_t use, network_lease_t *lease) {
     if (!lease) return ESP_ERR_INVALID_ARG;
     *lease = (network_lease_t){0};
     bool idle = false;
@@ -183,24 +190,34 @@ static esp_err_t acquire_bearer(network_bearer_t bearer, network_lease_t *lease)
     } else if (bearer == NETWORK_BEARER_CELLULAR) {
         wifi_transfer_status_t wifi;
         wifi_transfer_get_status(&wifi);
+        const bool temporary = network_use_allows_temporary_cellular(use) &&
+            status.cellular_capability_known && status.cellular_capable && !status.cellular_enabled;
         if (atomic_load(&s_wifi_leases)) {
             error = ESP_ERR_INVALID_STATE;
-        } else if (status.cellular_ready || cellular_can_start_for_lease(&status)) {
+        } else if (status.cellular_ready || cellular_can_start_for_lease(&status) || temporary) {
             // AUTO 只清理已失败的纯联网 STA，不拆热点、传书或仍在关联的 Wi-Fi。
             // AUTO cleans up a failed network-only STA, not AP, transfers or an active association.
             const bool can_yield = status.route == NETWORK_ROUTE_AUTO && wifi.network_only &&
                 !wifi.network_ready && wifi.state == WIFI_TRANSFER_ERROR;
             error = status.cellular_ready ? ESP_OK : ble_pt_network_check();
             if (error == ESP_OK) {
-                if (!wifi.owns_radio || (can_yield && wifi_transfer_try_stop_if_idle()))
-                    error = status.cellular_ready ? ESP_OK : cellular_service_set_enabled(true);
-                else
+                if (wifi.owns_radio && (!can_yield || !wifi_transfer_try_stop_if_idle())) {
                     error = ESP_ERR_INVALID_STATE;
+                } else if (!status.cellular_ready && temporary) {
+                    error = cellular_service_start_temporary();
+                    if (error == ESP_OK) {
+                        lease->owns_cellular = !s_cellular_owned_by_business;
+                        s_cellular_owned_by_business = true;
+                    }
+                } else if (!status.cellular_ready) {
+                    error = cellular_service_set_enabled(true);
+                }
             }
         }
     }
     if (error == ESP_OK) {
         lease->bearer = bearer;
+        lease->use = use;
         lease->active = true;
     }
     if (lease->active && lease->bearer == NETWORK_BEARER_WIFI) {
@@ -220,13 +237,13 @@ void network_service_init(void) {
     s_priority = (network_auto_priority_t)app_settings_network_auto_priority();
     if (!network_route_valid(s_route)) s_route = NETWORK_ROUTE_AUTO;
     if (!network_auto_priority_valid(s_priority)) s_priority = NETWORK_AUTO_WIFI_FIRST;
-    atomic_store(&s_time_cancel, false);
     atomic_store(&s_cellular_time_pending, 0);
     atomic_store(&s_time_active, false);
     atomic_store(&s_wifi_leases, 0);
     atomic_store(&s_cellular_leases, 0);
     atomic_store(&s_cellular_control, false);
     atomic_store(&s_wifi_owned_by_business, false);
+    s_cellular_owned_by_business = false;
     s_switch.target = NETWORK_BEARER_NONE;
     atomic_store(&s_resume_pending, false);
     atomic_store(&s_drop_wifi_session, 0);
@@ -242,6 +259,11 @@ static void stop_unused_business_wifi(void) {
     if (!atomic_load(&s_wifi_leases) && atomic_load(&s_wifi_owned_by_business) && wifi_transfer_try_stop_if_idle())
         atomic_store(&s_wifi_owned_by_business, false);
     atomic_store(&s_cellular_control, false);
+}
+
+static void stop_unused_business_cellular_under_gate(void) {
+    if (s_cellular_owned_by_business && !atomic_load(&s_cellular_leases) && cellular_service_stop_temporary())
+        s_cellular_owned_by_business = false;
 }
 
 // 调用者持有承载控制门。先清理失败目标，再申请恢复用的高峰名额。
@@ -345,6 +367,7 @@ void network_service_poll(void) {
     stop_unused_business_wifi();
     bool idle = false;
     if (!atomic_compare_exchange_strong(&s_cellular_control, &idle, true)) return;
+    stop_unused_business_cellular_under_gate();
     resume_under_gate();
     if (s_radios_paused) {
         atomic_store(&s_cellular_control, false);
@@ -621,7 +644,6 @@ network_route_t network_service_route(void) { return s_route; }
 network_auto_priority_t network_service_auto_priority(void) { return s_priority; }
 
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
-    (void)use;
     if (!lease) return ESP_ERR_INVALID_ARG;
     *lease = (network_lease_t){0};
     network_status_t status;
@@ -632,21 +654,28 @@ esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
             (status.route == NETWORK_ROUTE_AUTO && status.auto_priority == NETWORK_AUTO_CELLULAR_FIRST)
             ? NETWORK_BEARER_CELLULAR : NETWORK_BEARER_WIFI;
     }
-    esp_err_t err = acquire_bearer(first, lease);
+    esp_err_t err = acquire_bearer(first, use, lease);
     if (err == ESP_OK || status.route != NETWORK_ROUTE_AUTO) return err;
     esp_err_t fallback_error = acquire_bearer(first == NETWORK_BEARER_WIFI
-        ? NETWORK_BEARER_CELLULAR : NETWORK_BEARER_WIFI, lease);
+        ? NETWORK_BEARER_CELLULAR : NETWORK_BEARER_WIFI, use, lease);
     // 回退承载不存在时保留首选承载的真实启动错误。/ Keep the first startup error if the fallback is absent.
     return fallback_error == ESP_ERR_NOT_FOUND ? err : fallback_error;
 }
 
 bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
+    return network_service_wait_ready_cancelable(lease, timeout_ms, NULL);
+}
+
+bool network_service_wait_ready_cancelable(network_lease_t *lease, uint32_t timeout_ms,
+                                           bool (*cancelled)(void)) {
     if (!lease || !lease->active) return false;
     const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     for (unsigned attempt = 0; attempt < 2 && lease->active; ++attempt) {
         bool failed = false;
         while (esp_timer_get_time() < deadline) {
+            if (cancelled && cancelled()) return false;
             network_service_poll();
+            if (cancelled && cancelled()) return false;
             network_status_t status;
             network_service_get_status(&status);
             if ((lease->bearer == NETWORK_BEARER_WIFI && status.wifi_ready) ||
@@ -676,12 +705,14 @@ bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
         if (!failed && esp_timer_get_time() >= deadline) break;
         // AUTO may use the other bearer after a terminal registration or
         // connection error. Forced routes intentionally fail closed.
-        if (s_route != NETWORK_ROUTE_AUTO || attempt != 0) break;
+        if (s_route != NETWORK_ROUTE_AUTO || attempt != 0 || (cancelled && cancelled())) break;
         const network_bearer_t fallback = lease->bearer == NETWORK_BEARER_WIFI
             ? NETWORK_BEARER_CELLULAR : NETWORK_BEARER_WIFI;
+        const network_use_t use = lease->use;
         network_service_release(lease);
+        if (cancelled && cancelled()) break;
         network_lease_t replacement;
-        if (acquire_bearer(fallback, &replacement) != ESP_OK) break;
+        if (acquire_bearer(fallback, use, &replacement) != ESP_OK) break;
         *lease = replacement;
     }
     return false;
@@ -690,37 +721,44 @@ bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
 void network_service_release(network_lease_t *lease) {
     if (!lease || !lease->active) return;
     const network_bearer_t bearer = lease->bearer;
-    if (bearer == NETWORK_BEARER_WIFI) atomic_fetch_sub(&s_wifi_leases, 1);
-    else if (bearer == NETWORK_BEARER_CELLULAR) atomic_fetch_sub(&s_cellular_leases, 1);
     *lease = (network_lease_t){0};
-    // 释放 4G 租约只归还计数；待清理的 Wi-Fi 仍由其租约或 poll 处理。
-    // Return only the 4G lease count; Wi-Fi release or poll still handles any Wi-Fi cleanup.
-    if (bearer == NETWORK_BEARER_WIFI) stop_unused_business_wifi();
+    if (bearer == NETWORK_BEARER_WIFI) {
+        atomic_fetch_sub(&s_wifi_leases, 1);
+        stop_unused_business_wifi();
+    } else if (bearer == NETWORK_BEARER_CELLULAR) {
+        // 优先在业务线程持门归还并回收，避免 UI 轮询先接手驱动停止。
+        // Return and clean up under the gate in the worker when possible, rather than on a UI poll.
+        bool idle = false;
+        const bool owns_gate = atomic_compare_exchange_strong(&s_cellular_control, &idle, true);
+        const bool last = atomic_fetch_sub(&s_cellular_leases, 1) == 1;
+        if (owns_gate) {
+            if (last) stop_unused_business_cellular_under_gate();
+            atomic_store(&s_cellular_control, false);
+        }
+    }
 }
 
-esp_err_t network_service_sync_time(uint32_t *utc_seconds, bool automatic) {
+esp_err_t network_service_sync_time(uint32_t *utc_seconds, bool automatic, bool (*cancelled)(void)) {
     if (!utc_seconds) return ESP_ERR_INVALID_ARG;
     *utc_seconds = 0;
-    if (!automatic) network_service_cancel_time_sync();
     bool expected = false;
     if (!atomic_compare_exchange_strong(&s_time_active, &expected, true)) return ESP_ERR_INVALID_STATE;
-    atomic_store(&s_time_cancel, false);
-    network_lease_t lease;
-    esp_err_t err = network_service_acquire(NETWORK_USE_TIME, &lease);
-    if (err != ESP_OK) {
-        atomic_store(&s_time_active, false);
-        return err;
+    network_lease_t lease = {0};
+    esp_err_t err = ESP_ERR_INVALID_STATE;
+    if (!cancelled || !cancelled()) {
+        err = network_service_acquire(automatic ? NETWORK_USE_TIME : NETWORK_USE_TIME_MANUAL, &lease);
+        if (err == ESP_OK) {
+            err = sync_time_on_lease(&lease, utc_seconds, cancelled);
+            if (err == ESP_OK && automatic && lease.bearer == NETWORK_BEARER_CELLULAR)
+                atomic_store(&s_cellular_time_pending, *utc_seconds);
+        }
     }
-    err = network_service_sync_time_on_lease(&lease, utc_seconds);
-    if (err == ESP_OK && lease.bearer == NETWORK_BEARER_CELLULAR)
-        atomic_store(&s_cellular_time_pending, *utc_seconds);
     network_service_release(&lease);
     atomic_store(&s_time_active, false);
     return err;
 }
 
 void network_service_cancel_time_sync(void) {
-    atomic_store(&s_time_cancel, true);
     (void)wifi_transfer_cancel_time_sync();
     const int64_t deadline = esp_timer_get_time() + 2000000;
     while (atomic_load(&s_time_active) && esp_timer_get_time() < deadline)

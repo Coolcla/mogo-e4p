@@ -41,10 +41,11 @@ constexpr unsigned kEventStart = 1, kEventStop = 2, kEventInitTaskDone = 4, kEve
 constexpr bool pdTRUE = true, pdFALSE = false;
 constexpr unsigned portMAX_DELAY = ~0U;
 #define pdMS_TO_TICKS(ms) (ms)
-static unsigned completion_bits;
+static unsigned completion_bits, signal_waits;
 static void (*join_worker)();
 static unsigned xEventGroupWaitBits(int, unsigned bits, bool, bool, unsigned) {
     if (bits == kEventStart) return kEventStart;
+    if (bits == kEventStop) { ++signal_waits; return kEventStop; }
     if (join_worker) join_worker();
     assert(!finished_peak && (completion_bits & kEventInitTaskDone));
     return kEventAllTasksDone;
@@ -79,11 +80,20 @@ public:
     UartEthModemEvent last_event = UartEthModemEvent::Disconnected;
     int event_group_ = 1, ethernet_starts = 0, startup_result = ESP_OK, ethernet_result = ESP_OK;
     int netif_marker = 0;
+    std::atomic<UartEthModemEvent> network_event_{UartEthModemEvent::Disconnected};
+    std::atomic<int> signal_strength_{99};
+    unsigned at_calls = 0;
+    esp_err_t SendAt(const std::string& command, std::string& response, unsigned timeout) {
+        assert(command == "AT+CSQ" && timeout == 500 && !init_peak_);
+        ++at_calls; response = "+CSQ: 21,0\r\nOK"; return ESP_OK;
+    }
     void *eth_netif_ = &netif_marker;
     esp_err_t RunNormalModeInitSequence() { return startup_result; }
     esp_err_t InitIotEth() { ++ethernet_starts; return ethernet_result; }
     void SetNetworkEvent(UartEthModemEvent event, const std::string& = "") { last_event = event; }
     void InitTaskRun();
+    void PollSignalUntilStop();
+    int GetSignalStrength() const;
     void ParseAtResponse(const std::string& response);
     static void IpEventHandler(void*, esp_event_base_t, int32_t, void*);
 };
@@ -108,8 +118,19 @@ int main() {
         assert(completion_bits & kEventInitTaskDone);
     }
     UartEthModem modem;
-    modem.handshake_done_ = true;
+    modem.handshake_done_ = modem.initialized_ = true;
+    modem.network_event_ = Event::Connected;
+    modem.init_peak_ = 77;
+    assert(modem.GetSignalStrength() == 99 && !modem.at_calls);
     modem.InitTaskRun();
+    assert(finished_peak == 77 && signal_waits == 1 && modem.at_calls == 1);
+    assert(modem.GetSignalStrength() == 21 && modem.GetSignalStrength() == 21 && modem.at_calls == 1);
+    modem.network_event_ = Event::Connecting;
+    assert(modem.GetSignalStrength() == 99);
+    modem.stop_flag_ = true;
+    modem.PollSignalUntilStop();
+    assert(modem.at_calls == 1 && signal_waits == 1);
+    modem.stop_flag_ = false;
     assert(modem.ethernet_starts == 1 && !modem.initializing_);
     UartEthModem failed;
     failed.handshake_done_ = true;
@@ -209,7 +230,7 @@ def main():
         (work / "esp_err.h").write_text(
             "#pragma once\ntypedef int esp_err_t;\n#define ESP_OK 0\n#define ESP_ERR_NO_MEM -2\n")
         source = MODEL
-        for name in ("InitTaskRun", "Stop", "ParseAtResponse", "IpEventHandler"):
+        for name in ("GetSignalStrength", "PollSignalUntilStop", "InitTaskRun", "Stop", "ParseAtResponse", "IpEventHandler"):
             source += function("UartEthModem::" + name, MODEM) + "\n"
         for name in ("settings_cellular_status", "settings_network_poll"):
             source += function(name, SETTINGS) + "\n"

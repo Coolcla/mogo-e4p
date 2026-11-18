@@ -32,6 +32,7 @@ static _Atomic network_route_t s_route;
 static _Atomic network_auto_priority_t s_priority;
 static atomic_uint s_wifi_leases, s_cellular_leases;
 static atomic_bool s_cellular_control, s_wifi_owned_by_business;
+static bool s_cellular_owned_by_business;
 static atomic_bool s_resume_pending;
 static int64_t s_resume_retry_at;
 static bool s_radios_paused;
@@ -48,6 +49,7 @@ static wifi_transfer_status_t wifi;
 static bool configured, deny_registration, fail_wifi, cell_recovers;
 static bool missing_wifi_netif, missing_cell_netif, fail_default;
 static bool deny_wifi_stop, attempt_during_start;
+static bool temporary_cell, deny_temporary_stop;
 static esp_err_t nested_acquire_error, nested_disable_error;
 static int wifi_start_error;
 static bool cell_retry_due, peak_busy;
@@ -61,6 +63,7 @@ static int64_t now_us;
 static int wifi_marker, cell_marker;
 static void *default_netif;
 static int64_t esp_timer_get_time(void) { return now_us; }
+static bool cancel_at_first_wait(void) { return now_us >= 100000; }
 #define pdMS_TO_TICKS(ms) (ms)
 static void vTaskDelay(unsigned ms) {
     now_us += (int64_t)ms * 1000;
@@ -138,9 +141,24 @@ esp_err_t cellular_service_set_enabled(bool enabled) {
     if (enabled && cell_start_error) return cell_start_error;
     if (enabled) ++cell_starts; else ++cell_stops;
     cellular.enabled = cellular.running = enabled;
+    temporary_cell = false;
     cellular.startup_failed = false;
     if (!enabled) cellular.ready = false;
     return ESP_OK;
+}
+esp_err_t cellular_service_start_temporary(void) {
+    assert(cellular.capability_known && cellular.capable && !cellular.enabled && !wifi.owns_radio);
+    if (cell_start_error) return cell_start_error;
+    if (!cellular.running) ++cell_starts;
+    else assert(temporary_cell);
+    temporary_cell = cellular.running = true;
+    cellular.state = CELLULAR_SERVICE_STARTING;
+    return ESP_OK;
+}
+bool cellular_service_stop_temporary(void) {
+    if (!temporary_cell) return true;
+    if (deny_temporary_stop) return false;
+    return cellular_service_set_enabled(false) == ESP_OK;
 }
 esp_err_t cellular_service_enable_admitted(memory_peak_token_t *admitted) {
     assert(admitted && *admitted);
@@ -171,6 +189,7 @@ static void reset(network_route_t route, network_auto_priority_t priority) {
     atomic_store(&s_wifi_leases, 0); atomic_store(&s_cellular_leases, 0);
     atomic_store(&s_cellular_control, false);
     atomic_store(&s_wifi_owned_by_business, false);
+    s_cellular_owned_by_business = temporary_cell = deny_temporary_stop = false;
     atomic_store(&s_resume_pending, false);
     atomic_store(&s_drop_wifi_session, 0);
     atomic_store(&s_drop_media_wifi_session, 0);
@@ -192,7 +211,92 @@ static void reset(network_route_t route, network_auto_priority_t priority) {
 '''
 
 CASES = r'''
+static void manual_weather_cellular(void) {
+    network_lease_t lease, borrower;
+    reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = false; cellular.state = CELLULAR_SERVICE_STOPPED;
+    for (int use = NETWORK_USE_TIME; use <= NETWORK_USE_OTA; ++use)
+        assert(network_service_acquire((network_use_t)use, &lease) == ESP_ERR_NOT_FOUND && !lease.active);
+    assert(!cell_starts && !wifi_starts);
+    ble_conflict = MEMORY_PEAK_CONFLICT;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == MEMORY_PEAK_CONFLICT && !cell_starts);
+    ble_conflict = ESP_OK;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && lease.owns_cellular);
+    assert(lease.bearer == NETWORK_BEARER_CELLULAR && cell_starts == 1 && !cellular.enabled && !wifi_starts);
+    assert(!network_service_wait_ready_cancelable(&lease, 1000, cancel_at_first_wait));
+    network_service_release(&lease);
+    assert(!cellular.running && !cellular.enabled && cell_stops == 1 && !lease.active);
+
+    deny_registration = true;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK);
+    assert(!network_service_wait_ready(&lease, 1000) && !wifi_starts);
+    network_service_release(&lease);
+    assert(!cellular.running && cell_stops == 2);
+    deny_registration = false;
+
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK);
+    cell_recovers = true;
+    assert(network_service_wait_ready(&lease, 1000) && default_netif == &cell_marker);
+    assert(network_service_acquire(NETWORK_USE_TIME, &borrower) == ESP_OK && !borrower.owns_cellular);
+    network_service_release(&lease);
+    assert(cellular.running && cell_stops == 2);
+    atomic_store(&s_cellular_control, true);
+    network_service_release(&borrower);
+    atomic_store(&s_cellular_control, false);
+    cell_recovers = false;
+    deny_temporary_stop = true;
+    network_service_poll();
+    assert(cellular.running && s_cellular_owned_by_business);
+    deny_temporary_stop = false;
+    network_service_poll();
+    assert(!cellular.running && !cellular.enabled && cell_stops == 3 && !s_cellular_owned_by_business);
+
+    reset(NETWORK_ROUTE_WIFI, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = configured = false;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_ERR_NOT_FOUND);
+    assert(!cell_starts && !wifi_starts);
+
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = false; cellular.state = CELLULAR_SERVICE_STOPPED;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && lease.owns_wifi);
+    network_service_release(&lease);
+    assert(!cell_starts && wifi_starts == 1 && wifi_stops == 1);
+    configured = false;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && lease.owns_cellular);
+    network_service_release(&lease);
+
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = false; cellular.state = CELLULAR_SERVICE_STOPPED;
+    fail_wifi = cell_recovers = true;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && lease.owns_wifi);
+    assert(network_service_wait_ready(&lease, 1000) && lease.owns_cellular && wifi_stops == 1);
+    network_service_release(&lease);
+    assert(!cellular.running && !cellular.enabled && cell_stops == 1);
+
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_CELLULAR_FIRST);
+    cellular.enabled = false; cellular.state = CELLULAR_SERVICE_STOPPED;
+    deny_registration = true;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && lease.owns_cellular);
+    assert(network_service_wait_ready(&lease, 1000) && lease.owns_wifi && cell_stops == 1);
+    network_service_release(&lease);
+    assert(!cellular.running && !cellular.enabled && wifi_stops == 1 && s_route == NETWORK_ROUTE_AUTO);
+
+    reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = false; cellular.state = CELLULAR_SERVICE_STOPPED;
+    wifi = (wifi_transfer_status_t){.state=WIFI_TRANSFER_READY, .mode=WIFI_TRANSFER_MODE_AP, .owns_radio=true};
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_ERR_INVALID_STATE);
+    assert(!wifi_stops && !cell_starts);
+    cellular = (cellular_service_status_t){.capability_known=true};
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_ERR_NOT_FOUND && !cell_starts);
+
+    reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
+    cellular.running = cellular.ready = true; cellular.state = CELLULAR_SERVICE_READY;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_MANUAL, &lease) == ESP_OK && !lease.owns_cellular);
+    network_service_release(&lease);
+    assert(cellular.enabled && cellular.running && !cell_starts && !cell_stops);
+}
 int main(void) {
+    manual_weather_cellular();
     network_lease_t lease;
     reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
     ble_conflict = MEMORY_PEAK_CONFLICT;
@@ -350,6 +454,17 @@ int main(void) {
     assert(network_service_wait_ready(&lease, 300));
     assert(now_us == 0 && default_netif == &cell_marker && default_calls == 1);
     network_service_release(&lease);
+    // Cancellation during association leaves cleanup and lease ownership with the caller.
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_WIFI_FIRST);
+    cellular.enabled = false;
+    wifi = (wifi_transfer_status_t){.owns_radio=true,.state=WIFI_TRANSFER_STARTING,
+        .mode=WIFI_TRANSFER_MODE_STA, .network_only=true};
+    wifi_ready_at = 200000;
+    assert(network_service_acquire(NETWORK_USE_WEATHER, &lease) == ESP_OK);
+    assert(!network_service_wait_ready_cancelable(&lease, 30000, cancel_at_first_wait));
+    assert(now_us == 100000 && lease.active && lease.bearer == NETWORK_BEARER_WIFI && !cell_starts);
+    network_service_release(&lease);
+    assert(!atomic_load(&s_wifi_leases));
     // A ready flag alone is insufficient without a usable/default interface.
     for (int missing = 0; missing < 2; ++missing) {
         reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
@@ -539,7 +654,9 @@ OTA_MODEL = r'''
 #include "ota_online.h"
 static network_lease_t s_network_lease;
 static bool s_network_lease_active;
-static atomic_bool s_cancel;
+static network_use_t s_network_use;
+static atomic_bool s_cancel, s_time_active;
+static atomic_uint s_cellular_time_pending;
 static pico_update_status_t update;
 static unsigned snapshots, warnings, sync_calls, time_notes;
 static int snapshot_bearer;
@@ -561,7 +678,8 @@ static void state(pico_update_state_t value, const char *message) {
 static void network_diagnostics_snapshot(const char *owner, int bearer) {
     assert(!strcmp(owner, "ota")); ++snapshots; snapshot_bearer = bearer;
 }
-esp_err_t network_service_sync_time_on_lease(network_lease_t *lease, uint32_t *utc) {
+static esp_err_t sync_time_on_lease(network_lease_t *lease, uint32_t *utc, bool (*cancelled)(void)) {
+    if (!network_service_wait_ready_cancelable(lease, 30000, cancelled)) return ESP_ERR_TIMEOUT;
     assert(lease->active); ++sync_calls; *utc = 1704067200;
     return sync_error;
 }
@@ -571,6 +689,7 @@ static void app_time_service_note_success(uint32_t utc) {
 static void reset_ota(network_route_t route) {
     reset(route, NETWORK_AUTO_WIFI_FIRST);
     cellular.enabled = false;
+    s_network_use = NETWORK_USE_OTA;
     s_network_lease = (network_lease_t){0}; s_network_lease_active = false;
     atomic_store(&s_cancel, false);
     update = (pico_update_status_t){.state=PICO_UPDATE_CHECKING};
@@ -649,6 +768,27 @@ int main(void) {
     }
     reset_ota(NETWORK_ROUTE_CELLULAR);
     assert(!online(&owned) && strstr(update.message, "先开启移动网络"));
+    assert(!cell_starts);
+    reset_ota(NETWORK_ROUTE_CELLULAR);
+    s_network_use = NETWORK_USE_OTA_MANUAL; cell_recovers = true; clock_utc = 0;
+    assert(online(&owned) && s_network_lease.owns_cellular && cell_starts == 1);
+    assert(!cellular.enabled && s_network_lease.use == NETWORK_USE_OTA_MANUAL && sync_calls == 1 && time_notes == 1);
+    release_ota(); assert(cell_stops == 1 && !cellular.running && !cellular.enabled);
+    reset_ota(NETWORK_ROUTE_CELLULAR);
+    s_network_use = NETWORK_USE_OTA_MANUAL; deny_registration = true;
+    assert(!online(&owned) && strstr(update.message, "移动网络注册失败") && cell_stops == 1);
+    reset_ota(NETWORK_ROUTE_CELLULAR);
+    s_network_use = NETWORK_USE_OTA_MANUAL; cell_start_error = ESP_ERR_NO_MEM;
+    assert(!online(&owned) && strstr(update.message, "内存不足") && !cell_starts);
+
+    reset_ota(NETWORK_ROUTE_CELLULAR);
+    uint32_t utc = 0;
+    assert(network_service_sync_time(&utc, true, NULL) == ESP_ERR_NOT_FOUND && !cell_starts);
+    now_us = 100000;
+    assert(network_service_sync_time(&utc, false, cancel_at_first_wait) == ESP_ERR_INVALID_STATE && !cell_starts);
+    cell_recovers = true;
+    assert(network_service_sync_time(&utc, false, NULL) == ESP_OK && utc == 1704067200);
+    assert(cell_starts == 1 && cell_stops == 1 && !cellular.enabled && !atomic_load(&s_cellular_time_pending));
     reset_ota(NETWORK_ROUTE_CELLULAR); cellular.capable = false;
     assert(!online(&owned) && strstr(update.message, "未检测到4G模块"));
     reset_ota(NETWORK_ROUTE_CELLULAR);
@@ -694,11 +834,11 @@ def main(cases=CASES, extra=""):
         unit = MODEL
         for name in ("resolve_ready_bearer", "saved_wifi", "start_wifi_for_lease",
                      "cellular_can_start_for_lease", "select_bearer_netif",
-                     "acquire_bearer", "stop_unused_business_wifi", "poll_switch_rollback",
+                     "acquire_bearer", "stop_unused_business_wifi", "stop_unused_business_cellular_under_gate", "poll_switch_rollback",
                      "resume_under_gate", "network_service_resume_after_sleep", "network_service_pause_for_sleep",
                      "stop_owned_wifi_under_gate", "network_service_poll",
                      "network_service_get_status", "network_service_acquire",
-                     "network_service_wait_ready",
+                     "network_service_wait_ready", "network_service_wait_ready_cancelable",
                      "network_service_release", "remember_rollback",
                      "restore_cellular_after_wifi_error", "network_service_set_enabled",
                      "local_wifi", "network_service_start_local_wifi", "network_service_scan_wifi",
@@ -717,6 +857,8 @@ if __name__ == "__main__":
     main()
     ota_source = ROOT / "main/ota/ota_online.c"
     ota_extra = OTA_MODEL
-    for symbol in ("ota_bearer", "network_unavailable_notice", "online"):
+    ota_extra += function("network_service_sync_time_on_lease", SOURCE) + "\n"
+    for symbol in ("ota_bearer", "network_unavailable_notice", "ota_cancelled", "online"):
         ota_extra += function(symbol, ota_source) + "\n"
+    ota_extra += function("network_service_sync_time", SOURCE) + "\n"
     main(OTA_CASES, ota_extra)

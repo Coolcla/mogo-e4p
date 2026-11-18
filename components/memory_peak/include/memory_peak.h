@@ -24,6 +24,8 @@ typedef enum {
     MEMORY_PEAK_CELLULAR,
     MEMORY_PEAK_BLE,
     MEMORY_PEAK_BLE_CONNECT,
+    MEMORY_PEAK_WEATHER,
+    MEMORY_PEAK_OTA_CHECK,
 } memory_peak_kind_t;
 
 // 忙错误携带拒绝时的所有者，勿在 UI 渲染时查询当前阶段来推断。
@@ -31,7 +33,7 @@ typedef enum {
 #define MEMORY_PEAK_BUSY_OWNER_BASE ((esp_err_t)0x7a10)
 static inline bool memory_peak_is_busy(esp_err_t error) {
     return error == MEMORY_PEAK_BUSY || (error >= MEMORY_PEAK_BUSY_OWNER_BASE &&
-        error <= MEMORY_PEAK_BUSY_OWNER_BASE + MEMORY_PEAK_BLE_CONNECT);
+        error <= MEMORY_PEAK_BUSY_OWNER_BASE + MEMORY_PEAK_OTA_CHECK);
 }
 
 typedef uint32_t memory_peak_token_t;

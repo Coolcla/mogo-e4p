@@ -34,6 +34,10 @@ bool app_weather_request(app_weather_request_t request, const char *query);
 bool app_weather_search(const char *query, unsigned page);
 /// automatic由前台页面按首页槽位决定，旧enabled字段不再决定新布局。/ The foreground page gates automatic work by Home slots, not the legacy enabled field.
 bool app_weather_poll(bool automatic);
+/// 通知取消，不等待；旧结果不会写回设置或缓存。/ Signal cancellation without waiting or publishing stale results.
+void app_weather_cancel(void);
+/// 非天气页也回收已取消结果；不消费有效回复。/ Reap cancelled results off-page without consuming valid replies.
+void app_weather_reap_cancelled(void);
 /// 取消后等待真正交还无线与HTTP，不删除仍运行的任务。/ Cancel and await actual radio/HTTP handoff; never delete a running worker.
 void app_weather_cancel_join(void);
 bool app_weather_busy(void);

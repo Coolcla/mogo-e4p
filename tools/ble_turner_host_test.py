@@ -456,7 +456,7 @@ for name in ('wifi_transfer_start_admitted', 'wifi_transfer_scan_admitted', 'syn
     assert 'ble_pt_network_acquire()' in function(wifi, name)
 start = function(wifi, 'wifi_transfer_start_admitted')
 assert 'wifi_release_ble()' in start and 'wifi_release_ble()' in function(wifi, 'wifi_transfer_stop')
-assert 'sync_time_run(utc_seconds, false, false)' in function(ROOT / 'components/wifi_transfer/wifi_transfer.c', 'wifi_transfer_sync_time')
+assert 'sync_time_run(utc_seconds, false, false, true)' in function(ROOT / 'components/wifi_transfer/wifi_transfer.c', 'wifi_transfer_sync_time')
 assert 'sync_time_impl(utc_seconds)' in function(ROOT / 'components/wifi_transfer/wifi_transfer.c', 'sync_time_run')
 assert transfer.count('ble_pt_network_acquire()') == 3
 # 描述符遍历只能在自己的特征定义范围内，Report Map 必须分段读全。

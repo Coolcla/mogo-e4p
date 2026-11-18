@@ -75,7 +75,12 @@ void wifi_transfer_stop(void){}
 // 联网升级与自动对时互斥：升级路径只取消自动对时并登记成功，本用例不验证对时本身。
 // Online updates and auto time sync are mutually exclusive; the update path only cancels the
 // sync and records success, which this case does not exercise.
-void app_time_service_cancel(void){}
+static bool weather_busy, time_busy;
+static int handoffs;
+bool app_weather_busy(void){return weather_busy;}
+bool app_time_service_busy(void){return time_busy;}
+void app_weather_cancel_join(void){++handoffs;}
+void app_time_service_cancel(void){++handoffs;}
 void app_time_service_note_success(uint32_t utc_seconds){(void)utc_seconds;}
 esp_err_t wifi_transfer_start(const wifi_transfer_cfg_t*c){(void)c;return ESP_OK;}
 void wifi_transfer_service_poll(void){if(offline_polls){--offline_polls;if(cancel_reconnect)atomic_store(&s_cancel,true);}}
@@ -142,6 +147,16 @@ int main(void){
  fixture();bad_layout=true;assert(pico_online_check()==ESP_OK);run();assert(s_status->state==PICO_UPDATE_FAILED&&!begin_calls&&wifi_ps==WIFI_PS_MIN_MODEM);
  fixture();assert(pico_online_check()==ESP_OK);pico_online_cancel_join();assert(!pico_online_busy()&&s_status->state==PICO_UPDATE_CANCELLED&&primary_feeds==0&&unexpected_feeds==0);
  fixture();fail_task=1;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pico_online_busy());
+ fixture();weather_busy=true;handoffs=0;
+ assert(pico_online_check_auto()==MEMORY_PEAK_BUSY&&!handoffs&&!pending);
+ weather_busy=false;time_busy=true;
+ assert(pico_online_check_auto()==MEMORY_PEAK_BUSY&&!handoffs&&!pending);
+ time_busy=false;internal_block=16383;
+ assert(pico_online_check_auto()==ESP_ERR_NO_MEM&&!handoffs&&!pending);
+ internal_block=65536;
+ assert(pico_online_check_auto()==ESP_OK&&!handoffs&&pending);
+ pico_online_request_cancel();assert(pico_online_busy()&&pending);
+ run();assert(!pico_online_busy()&&s_status->state==PICO_UPDATE_CANCELLED&&!primary_feeds);
  fixture();internal_free=49151;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!pico_online_busy()&&s_status->state==PICO_UPDATE_FAILED&&!begin_calls);
  fixture();internal_block=16383;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!begin_calls);
  fixture();external_free=524287;assert(pico_online_check()==ESP_ERR_NO_MEM&&!pending&&!begin_calls);

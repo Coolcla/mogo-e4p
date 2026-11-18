@@ -143,6 +143,8 @@ esp_err_t wifi_transfer_save_wifi(const char *ssid, const char *password);
 esp_err_t wifi_transfer_sync_time(uint32_t *utc_seconds);
 /// 已连接 STA 时对时，不断开 WiFi；供 HTTPS 页面校验证书。/ Sync time on connected STA without disconnecting WiFi for HTTPS certificate checks.
 esp_err_t wifi_transfer_sync_time_online(uint32_t *utc_seconds);
+/// 已联网的手动校时可取消，结果仅交给调用者。/ Cancellable online manual sync; return the result only to the caller.
+esp_err_t wifi_transfer_sync_time_online_manual(uint32_t *utc_seconds);
 
 /// 后台短时校准，可被手动联网或睡眠取消；不读取 TF 文件。
 /// Brief background calibration, cancellable by manual networking or sleep; no TF access.

@@ -30,6 +30,7 @@ typedef struct {
 
 typedef struct {
     network_bearer_t bearer;
+    network_use_t use;
     bool owns_wifi;
     bool owns_cellular;
     bool active;
@@ -51,12 +52,15 @@ network_auto_priority_t network_service_auto_priority(void);
 /// Acquire the user-selected bearer. Forced routes fail closed; AUTO follows priority.
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease);
 bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms);
+/// 取消不消费租约；调用者照常释放。/ Cancellation leaves lease ownership with the caller.
+bool network_service_wait_ready_cancelable(network_lease_t *lease, uint32_t timeout_ms,
+                                           bool (*cancelled)(void));
 void network_service_release(network_lease_t *lease);
 
-/// Synchronize time through the selected external bearer. The automatic form
-/// remains cancellable by the existing time-service cancellation path.
-esp_err_t network_service_sync_time(uint32_t *utc_seconds, bool automatic);
-esp_err_t network_service_sync_time_on_lease(network_lease_t *lease, uint32_t *utc_seconds);
+/// 通过选定承载对时；只有手动请求可临时开启关闭的 4G。/ Sync over the selected bearer; only manual requests may start switched-off cellular.
+esp_err_t network_service_sync_time(uint32_t *utc_seconds, bool automatic, bool (*cancelled)(void));
+esp_err_t network_service_sync_time_on_lease(network_lease_t *lease, uint32_t *utc_seconds, bool (*cancelled)(void));
+/// 调用者先发取消信号，再请求 Wi-Fi 中断并有界等待租约交还。/ Signal cancellation first, then interrupt Wi-Fi sync and wait boundedly for handoff.
 void network_service_cancel_time_sync(void);
 /// Consume a successful cellular-side sync on the main loop. Wi-Fi keeps its
 /// existing pending-event queue for compatibility.
