@@ -3,6 +3,11 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## v1.1.4 · 本地测试 / Local testing · 2026-11-19
+
+- 修正差分刷新的脏列位序；屏幕偏移成功落屏后才切换触摸坐标，旧画面触点、留白触点及滑出按钮的接触不会误触发，自动补试等到手指抬起。/ Correct dirty-column bit order; publish touch offsets only after successful output, reject stale, exposed-strip and drag-out contacts, and wait for physical lift before retrying.
+- 定时关机后仍可续读，启动先清白重建画面，不把锁屏缓存当作关机画面。/ Reader resume still works after timed shutdown; boot clears to rebuild the display baseline rather than assuming the shutdown image matches cached lock art.
+
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-18
 
 - 修复字形临时分配失败后文字持续缺失的问题；失败字形不再写入缓存，重绘时可恢复，无需重启。/ Retry glyphs on redraw instead of caching failed allocations, so missing text can recover without a restart.

@@ -3,6 +3,7 @@
  * English: Display orientation and portrait-touch conversion; only the UI task changes orientation, never scan dimensions.
  */
 #pragma once
+#include <stdbool.h>
 #include <stdint.h>
 
 /// 正常竖屏为零，逻辑画面顺时针每次增加四分之一圈。/ Normal portrait is zero; each step turns the logical image clockwise by a quarter turn.
@@ -17,6 +18,6 @@ typedef enum {
 /// Get/set logical drawing orientation without presenting; callers first join prefetch and rebuild layout.
 display_orientation_t display_orientation_get(void);
 void display_orientation_set(display_orientation_t orientation);
-/// 屏内触点先抵消面板偏移再旋转；留白触点返回 UINT16_MAX，屏外三键原样保留。
-/// Undo panel offsets before rotating contacts; exposed strips return UINT16_MAX and off-panel cover keys remain unchanged.
-void display_orientation_touch(uint16_t *x, uint16_t *y);
+/// 抵消面板偏移后再旋转；留白触点返回 false 且不改坐标，屏外三键原样保留。
+/// Undo offsets before rotating; return false without changing exposed-strip contacts, and preserve off-panel keys.
+bool display_orientation_touch(uint16_t *x, uint16_t *y);

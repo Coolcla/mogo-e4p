@@ -1052,6 +1052,10 @@ static app_redraw_t quick_settings_gesture(app_ctx_t *ctx, const ui_gesture_even
 // 校正页坐标固定为正常竖屏；按下局部反馈，完整轻点才移动一次。
 // Calibration uses normal portrait coordinates; presses give local feedback and only completed taps move once.
 static int s_screen_offset_pressed = -1;
+static unsigned s_screen_offset_retries;
+static int64_t s_screen_offset_retry_ms;
+
+enum { SCREEN_OFFSET_RETRIES = 2, SCREEN_OFFSET_RETRY_MS = 1000 };
 static EpdRect screen_offset_button(int index) {
     const EpdRect buttons[] = {{242, 430, 200, 86}, {62, 550, 200, 86},
         {422, 550, 200, 86}, {242, 670, 200, 86}, {142, 890, 400, 78}};
@@ -1091,9 +1095,18 @@ static app_redraw_t screen_offset_feedback(app_ctx_t *ctx, int previous) {
         screen_offset_button(index), DISPLAY_REFRESH_DEFAULT));
     return APP_REDRAW_DONE;
 }
-static void screen_offset_render(uint8_t *fb) {
+static void screen_offset_render(uint8_t *fb, bool presenting_target) {
+    int x, y, target_x, target_y;
+    app_settings_screen_offset(&target_x, &target_y);
+    if (presenting_target) {
+        x = target_x;
+        y = target_y;
+    } else {
+        display_get_screen_offset(&x, &y);
+    }
+    const bool pending = x != target_x || y != target_y;
+    ui_clear_page(fb);
     back_header(fb, "屏幕偏移修正");
-    int x, y; app_settings_screen_offset(&x, &y);
     char value[80];
     snprintf(value, sizeof(value), "水平 %+d px    竖直 %+d px", x, y);
     ui_text_fixed_vc(fb, 342, 282, 27, value, EPD_DRAW_ALIGN_CENTER, false);
@@ -1102,9 +1115,43 @@ static void screen_offset_render(uint8_t *fb) {
     epd_draw_hline(298, 593, 88, UI_GRAY_BLACK, fb);
     epd_draw_vline(342, 549, 88, UI_GRAY_BLACK, fb);
     ui_text_fixed_vc(fb, 342, 818, 21, "右移 / 下移为正 · 范围 ±32px", EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_fixed_vc(fb, 342, 1012, 20, s_notice[0] ? s_notice : "即时生效并保存到本机", EPD_DRAW_ALIGN_CENTER, false);
+    const char *notice = s_notice[0] ? s_notice : pending ? "偏移已保存，尚未生效" : "即时生效并保存到本机";
+    ui_text_fixed_vc(fb, 342, 1012, 20, notice, EPD_DRAW_ALIGN_CENTER, false);
     ui_text_fixed_vc(fb, 342, 1054, 19, "仅修正位置偏移，边缘外的内容不可见", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_fixed_vc(fb, 342, 1100, 19, "刻度数字 = 黑块向内延伸的像素", EPD_DRAW_ALIGN_CENTER, false);
+    screen_offset_guides(fb);
+}
+
+static void screen_offset_present(app_ctx_t *ctx) {
+    int x, y, old_x, old_y;
+    app_settings_screen_offset(&x, &y);
+    display_get_screen_offset(&old_x, &old_y);
+    screen_offset_render(ctx->fb, true);
+    const enum EpdDrawError result = update_display_screen_offset(ctx->hl, x, y);
+    if (result == EPD_DRAW_SUCCESS) {
+        if (x != old_x || y != old_y) ctx->screen_touch_cutoff_ms = esp_timer_get_time() / 1000;
+        s_screen_offset_retries = 0;
+        return;
+    }
+    // 失败后恢复帧只描述仍生效的坐标；后台尝试不重复落盘。
+    // After failure, keep the recovery frame consistent with applied coordinates; retries do not write NVS.
+    screen_offset_render(ctx->fb, false);
+    s_screen_offset_retry_ms = esp_timer_get_time() / 1000 + SCREEN_OFFSET_RETRY_MS;
+    ESP_LOGW(TAG, "screen offset (%d,%d) not presented: %d (%u retries left)",
+             x, y, result, s_screen_offset_retries);
+}
+
+static bool screen_offset_retry_if_due(app_ctx_t *ctx) {
+    if (s_page != SETTINGS_SCREEN_OFFSET || !s_screen_offset_retries ||
+        ctx->now_ms < s_screen_offset_retry_ms || ctx->physical_touch_active || s_screen_offset_pressed >= 0) return false;
+    --s_screen_offset_retries;
+    screen_offset_present(ctx);
+    return true;
+}
+
+static bool settings_gesture_contact_allowed(const app_ctx_t *ctx) {
+    return s_page != SETTINGS_SCREEN_OFFSET || s_screen_offset_pressed < 0 ||
+        ui_rect_hit(screen_offset_button(s_screen_offset_pressed), ctx->touch->x, ctx->touch->y);
 }
 static app_redraw_t screen_offset_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     int previous = s_screen_offset_pressed;
@@ -1196,15 +1243,11 @@ static app_redraw_t batt_calibration_touch(int x, int y) {
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
+    if (s_page == SETTINGS_SCREEN_OFFSET) { screen_offset_render(fb, false); return; }
     ui_clear_page(fb);
 
     // 保留 ui_clear_page 的白底，灰阶只由头像、卡片与字形生成。
     // Keep ui_clear_page's white background; avatars, cards and glyphs alone generate grays.
-    if (s_page == SETTINGS_SCREEN_OFFSET) {
-        screen_offset_render(fb);
-        screen_offset_guides(fb);
-        return;
-    }
     ui_nav_status(fb);
     if (s_page == SETTINGS_QUICK_BAR) {
         quick_settings_render(fb);
@@ -1822,6 +1865,7 @@ void app_device_settings_request_memory(bool return_to_origin) {
 }
 static void on_enter(app_ctx_t *ctx) {
     s_screen_offset_pressed = -1;
+    s_screen_offset_retries = 0;
     ui_lock_style_close();
     (void)ctx;
     pin_setup_close();
@@ -1896,6 +1940,7 @@ static void on_enter(app_ctx_t *ctx) {
 
 static app_redraw_t profile_editor_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
+    if (screen_offset_retry_if_due(ctx)) return APP_REDRAW_NONE;
     if (s_page == SETTINGS_BATT_CALIBRATION && ctx->now_ms >= s_batt_calibration_next_ms) {
         device_power_batt_calibration_status_t next;
         device_power_get_batt_calibration(&next);
@@ -2769,6 +2814,7 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 static void settings_exit(app_ctx_t *ctx) {
     s_batt_calibration_confirm = false;
     s_screen_offset_pressed = -1;
+    s_screen_offset_retries = 0;
     ui_lock_style_close();
 
     // 释放预览内存；阅读器按当前路径读取TF成品，缓存失效时才重新解码。
@@ -2783,6 +2829,7 @@ static void settings_exit(app_ctx_t *ctx) {
 static void on_before_lock(app_ctx_t *ctx) {
     s_batt_calibration_confirm = false;
     s_screen_offset_pressed = -1;
+    s_screen_offset_retries = 0;
     if(s_page==SETTINGS_LOCK_STYLE){ui_lock_style_close();s_page=SETTINGS_MAIN;}
     s_font_sync_confirm=false;s_font_sync_path[0]=0;
     // 锁屏唤醒后 tick 不会再补解码，预览页会停在白框：锁屏前退回主列表并释放缓存。
@@ -2815,9 +2862,8 @@ static void settings_media_ready(app_ctx_t *ctx) { (void)ctx; ui_lock_style_medi
 static bool main_page_visible(app_ctx_t *ctx) { (void)ctx; return s_page == SETTINGS_MAIN; }
 static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
     if (s_page == SETTINGS_SCREEN_OFFSET && redraw == APP_REDRAW_PAGE) {
-        render(ctx, ctx->fb);
-        int x, y; app_settings_screen_offset(&x, &y);
-        guard_draw_result(ctx->hl, update_display_screen_offset(ctx->hl, x, y));
+        s_screen_offset_retries = SCREEN_OFFSET_RETRIES;
+        screen_offset_present(ctx);
         return true;
     }
     if (s_page == SETTINGS_PIN_ENTRY && (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL)) {
@@ -2877,6 +2923,7 @@ const app_desc_t app_device_settings = {
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
     .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_exit = settings_exit, .on_before_lock = on_before_lock, .render = render, .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key,
+    .gesture_contact_allowed = settings_gesture_contact_allowed,
     .present = settings_present,
     .on_media_lost=settings_media_lost, .on_media_ready=settings_media_ready,
 };

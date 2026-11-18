@@ -289,7 +289,7 @@ typedef struct {int unused;} EpdiyHighlevelState;
 typedef enum {APP_WAKE_NONE,APP_WAKE_KEY,APP_WAKE_PICKUP,APP_WAKE_TIMEOUT} app_wake_source_t;
 #define APP_SLEEP_OFF 2
 static int64_t now_us, seen_deadline;
-static unsigned waits, saves, marks, offs;
+static unsigned waits, saves, offs;
 static bool save_ok, off_success;
 static app_wake_source_t next_wake;
 static jmp_buf powered_off;
@@ -305,7 +305,6 @@ static void epd_poweroff(void){}
 static int64_t esp_timer_get_time(void){return now_us;}
 static uint8_t *epd_hl_get_framebuffer(EpdiyHighlevelState *hl){assert(hl);return framebuffer;}
 static bool lock_screen_save(const uint8_t *fb){assert(fb==framebuffer&&waits==1);++saves;return save_ok;}
-static int pico_boot_mark_frame_cached(void){assert(save_ok&&saves==1);++marks;return 0;}
 static int app_enter_host_sleep(int mode){assert(mode==APP_SLEEP_OFF&&saves==1);++offs;if(off_success)longjmp(powered_off,1);return -1;}
 static app_wake_source_t light_sleep_wait_until(sc7a20h_handle_t acc,int64_t deadline,EpdiyHighlevelState *hl){
     assert(hl);
@@ -326,7 +325,7 @@ int main(void){
     const uint8_t durations[]={0,0,0,10,30,60};
     for(unsigned style=1;style<=5;++style)for(unsigned wake=APP_WAKE_KEY;wake<=APP_WAKE_PICKUP;++wake){
         s_shutdown_style=(app_shutdown_style_t)style;next_wake=(app_wake_source_t)wake;
-        waits=saves=marks=offs=0;now_us=123456789;
+        waits=saves=offs=0;now_us=123456789;
         assert(app_lock_sleep_wait(&hl,NULL)==next_wake&&waits==1&&!offs&&!saves);
         assert(seen_deadline==(durations[style]?now_us+(int64_t)durations[style]*60000000:0));
         now_us+=60000000;waits=0;
@@ -335,12 +334,12 @@ int main(void){
     }
     for(unsigned style=3;style<=5;++style)for(unsigned cache=0;cache<2;++cache)for(unsigned success=0;success<2;++success){
         s_shutdown_style=(app_shutdown_style_t)style;next_wake=APP_WAKE_TIMEOUT;
-        save_ok=cache;off_success=success;waits=saves=marks=offs=shutdown_paints=lock_restores=0;framebuffer[0]=0x37;
+        save_ok=cache;off_success=success;waits=saves=offs=shutdown_paints=lock_restores=0;framebuffer[0]=0x37;
         if(!setjmp(powered_off)){
             assert(app_lock_sleep_wait(&hl,NULL)==APP_WAKE_KEY&&!success);
             assert(waits==2&&seen_deadline==0);
         }else assert(success&&waits==1);
-        assert(saves==1&&offs==1&&marks==cache&&shutdown_paints==1&&lock_restores==!success);
+        assert(saves==1&&offs==1&&shutdown_paints==1&&lock_restores==!success);
         if(success)free(power_original);else assert(framebuffer[0]==0x37);
     }
     puts("PASS: actual 10/30/60 shutdown policy, early wake/reset, lock cache, full-off success and failed-off locked wait");

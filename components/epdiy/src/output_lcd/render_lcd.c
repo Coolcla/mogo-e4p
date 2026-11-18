@@ -159,7 +159,13 @@ static void push_pixels_populate_line(RenderContext_t* ctx, int color) {
             dirtyness[i / 2] |= i % 2 ? 0xF0 : 0x0F;
         }
     }
-    epd_populate_line_mask(ctx->line_mask, dirtyness, ctx->display_width / 4);
+    // 盲刷直接使用面板位序，与上次 LUT 选择无关。/ Blind scans use panel order independently of the last LUT.
+#if defined(CONFIG_IDF_TARGET_ESP32S31)
+    const bool msb_first = true;
+#else
+    const bool msb_first = false;
+#endif
+    epd_populate_line_mask(ctx->line_mask, dirtyness, ctx->display_width / 4, msb_first);
 
     // mask the line pattern with the populated mask
     memset(ctx->static_line_buffer, fill_byte, ctx->display_width / 4);
@@ -316,12 +322,7 @@ lcd_calculate_frame(RenderContext_t* ctx, int thread_id) {
         // apply the line mask
         epd_apply_line_mask_VE(buf, ctx->line_mask, ctx->display_width / 4);
         if (ctx->offset_x) {
-#if defined(CONFIG_IDF_TARGET_ESP32S31)
-            const int msb_first = 1;
-#else
-            const int msb_first = 0;
-#endif
-            epd_output_shift_line(buf, ctx->display_width / 4, ctx->offset_x, msb_first);
+            epd_output_shift_line(buf, ctx->display_width / 4, ctx->offset_x, ctx->lut_msb_first);
         }
 
         lq_commit(lq);

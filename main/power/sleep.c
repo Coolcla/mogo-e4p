@@ -648,7 +648,9 @@ app_wake_source_t app_lock_sleep_wait(EpdiyHighlevelState *hl, sc7a20h_handle_t 
     int64_t deadline_us = minutes ? esp_timer_get_time() + (int64_t)minutes * 60 * 1000000 : 0;
     app_wake_source_t wake = light_sleep_wait_until(acc, deadline_us, hl);
     if (wake != APP_WAKE_TIMEOUT) return wake;
-    if (lock_screen_save(epd_hl_get_framebuffer(hl))) (void)pico_boot_mark_frame_cached();
+    // 仅保留关机失败时的锁屏回退素材，不把它标为下次启动的屏幕基准。
+    // Keep lock art for failed-shutdown fallback only; it is not the next boot's panel baseline.
+    (void)lock_screen_save(epd_hl_get_framebuffer(hl));
     uint8_t *original = heap_caps_malloc(684u * 1216u / 2u, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (original) memcpy(original, epd_hl_get_framebuffer(hl), 684u * 1216u / 2u);
     if (app_shutdown_present(hl)) {

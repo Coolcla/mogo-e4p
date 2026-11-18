@@ -66,6 +66,7 @@ typedef struct {
 
     /// LUT lookup function. Must not be NULL.
     lut_func_t lut_lookup_func;
+    bool lut_msb_first;
     /// LUT building function. Must not be NULL
     lut_build_func_t lut_build_func;
 
@@ -116,5 +117,5 @@ void prepare_context_for_next_frame(RenderContext_t* ctx);
  * don't inline for to ensure availability in tests.
  */
 void __attribute__((noinline)) epd_populate_line_mask(
-    uint8_t* line_mask, const uint8_t* dirty_columns, int mask_len
+    uint8_t* line_mask, const uint8_t* dirty_columns, int mask_len, bool msb_first
 );

@@ -147,6 +147,7 @@ SUITES = {
     "haptics_shortcut": [sys.executable, "tools/haptics_shortcut_host_test.py"],
     "book": ["bash", "tools/run_book_host_tests.sh"],
     "screen_offset": [sys.executable, "tools/screen_offset_host_test.py"],
+    "wake_resources": [sys.executable, "tools/wake_resources_host_test.py"],
     "display": ["bash", "tools/run_display_host_test.sh"],
     "refresh": [sys.executable, "tools/display_refresh_host_test.py"],
     "display_contract": [sys.executable, "tools/display_contract_host_test.py"],

@@ -291,6 +291,7 @@ enum EpdDrawError IRAM_ATTR epd_draw_base(
     epd_get_output_offset(&render_context.offset_x, &render_context.offset_y);
     render_context.lut_build_func = lut_functions.build_func;
     render_context.lut_lookup_func = lut_functions.lookup_func;
+    render_context.lut_msb_first = lut_functions.msb_first;
     render_context.phase_luts = s_phase_luts;
     render_context.line_phase = s_line_phase;
     render_context.col_band_x0 = s_col_band_x0;
@@ -327,7 +328,8 @@ enum EpdDrawError IRAM_ATTR epd_draw_base(
     }
 
     epd_populate_line_mask(
-        render_context.line_mask, drawn_columns, render_context.display_width / 4
+        render_context.line_mask, drawn_columns, render_context.display_width / 4,
+        render_context.lut_msb_first
     );
 
     epd_power_guard_scan_begin();

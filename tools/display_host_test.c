@@ -271,12 +271,38 @@ static void screen_offset_live_test(void) {
     next_draw_error = EPD_DRAW_OTHER_ERROR;
     assert(update_display_screen_offset(&hl,1,0) == EPD_DRAW_OTHER_ERROR);
     assert(front[100] != back[100] && clears == prior_clears && !ota_display_depth);
+    int x, y;
+    display_get_screen_offset(&x, &y);
+    assert(x == 0 && y == 0);
     // 故障出口继续走既有完整恢复；旧小缓冲替身只验证恢复调用与清屏次数。
     // Fault output retains the existing full recovery; the small-buffer shim checks its invocation and clear count only.
     memcpy(target,front,FB_BYTES);
     assert(update_display_screen_offset(&hl,1,0) == EPD_DRAW_SUCCESS && clears == prior_clears + 1);
+    memcpy(diff, back, bytes);
+    prior_clears = clears;
+    int before_draws = draws;
+    power_failure = true;
+    assert(update_display_screen_offset(&hl,2,3) == DISPLAY_DRAW_POWER_NOT_READY);
+    power_failure = false;
+    // 退避期间保留原坐标和后帧，且不开始清屏。/ Backoff leaves coordinates and back untouched and cannot start a clear.
+    assert(update_display_screen_offset(&hl,2,3) == DISPLAY_DRAW_POWER_NOT_READY);
+    display_get_screen_offset(&x, &y);
+    assert(x == 1 && y == 0 && !memcmp(diff, back, bytes));
+    assert(draws == before_draws && offset_scans == scans + 1 && clears == prior_clears);
+    now_us += 1001000;
+    next_draw_error = EPD_DRAW_EMPTY_LINE_QUEUE;
+    assert(update_display_screen_offset(&hl,2,3) == EPD_DRAW_EMPTY_LINE_QUEUE);
+    display_get_screen_offset(&x, &y);
+    assert(x == 1 && y == 0 && clears == prior_clears + 1 && safe_clock == DISPLAY_PCLK_SAFE_MHZ);
+    assert(update_display_screen_offset(&hl,2,3) == EPD_DRAW_SUCCESS);
+    display_get_screen_offset(&x, &y);
+    assert(x == 2 && y == 3 && clears == prior_clears + 2);
+    // 只有全刷请求、无供电故障时，换位置仍需先擦掉旧覆盖区。
+    // Even without a power fault, a requested full refresh must erase the old footprint when moving.
+    display_request_full_refresh();
+    assert(update_display_screen_offset(&hl,0,0) == EPD_DRAW_SUCCESS && clears == prior_clears + 3);
     free(front); free(back); free(diff);
-    puts("screen offset: 30 physical translations without clears, clipped strips erased, no-op, invalid bounds and failed-scan recovery passed");
+    puts("screen offset: 30 physical translations, clipping, no-op, bounds, rollback in differential and full recovery, power backoff, retry");
 }
 
 int main(void) {
@@ -521,6 +547,22 @@ int main(void) {
     assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == prior_clears + 3);
     puts("power recovery: all 17 outputs reject missing rails without committing back; queued retries are bounded and recovery preserves the target until full output succeeds");
     screen_offset_live_test();
+    for (int x = 0; x <= 8; x += 8) {
+        display_apply_screen_offset(x, 0);
+        int before = clears, before_draws = draws;
+        assert(update_display_boot_frame(&hl) == EPD_DRAW_SUCCESS);
+        assert(clears == before + 1 && draws == before_draws + 1 && white_baseline);
+        assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == before + 1);
+    }
+    display_apply_screen_offset(0, 0);
+    int before = clears, before_draws = draws;
+    power_failure = true;
+    assert(update_display_boot_frame(&hl) == DISPLAY_DRAW_POWER_NOT_READY);
+    assert(clears == before && draws == before_draws);
+    now_us += 1001000;
+    power_failure = false;
+    assert(update_display_mode_diff(&hl, MODE_GL16) == EPD_DRAW_SUCCESS && clears == before + 1);
+    puts("boot: one clear for centered and shifted starts; power rejection defers the baseline rebuild");
 }
 
 // Continuous state is exercised separately with native-size buffers.

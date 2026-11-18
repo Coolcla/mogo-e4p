@@ -607,7 +607,9 @@ void app_loop_run(const app_loop_config_t* config) {
         esp_err_t err = ESP_OK;
         int64_t frame_ms = esp_timer_get_time() / 1000;
         int64_t key_frame_ms = frame_ms;
+        int64_t sample_ms = frame_ms;
         bool replayed = false;
+        bool touch_blocked = false;
         bool pressed = false, released = false;
         bool quick_lock_requested = false;
         bool quick_input_owned = false;
@@ -638,12 +640,16 @@ void app_loop_run(const app_loop_config_t* config) {
                     // still holds a stale press frame (measured toolbar chain).
                     s_last_frame = f;
                     app_input_frame_to_touch(&f, &touch);
-                    if (app_input_filter_screen_touch(&touch_filter, &touch, ESP_OK,
-                        current->screen_touch_disabled && current->screen_touch_disabled(&ctx))) {
+                    touch_blocked = app_input_filter_screen_touch(&touch_filter, &touch, ESP_OK,
+                        current->screen_touch_disabled && current->screen_touch_disabled(&ctx), &ctx, f.t_ms);
+                    if (touch_blocked) {
                         key_hold.key = -1;
+                        last_input_ms = (int64_t)f.t_ms;
                         app_input_cancel_gesture(&ctx, current, &gesture);
+                        app_input_drop_contact(&latest, &was_touched);
+                        if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
+                        menu_pressed = UI_MENU_HIT_NONE;
                     }
-                    app_input_rotate_touch(&touch);
                     app_input_ingest_touch_frame(&ctx, &latest, &touch, ESP_OK, &was_touched,
                                        (int64_t)f.t_ms, &last_input_ms, &pressed, &released);
                     // 快捷层与电源弹窗都按帧回放：只在排空后喂最后一帧会丢掉按下沿，
@@ -652,7 +658,7 @@ void app_loop_run(const app_loop_config_t* config) {
                     // only the last frame drops press edges, so a fast tap needs a second
                     // click. A dialog action runs in this tick's dialog branch.
                     if (power_dialog_open) {
-                        ctx.consumed = false;
+                        ctx.consumed = touch_blocked;
                         EpdRect dirty;
                         ui_power_action_t action = ui_power_dialog_feed(&power_dialog, &ctx, &dirty);
                         if (action == UI_POWER_ACTION_NONE && dirty.height > 0) {
@@ -668,7 +674,8 @@ void app_loop_run(const app_loop_config_t* config) {
                         }
                         ctx.consumed = true;
                     } else if (!menu_open) {
-                        quick_input_owned = app_quick_layer_feed_frame(&ctx, current, &quick_lock_requested, true);
+                        quick_input_owned = touch_blocked ? app_quick_layer_cancel_input()
+                            : app_quick_layer_feed_frame(&ctx, current, &quick_lock_requested, true);
                         if (quick_input_owned) {
                             key_hold.key = -1;
                             app_input_cancel_gesture(&ctx, current, &gesture);
@@ -729,7 +736,9 @@ void app_loop_run(const app_loop_config_t* config) {
                 // / No new frame: reuse the last one; edges are unchanged by construction.
                 app_input_frame_to_touch(&s_last_frame, &touch);
             }
+            sample_ms = s_last_frame.t_ms;
         } else {
+            sample_ms = esp_timer_get_time() / 1000;
             err = s31_input_read_touch(config->tp, &touch);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "CST836U read failed: %s", esp_err_to_name(err));
@@ -763,12 +772,16 @@ void app_loop_run(const app_loop_config_t* config) {
         }
 #endif
         if (!replayed) {
-            if (app_input_filter_screen_touch(&touch_filter, &touch, err,
-                current->screen_touch_disabled && current->screen_touch_disabled(&ctx))) {
+            touch_blocked = app_input_filter_screen_touch(&touch_filter, &touch, err,
+                current->screen_touch_disabled && current->screen_touch_disabled(&ctx), &ctx, sample_ms);
+            if (touch_blocked) {
                 key_hold.key = -1;
+                if (err == ESP_OK) last_input_ms = frame_ms;
                 app_input_cancel_gesture(&ctx, current, &gesture);
+                app_input_drop_contact(&latest, &was_touched);
+                if (menu_pressed >= 0) menu_feedback(&ctx, current, menu_leaf, menu_pressed, false, &feedback);
+                menu_pressed = UI_MENU_HIT_NONE;
             }
-            app_input_rotate_touch(&touch);
             app_input_ingest_touch_frame(&ctx, &latest, &touch, err, &was_touched,
                                frame_ms, &last_input_ms, &pressed, &released);
             // 单指按下沿给一记短震；回放帧不重复，多点、读错与读卡模式不震。
@@ -825,7 +838,7 @@ void app_loop_run(const app_loop_config_t* config) {
         }
 
         if (!power_input_owned && !menu_open) {
-            if (err != ESP_OK) {
+            if (err != ESP_OK || touch_blocked) {
                 quick_input_owned = app_quick_layer_cancel_input();
             }
             else {
@@ -839,7 +852,7 @@ void app_loop_run(const app_loop_config_t* config) {
         }
 
         if (power_input_owned && err == ESP_OK) {
-            ctx.consumed = false;
+            ctx.consumed = touch_blocked;
             EpdRect dirty;
             ui_power_action_t action = ui_power_dialog_feed(&power_dialog, &ctx, &dirty);
             if (action == UI_POWER_ACTION_NONE) action = replay_power_action;

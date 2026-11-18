@@ -59,9 +59,14 @@ void display_request_full_refresh(void);
 /// 应用正常竖屏的设备偏移；两次扫描之间调用，下一帧清屏重建真实基准。
 /// Apply device offsets in portrait coordinates between scans; rebuild the physical baseline on the next frame.
 void display_apply_screen_offset(int x, int y);
-/// 校正页按新旧物理坐标做柔和差分，成功才提交后缓冲；正常调整不清屏、不累计周期全刷。
-/// Calibration uses soft differences at old/new physical coordinates, committing back only on success; normal adjustments neither clear nor count toward periodic refreshes.
+/// 查询已应用的竖屏偏移；界面任务在扫描之间调用。/ Get applied portrait offsets; call from the UI task between scans.
+void display_get_screen_offset(int* x, int* y);
+/// 正常校正走物理差分；成功才切换坐标，失败保留重建要求。
+/// Calibrate by physical differences; publish coordinates only on success and retain recovery on failure.
 enum EpdDrawError update_display_screen_offset(EpdiyHighlevelState* hl, int x, int y);
+/// 启动：在供电守卫内建立白底并提交已绘好的开机画面。
+/// Boot: establish a white baseline under the power guard and present the prepared splash.
+enum EpdDrawError update_display_boot_frame(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_mode(EpdiyHighlevelState* hl, enum EpdDrawMode mode);
 /// 普通页面切换使用真实差分 GL16；未变化像素不进入 dirty map。
 /// True differential GL16 for ordinary page transitions; unchanged pixels stay clean.

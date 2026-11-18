@@ -72,8 +72,9 @@ static bool s_memory_present_pending;
 static EpdRect s_input_area;
 static int paints,pushes,row_taps;
 static int offset_pushes;
-static void app_settings_screen_offset(int *x,int *y){*x=3;*y=-5;}
-static int update_display_screen_offset(void *hl,int x,int y){(void)hl;assert(x==3&&y==-5);++offset_pushes;return 0;}
+enum { SCREEN_OFFSET_RETRIES=2 };
+static unsigned s_screen_offset_retries;
+static void screen_offset_present(app_ctx_t *ctx){(void)ctx;assert(s_screen_offset_retries==SCREEN_OFFSET_RETRIES);++offset_pushes;++paints;}
 static int memory_paints;
 static void memory_render_content(uint8_t *fb){(void)fb;++memory_paints;}
 static EpdRect pushed;
