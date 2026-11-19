@@ -3,27 +3,15 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
-## v1.1.4 · 本地测试 / Local testing · 2026-11-19
+## v1.1.5 · 2026-11-19
 
-- 关机壁纸先物理清白，再从白底用完整48相GC16整屏出图，以减轻上一页残影；待机壁纸刷新不变。/ Physically clear the panel and present shutdown art from white with complete 48-phase GC16 to reduce ghosting; standby wallpaper refresh is unchanged.
-- 针对阅读背景翻页的残影反馈，黑→白推白由 18 拍增至 21 拍，灰→白恢复原单向推白序列；背景表总相数与翻页节拍不变。/ In response to background-turn ghosting reports, increase black-to-white from 18 to 21 pushes and restore the previous one-way gray-to-white sequence without changing phase count or turn timing.
-- 修正差分刷新的脏列位序；屏幕偏移成功落屏后才切换触摸坐标，旧画面触点、留白触点及滑出按钮的接触不会误触发，自动补试等到手指抬起。/ Correct dirty-column bit order; publish touch offsets only after successful output, reject stale, exposed-strip and drag-out contacts, and wait for physical lift before retrying.
-- 定时关机后仍可续读，启动先清白重建画面，不把锁屏缓存当作关机画面。/ Reader resume still works after timed shutdown; boot clears to rebuild the display baseline rather than assuming the shutdown image matches cached lock art.
-
-## v1.1.4 · 本地测试 / Local testing · 2026-11-18
-
-- 修复字形临时分配失败后文字持续缺失的问题；失败字形不再写入缓存，重绘时可恢复，无需重启。/ Retry glyphs on redraw instead of caching failed allocations, so missing text can recover without a restart.
-- 手动网络对时、检查更新和确认下载可按业务联网方式自动临时联网，不改无线开关；对时在后台等网络，设置页可继续操作。/ Manual time sync, update checks and confirmed downloads can connect temporarily without changing radio toggles; time sync waits for connectivity off the UI task.
-- 修复移动网络关闭时手动刷新天气无法临时启动 4G 的问题；按业务联网方式连接，结束后自动归还临时网络，不改开关设置。/ Allow manual weather refresh to start cellular temporarily when selected by the business route, then release it without changing radio settings.
-- 天气和自动检查更新按内存余量避让；离页取消不再等待弱网请求，4G 信号改在后台查询。/ Weather and automatic update checks defer on memory pressure; navigation no longer waits for cancelled network checks, and cellular signal is sampled in the background.
-- 开书和无线启动共用内存高峰准入；Wi-Fi 不再自动断开正在使用的蓝牙翻页器。/ Coordinate book-open and radio-start memory peaks; Wi-Fi no longer disconnects an active Bluetooth page-turner.
-- Wi-Fi 占用或不满足起栈内存条件时，快捷栏和设置页直接提示并拒绝开启蓝牙，不保存无效开关；快捷开启网络遇到驱动内存不足时单独提示。/ Quick controls and Settings reject Bluetooth enable with an immediate Wi-Fi or memory hint and leave the setting unchanged; network startup reports driver out-of-memory separately.
-- 将 S31 的 4G 收发数据优先放入 PSRAM，减少片内 DMA 内存占用；让天气任务与系统空闲任务共享 CPU 时间，避免慢 TLS 运算饿死空闲任务。/ Prefer PSRAM for S31 cellular payloads to reduce internal DMA memory use, and let idle tasks run during slow weather TLS operations.
-- 无线开关遇到内存高峰准入繁忙时，提示当前正在开书、启动无线或连接翻页器等具体原因；移动网络设置页也显示操作失败提示。/ Name the phase holding peak admission when a radio toggle is blocked and show toggle errors in cellular settings.
-- 4G 与蓝牙翻页器互斥：保留正在使用的连接，启动另一项时提示关闭占用功能；空闲蓝牙可临时让位，4G 停止后按原设置恢复。/ Make cellular and Bluetooth page turning mutually exclusive: preserve active connections, identify the blocker, and restore idle Bluetooth after cellular stops.
-- 新增默认关闭的自动电量校准，按本机有效放电区间逐步学习；支持查看覆盖、关闭后保留结果和确认重置，数据仅留本机，显示平滑与充电保护保持不变。/ Add opt-in automatic battery calibration from eligible local discharge intervals, coverage status, retained results after disabling and confirmed reset; keep data local and retain display smoothing and charger protection.
-- 设置将自动电量校准标为 `(beta)` 测试版；修复关闭状态提示、PIN 解锁前写入、显示检查点归属及双槽重置中断后的恢复。/ Mark automatic battery calibration as `(beta)` in Settings; fix disabled status, writes before PIN unlock, checkpoint provenance, and recovery from an interrupted dual-slot reset.
-- 根据新一轮连续放电日志微调中低电量曲线，减少低电尾段偏高；更新电量缓存版本，首次启动按新曲线估算。/ Refine the middle/lower battery curve from another continuous discharge to reduce an overstated tail; revise saved-SOC compatibility so the first start uses the new curve.
+- 优化电量估算曲线。
+- 新增自动电量校准设置（Beta，默认关闭）。
+- 统一调度阅读、Wi-Fi、4G 和蓝牙的内存。
+- 修复字形缓存失败导致缺字的问题。
+- 优化阅读背景的水波纹刷新，减轻残影。
+- 优化屏幕偏移；调整后若有溢墨，请恢复默认。
+- 优化关机壁纸刷新，减轻残影。
 
 ## v1.1.4 · 2026-11-18
 

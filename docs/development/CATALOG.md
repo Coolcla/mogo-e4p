@@ -46,6 +46,7 @@
 - [docs/ota-release-notes/1.1.2.txt](../ota-release-notes/1.1.2.txt)
 - [docs/ota-release-notes/1.1.3.txt](../ota-release-notes/1.1.3.txt)
 - [docs/ota-release-notes/1.1.4.txt](../ota-release-notes/1.1.4.txt)
+- [docs/ota-release-notes/1.1.5.txt](../ota-release-notes/1.1.5.txt)
 - [docs/user-manual-detailed.zh-CN.json](../user-manual-detailed.zh-CN.json)
 - [docs/user-manual.zh-CN.json](../user-manual.zh-CN.json)
 
