@@ -230,7 +230,7 @@ static app_redraw_t pin_setup_tick(app_ctx_t *ctx) {
     }
     return pin_paint(ctx, (EpdRect){122, 218, 440, 247});
 }
-static int s_style_scroll, s_main_scroll;
+static int s_main_scroll;
 static bool s_scroll_drag_consumed, s_scroll_present_pending;
 static int s_font_page, s_wallpaper_page;
 static bool s_sync_pending, s_sync_waiting;
@@ -813,18 +813,29 @@ static void setting_group(uint8_t *fb, int title_y, const char *title,
     }
 }
 
-static void setting_toggle(uint8_t *fb, int y, const char *title, const char *detail, bool active) {
-    settings_card(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE, 0x70);
-    ui_text(fb, 59, y + 24, 27, title, EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 59, y + 75, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect track = {555, y + 43, 69, 39};
+static void setting_toggle_track(uint8_t *fb, EpdRect track, bool active) {
     ui_fill_round_rect(fb, track, 19, active ? 0x58 : 0xc4);
     int cx = active ? track.x + 49 : track.x + 20;
     epd_fill_circle(cx, track.y + 19, 16, UI_GRAY_WHITE, fb);
     epd_draw_circle(cx, track.y + 19, 16, UI_GRAY_BLACK, fb);
 }
 
-static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
+static void setting_toggle(uint8_t *fb, int y, const char *title, const char *detail, bool active) {
+    settings_card(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE, 0x70);
+    ui_text(fb, 59, y + 24, 27, title, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 59, y + 75, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
+    setting_toggle_track(fb, (EpdRect){555, y + 43, 69, 39}, active);
+}
+
+static EpdRect shelf_style_card(int index) {
+    return (EpdRect){36, 263 + index * 300, 612, index == 2 ? 230 : 277};
+}
+static EpdRect shelf_style_titles_row(EpdRect card) {
+    return (EpdRect){card.x, card.y + 228, card.width, card.height - 228};
+}
+static uint8_t shelf_style_id(int index) { return index == 2 ? 5 : (uint8_t)(index + 1); }
+
+static void draw_style_thumbnail(uint8_t *fb, int style, int top, bool titles) {
     if (top < 242 || top + 170 >= UI_NAV_TOP) return;
     if (style == 5) {
         ui_fill_round_rect(fb, (EpdRect){68,top,548,170}, 12, UI_GRAY_WHITE);
@@ -856,6 +867,8 @@ static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
         ui_draw_acrylic_guard(fb, (EpdRect){left, top + 129, 486, 35});
 
     }
+    if (titles) for (int i = 0; i < 3; ++i)
+        ui_fill_rect_fast((EpdRect){left + 43 + i * 155, top + 172, 70, 3}, UI_GRAY_BLACK, fb);
 }
 
 // 仅 82x82 灰阶头像，不缓存整屏或第二份字库；文件变更/拔卡会使缓存失效。
@@ -1317,20 +1330,29 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 36, 207, 23, "选择书架外观与排列方式", EPD_DRAW_ALIGN_LEFT, false);
         static const char *const styles[] = {"深色书轨", "亚克力书架", "列表书架"};
         static const char *const descriptions[] = {"每页 9 本", "每页 9 本", "作者与进度 · 每页 4 本"};
+        if (s_notice[0]) ui_text_vc(fb, 36, 169, 21, s_notice, EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 0; i < 3; ++i) {
-            int y = 263 + i * 253 - s_style_scroll;
-            if (y + 230 < 242 || y > 1095) continue;
-            EpdRect card = {36, y, 612, 230};
-            int style = i == 2 ? 5 : i + 1;
-            bool active = app_settings_shelf_style() == style;
-            settings_card(fb, card, 24, active ? 0xd0 : UI_GRAY_WHITE,
-                          active ? 0x58 : 0x70);
-            draw_style_thumbnail(fb, style, y + 11);
-            if (y + 190 < 1096) ui_text(fb, 68, y + 188, 23, styles[i], EPD_DRAW_ALIGN_LEFT, false);
-            if (y + 195 < 1096) ui_text(fb, 310, y + 192, 17, descriptions[i], EPD_DRAW_ALIGN_LEFT, false);
-            if (y + 220 < 1096) {
-                epd_draw_circle(609, y + 207, 13, UI_GRAY_BLACK, fb);
-                if (active) epd_fill_circle(609, y + 207, 6, UI_GRAY_BLACK, fb);
+            EpdRect card = shelf_style_card(i);
+            const uint8_t style = shelf_style_id(i);
+            const bool active = app_settings_shelf_style() == style;
+            const bool titles = app_settings_shelf_show_titles(style);
+            const int y = card.y;
+            settings_card(fb, card, 24, active ? 0xd0 : UI_GRAY_WHITE, active ? 0x58 : 0x70);
+            draw_style_thumbnail(fb, style, y + 11, titles);
+            int title_px = ui_text_effective_px(23), detail_px = ui_text_effective_px(17);
+            if (title_px > 30) title_px = 30;
+            if (detail_px > 22) detail_px = 22;
+            ui_text_fixed_vc(fb, 68, y + 207, title_px, styles[i], EPD_DRAW_ALIGN_LEFT, false);
+            ui_text_fixed_vc(fb, 310, y + 207, detail_px, descriptions[i], EPD_DRAW_ALIGN_LEFT, false);
+            epd_draw_circle(609, y + 207, 13, UI_GRAY_BLACK, fb);
+            if (active) epd_fill_circle(609, y + 207, 6, UI_GRAY_BLACK, fb);
+            if (style != 5) {
+                EpdRect row = shelf_style_titles_row(card);
+                settings_divider(fb, row.y, 68, 548);
+                int switch_px = ui_text_effective_px(22);
+                if (switch_px > 32) switch_px = 32;
+                ui_text_fixed_vc(fb, 68, row.y + row.height / 2, switch_px, "显示书名", EPD_DRAW_ALIGN_LEFT, false);
+                setting_toggle_track(fb, (EpdRect){546, row.y + 5, 69, 39}, titles);
             }
         }
         ui_nav_draw(fb, 3);
@@ -1873,7 +1895,7 @@ static void on_enter(app_ctx_t *ctx) {
     pin_setup_close();
     s_notice[0] = 0;
     s_page = SETTINGS_MAIN;
-    s_style_scroll = s_main_scroll = s_font_page = s_wallpaper_page = 0;
+    s_main_scroll = s_font_page = s_wallpaper_page = 0;
     s_scroll_drag_consumed = s_scroll_present_pending = false;
     s_wallpaper_selected = -1;
 
@@ -2449,13 +2471,20 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_SHELF_STYLE) {
-        if (y < 190) { s_page = SETTINGS_MAIN; (void)wifi_transfer_get_saved_wifi(s_main_wifi,&s_main_wifi_saved); settings_prepare_profile(); return APP_REDRAW_PAGE; }
+        if (y < 190) { s_page = SETTINGS_MAIN; s_notice[0] = 0; (void)wifi_transfer_get_saved_wifi(s_main_wifi,&s_main_wifi_saved); settings_prepare_profile(); return APP_REDRAW_PAGE; }
         for (int i = 0; i < 3; ++i) {
-            if (y >= 263 + i * 253 - s_style_scroll && y < 493 + i * 253 - s_style_scroll && y < 1096) {
-                app_settings_set_shelf_style((uint8_t)(i == 2 ? 5 : i + 1));
-                s_page = SETTINGS_MAIN;
+            EpdRect card = shelf_style_card(i);
+            if (!ui_rect_hit(card, ev->x0, y)) continue;
+            const uint8_t style = shelf_style_id(i);
+            if (style != 5 && ui_rect_hit(shelf_style_titles_row(card), ev->x0, y)) {
+                const bool saved = app_settings_set_shelf_show_titles(style, !app_settings_shelf_show_titles(style));
+                snprintf(s_notice, sizeof(s_notice), "%s", saved ? "" : "保存失败，请重试");
                 return APP_REDRAW_PAGE;
             }
+            app_settings_set_shelf_style(style);
+            s_notice[0] = 0;
+            s_page = SETTINGS_MAIN;
+            return APP_REDRAW_PAGE;
         }
         return APP_REDRAW_NONE;
     }
@@ -2709,7 +2738,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     }
     if(y>=SETTINGS_PERSONAL_Y && y<SETTINGS_PERSONAL_Y+SETTINGS_PERSONAL_ROWS*SETTINGS_ROW_H) {
         row=(y-SETTINGS_PERSONAL_Y)/SETTINGS_ROW_H;
-        if(row==0) {s_page=SETTINGS_SHELF_STYLE;s_style_scroll=0;}
+        if(row==0) {s_page=SETTINGS_SHELF_STYLE;s_notice[0]=0;}
         else if(row==1){ui_lock_style_open(ctx->fb);s_page=SETTINGS_LOCK_STYLE;}
         else if(row==2){s_page=SETTINGS_LOCK_PIN;s_notice[0]=0;}
         else if(row==3)profile_editor_open(true);

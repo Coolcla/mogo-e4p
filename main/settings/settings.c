@@ -265,6 +265,7 @@ bool app_settings_set_quick_layout(const app_quick_layout_t *layout) {
 #define NVS_KEY_BOOK_RULE_TEXT "bk_rule_text"
 #define NVS_KEY_BOOK_RULE_OFFSET "bk_rule_y"
 #define NVS_KEY_SHELF_STYLE "shelf_ui"
+#define NVS_KEY_SHELF_TITLES "shelf_titles"
 #define NVS_KEY_SHELF_V22 "shelf_v22"
 #define NVS_KEY_BOOKS_DIR "books_dir"
 #define NVS_KEY_FONTS_DIR "fonts_dir"
@@ -451,6 +452,7 @@ static network_auto_priority_t s_network_priority = NETWORK_AUTO_WIFI_FIRST;
 static uint32_t s_time_sync_last;
 static uint32_t s_time_sync_try;
 static uint8_t s_shelf_style = 2;
+static uint8_t s_shelf_titles;
 static const char s_books_dir[MEDIA_DIR_MAX] = "/sdcard/books";
 static const char s_fonts_dir[MEDIA_DIR_MAX] = "/sdcard/fonts";
 static void nvs_put_u8(const char* key, uint8_t value);
@@ -487,6 +489,7 @@ static void migrate_device_name(char *name, size_t capacity) {
 
 void app_settings_init(void) {
     s_screen_x = s_screen_y = 0;
+    s_shelf_titles = 0;
     s_quick_layout = (app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
     s_network_route = NETWORK_ROUTE_AUTO;
     s_network_priority = NETWORK_AUTO_WIFI_FIRST;
@@ -831,6 +834,9 @@ void app_settings_init(void) {
     uint8_t shelf_style = 2;
     if (nvs_get_u8(h, NVS_KEY_SHELF_STYLE, &shelf_style) == ESP_OK && shelf_style >= 1 && shelf_style <= 5)
         s_shelf_style = shelf_style == 3 || shelf_style == 4 ? 2 : shelf_style;
+    uint8_t shelf_titles = 0;
+    if (nvs_get_u8(h, NVS_KEY_SHELF_TITLES, &shelf_titles) == ESP_OK && shelf_titles <= 3)
+        s_shelf_titles = shelf_titles;
     uint8_t shelf_v22 = 0;
     bool migrate_shelf = nvs_get_u8(h, NVS_KEY_SHELF_V22, &shelf_v22) != ESP_OK || shelf_v22 != 1;
     bool retired_shelf = shelf_style == 3 || shelf_style == 4;
@@ -1810,6 +1816,25 @@ void app_settings_set_shelf_style(uint8_t style) {
     if (s_shelf_style == style) return;
     s_shelf_style = style;
     nvs_put_u8(NVS_KEY_SHELF_STYLE, style);
+}
+static uint8_t shelf_title_bit(uint8_t style) {
+    return style == 1 ? 1 : style == 2 ? 2 : 0;
+}
+bool app_settings_shelf_show_titles(uint8_t style) {
+    return (s_shelf_titles & shelf_title_bit(style)) != 0;
+}
+bool app_settings_set_shelf_show_titles(uint8_t style, bool show) {
+    const uint8_t bit = shelf_title_bit(style);
+    if (!bit) return false;
+    const uint8_t value = show ? s_shelf_titles | bit : s_shelf_titles & ~bit;
+    if (value == s_shelf_titles) return true;
+    nvs_handle_t h;
+    if (settings_write_open(&h) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(h, NVS_KEY_SHELF_TITLES, value);
+    if (err == ESP_OK) err = nvs_commit(h);
+    settings_write_close(h);
+    if (err == ESP_OK) s_shelf_titles = value;
+    return err == ESP_OK;
 }
 const char* app_settings_books_dir(void) { return s_books_dir; }
 const char* app_settings_fonts_dir(void) { return s_fonts_dir; }

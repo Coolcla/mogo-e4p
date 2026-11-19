@@ -475,6 +475,11 @@ bool app_settings_set_book_styles(bool enabled);
 /// 书架样式：1 深色书轨、2 亚克力、5 列表；旧3/4安全回退2。/ Shelf styles: rail (1), acrylic (2), list (5); retired IDs 3/4 fall back to 2.
 uint8_t app_settings_shelf_style(void);
 void app_settings_set_shelf_style(uint8_t style);
+/// 深色书轨与亚克力独立记忆封面下书名，默认关闭；列表始终按原样绘制。
+/// Rail and acrylic remember captions separately (off by default); list rendering is unchanged.
+bool app_settings_shelf_show_titles(uint8_t style);
+/// 不支持的样式或保存失败返回 false，不修改内存状态。/ Unsupported styles or failed saves leave state unchanged.
+bool app_settings_set_shelf_show_titles(uint8_t style, bool show);
 /// 固定 TF 根目录：/sdcard/books 与 /sdcard/fonts；旧配置/备份不能修改。/ Fixed TF roots, unaffected by legacy settings/backups.
 const char* app_settings_books_dir(void);
 const char* app_settings_fonts_dir(void);

@@ -75,6 +75,10 @@ static uint8_t app_settings_system_contrast(void){return 100;}
  unit+=function('book_cover_crop',ROOT/'main/image/image_decode.c')+'\n'
  unit+=r'''
 #include "ui_image_dither.h"
+#include "assets/ui_icons.h"
+void ui_draw_icon(uint8_t *fb,int x,int y,int px,ui_icon_t icon,uint8_t ink){
+    assert(icon==UI_ICON_BOOK_OPEN&&px==42);epd_draw_pixel(x,y,ink,fb);
+}
 #define BOOK_COVER_W 176
 #define BOOK_COVER_H 240
 static int s_view=0,style=5,s_pressed_control=-1;

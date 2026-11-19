@@ -627,6 +627,7 @@ static void scan_shelf(app_ctx_t* ctx);
 static void rescan_shelf(app_ctx_t* ctx);
 static void copy_text(char* dst, size_t cap, const char* src);
 static void fit_text(char* text, int px, int width);
+static void fit_fixed_text(char* text, int px, int width);
 static void free_book(void);
 static void save_progress(void);
 static void invalidate_prep(void);
@@ -743,6 +744,7 @@ static EpdRect progress_rect(void) {
 }
 static int shelf_rows(void) { return s_view == SHELF && app_settings_shelf_style() == 5 ? 4 : BOOK_GRID_ROWS; }
 #define SHELF_BOOK_LIFT_PX 16
+#define SHELF_FURNITURE_BOTTOM 226
 #define SHELF_LIST_BOUNCE_PX 8
 #define SHELF_FAST_COVER_WIDTH 164
 #define SHELF_FAST_COVER_HEIGHT 214
@@ -1066,6 +1068,9 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
                                    : ui_image_dither_gray(tone, image.x + x, image.y + y), fb);
             }
         }
+    } else if (s_view == SHELF && app_settings_shelf_style() != 5) {
+        ui_draw_icon(fb, image.x + image.width / 2, image.y + image.height / 2, 42,
+                     UI_ICON_BOOK_OPEN, UI_GRAY_BLACK);
     } else {
         char title[80]; copy_text(title, sizeof(title), name);
         char *dot = strrchr(title, '.'); if (dot) *dot = 0;
@@ -1143,14 +1148,27 @@ static void draw_shelf_furniture(uint8_t* fb) {
     for (int row = 0; row < 3; ++row) {
         int top = row_rect(row*3).y;
         if (style == 1) {
-            ui_fill_rect_fast((EpdRect){36, top + 214, 612, 12}, UI_GRAY_BLACK, fb);
+            ui_fill_rect_fast((EpdRect){36, top + 214, 612, SHELF_FURNITURE_BOTTOM - 214}, UI_GRAY_BLACK, fb);
             ui_hairline(fb, top + 214, 36, 612, 0x58);
-            ui_hairline(fb, top + 225, 36, 612, 0x10);
+            ui_hairline(fb, top + SHELF_FURNITURE_BOTTOM - 1, 36, 612, 0x10);
         } else if (style == 2) {
-            EpdRect acrylic = {20, top + 181, 644, 45};
+            EpdRect acrylic = {20, top + 181, 644, SHELF_FURNITURE_BOTTOM - 181};
             draw_shelf_guard(fb, acrylic, row);
 
         }
+    }
+}
+static void draw_shelf_titles(uint8_t *fb, int first, int rows) {
+    for (int row = 0; row < rows && first + row < s_visible_count; ++row) {
+        const EpdRect card = row_rect(row);
+        const int height = s_shelf_selecting ? 18 : 24;
+        int px = ui_text_effective_px(s_shelf_selecting ? 16 : 20);
+        if (px > height - 2) px = height - 2;
+        char title[sizeof(s_shelf[0].name)];
+        copy_text(title, sizeof(title), s_shelf[first + row].name);
+        fit_fixed_text(title, px, card.width - 12);
+        ui_text_fixed_vc(fb, card.x + card.width / 2, card.y + SHELF_FURNITURE_BOTTOM + height / 2,
+                         px, title, EPD_DRAW_ALIGN_CENTER, false);
     }
 }
 static EpdRect tool_rect(int i) {
@@ -3683,26 +3701,32 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         ui_draw_icon(fb,360,222,26,UI_ICON_CHEVRON_DOWN,0);
         book_selection_button(fb,book_selection_rect(BOOK_SELECTION_PAGE_ALL),22,"全选本页",s_visible_count>0,false);
     }
-    if (app_settings_shelf_style() == 5) {
+    const uint8_t style = app_settings_shelf_style();
+    const bool show_titles = app_settings_shelf_show_titles(style);
+    const int rows = shelf_rows(), first = ctx->leaf * rows;
+    if (style == 5) {
         EpdRect list=s_shelf_selecting?(EpdRect){36,280,612,720}:(EpdRect){36,184,612,788};
         ui_fill_round_rect(fb,list,20,UI_GRAY_WHITE);
         ui_draw_control_frame(fb,list,20,0x50);
     }
-    for (int row = 0; row < shelf_rows(); ++row) {
-        int i = ctx->leaf * shelf_rows() + row;
+    for (int row = 0; row < rows; ++row) {
+        int i = first + row;
         if (i >= s_visible_count) break;
         EpdRect r = row_rect(row);
-        char name[128]; copy_text(name, sizeof(name), s_shelf[i].name);
-        // 封面抽出只改变书本位置，层板及触摸目标保持原位。
-        // Lifting changes the book position only; shelf furniture and touch targets stay put.
-        if (s_pressed_control == row)
-            r.y -= app_settings_shelf_style() == 5 ? SHELF_LIST_BOUNCE_PX : SHELF_BOOK_LIFT_PX;
-        draw_shelf_cover(fb, r, row, name, s_shelf[i].favorite);
-        if (app_settings_shelf_style() == 5) draw_list_row(fb, row, &s_shelf[i]);
+        // 紧凑多选布局不抬起封面，以免盖住上一行书名。
+        // Skip lifting in the compact selection grid so covers cannot obscure captions above.
+        if (s_pressed_control == row && !(s_shelf_selecting && show_titles))
+            r.y -= style == 5 ? SHELF_LIST_BOUNCE_PX : SHELF_BOOK_LIFT_PX;
+        draw_shelf_cover(fb, r, row, s_shelf[i].name, s_shelf[i].favorite);
+        if (style == 5) draw_list_row(fb, row, &s_shelf[i]);
     }
     draw_shelf_furniture(fb);
-    if (s_message[0] || s_shelf_warning[0])
-        shelf_label(fb,(EpdRect){UI_MARGIN,s_shelf_selecting?998:984,612,22},17,s_message[0]?s_message:s_shelf_warning,false);
+    if (show_titles) draw_shelf_titles(fb, first, rows);
+    if (s_message[0] || s_shelf_warning[0]) {
+        const int notice_y = show_titles ? (s_shelf_selecting ? 260 : 170) : (s_shelf_selecting ? 998 : 984);
+        shelf_label(fb,(EpdRect){UI_MARGIN,notice_y,612,show_titles ? 20 : 22},17,
+                    s_message[0]?s_message:s_shelf_warning,false);
+    }
     if(app_settings_main_refresh_mode()==APP_MAIN_REFRESH_NORMAL){
         // 32列对齐后的封面/书架区；顶部状态栏、题头和下方分页不做黑色强整理。
         // Aligned cover/furniture area; status, title and lower pagination never enter the dark settling pass.
