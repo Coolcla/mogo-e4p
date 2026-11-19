@@ -704,15 +704,15 @@ bool display_take_white_exit(void) {
     return hold;
 }
 
-static enum EpdDrawError update_display_full_unlocked(EpdiyHighlevelState* hl) {
+static enum EpdDrawError update_display_full_impl_unlocked(EpdiyHighlevelState* hl, bool clear_first) {
     display_main_transition_cancel();
     if (!display_power_ready()) return DISPLAY_DRAW_POWER_NOT_READY;
     const EpdWaveform* waveform = s_complete_refresh_requested ? &E0470_FULL_WAVEFORM : &E0470_WAVEFORM;
     epd_hl_waveform(hl, waveform);
     enum EpdDrawError result;
-    if (s_power_fault || s_main_fault) {
-        // 供电或扫描失败后的物理画面未知，先清物理屏，再从真实白底提交当前目标。
-        // Power or scan failure leaves the optical frame unknown: clear the panel, then commit the current target from a real white baseline.
+    if (clear_first || s_power_fault || s_main_fault) {
+        // 显式清白或光学画面未知时，先清物理屏，再从真实白底提交当前目标。
+        // For an explicit clear or an unknown optical frame, clear the panel before drawing the target from white.
         use_scan_for(waveform, MODE_GC16);
         epd_clear();
         result = epd_hl_update_screen_from_white(hl, MODE_GC16, 25);
@@ -725,6 +725,10 @@ static enum EpdDrawError update_display_full_unlocked(EpdiyHighlevelState* hl) {
     if (result == EPD_DRAW_SUCCESS) s_full_refresh_requested = s_complete_refresh_requested = false;
     else if (s_complete_refresh_requested) s_main_fault = true;
     return result;
+}
+
+static enum EpdDrawError update_display_full_unlocked(EpdiyHighlevelState* hl) {
+    return update_display_full_impl_unlocked(hl, false);
 }
 
 static enum EpdDrawError update_display_area_diff_with_unlocked(EpdiyHighlevelState*, const EpdWaveform*, enum EpdDrawMode, EpdRect);
@@ -1041,6 +1045,14 @@ enum EpdDrawError update_display_white(EpdiyHighlevelState* hl) {
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl) {
     bool held = display_present_begin();
     enum EpdDrawError result = update_display_full_unlocked(hl);
+    display_present_end(held);
+    return result;
+}
+
+enum EpdDrawError update_display_full_clean(EpdiyHighlevelState* hl) {
+    bool held = display_present_begin();
+    display_request_full_refresh();
+    enum EpdDrawError result = update_display_full_impl_unlocked(hl, true);
     display_present_end(held);
     return result;
 }

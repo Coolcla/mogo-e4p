@@ -65,6 +65,7 @@ const EpdWaveform E0470_WAVEFORM = {0}, E0470_FOLLOW_WAVEFORM = {1}, E0470_GRAY8
     E0470_CAPSULE_GRAY_WAVEFORM = {6}, E0470_APPLY_WAVEFORM = {7};
 static uint8_t target[FB_BYTES], presented[FB_BYTES];
 static int clocks, powerons, clears, draws, full_draws, safe_clock, prefill, last_mode, last_scan;
+static int clears_at_draw;
 static bool white_baseline, correct_target_at_draw;
 static int scan_at_draw, prefill_at_draw;
 static enum EpdDrawError next_draw_error;
@@ -169,6 +170,7 @@ static enum EpdDrawError draw(EpdiyHighlevelState* hl, enum EpdDrawMode mode, in
     }
     physical_scan_power();
     ++draws;
+    clears_at_draw = clears;
     full_draws += full;
     last_mode = mode;
     waveform_at_draw = hl->waveform;
@@ -370,6 +372,24 @@ int main(void) {
     assert(clears == 1 && clear_cycles == 1 && draws == 1 && white_baseline && correct_target_at_draw);
     assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_FULL_WAVEFORM &&
            hl.waveform == &E0470_WAVEFORM);
+
+    // 关机清白先于48相出图，失败仍保留完整重建请求。/ Shutdown clears before the 48-phase draw and retains full recovery on failure.
+    for (unsigned fail = 0; fail < 2; ++fail) {
+        memcpy(front, target, FB_BYTES);
+        memset(back, 0x55, FB_BYTES);
+        clears = draws = clear_cycles = 0;
+        const int prior_full = full_draws;
+        const enum EpdDrawError expected = fail ? EPD_DRAW_OTHER_ERROR : EPD_DRAW_SUCCESS;
+        next_draw_error = expected;
+        assert(update_display_full_clean(&hl) == expected);
+        assert(clears == 1 && clears_at_draw == 1 && draws == 1 && full_draws == prior_full + 1);
+        assert(white_baseline && correct_target_at_draw && !memcmp(front, target, FB_BYTES));
+        assert(last_mode == MODE_GC16 && waveform_at_draw == &E0470_FULL_WAVEFORM);
+        assert(hl.waveform == &E0470_WAVEFORM && !ota_display_depth);
+        assert(update_display_full(&hl) == EPD_DRAW_SUCCESS);
+        assert(clears == (fail ? 2 : 1) && !memcmp(back, target, FB_BYTES));
+        assert(waveform_at_draw == (fail ? &E0470_FULL_WAVEFORM : &E0470_WAVEFORM));
+    }
 
     // 撤回跟手滚动后，解锁的下一帧仍须全刷一次，随后恢复局部差分。
     // Removing follow scrolling must retain exactly one full update on the next wake frame, then resume local differences.

@@ -623,7 +623,7 @@ bool app_shutdown_present(EpdiyHighlevelState *hl) {
     app_lock_font_t saved = {0};
     app_font_begin_lock(&saved);
     ui_power_shutdown_prepare(epd_hl_get_framebuffer(hl));
-    enum EpdDrawError result = update_display_full(hl);
+    enum EpdDrawError result = update_display_full_clean(hl);
     guard_draw_result(hl, result);
     app_font_end_lock(&saved);
     return result == EPD_DRAW_SUCCESS;

@@ -104,6 +104,8 @@ enum EpdDrawError update_display_from_white_with(
 /// Paint the front buffer white and GC16 the panel back to white.
 enum EpdDrawError update_display_white(EpdiyHighlevelState* hl);
 enum EpdDrawError update_display_full(EpdiyHighlevelState* hl);
+/// 物理清白后，以完整48相GC16整屏提交现有前缓冲。/ Physically clear the panel, then present the existing front buffer with complete 48-phase GC16.
+enum EpdDrawError update_display_full_clean(EpdiyHighlevelState* hl);
 
 /// 面板修复：不看 framebuffer 的整屏盲刷，专治刷新中途断电留下的条纹。
 /// Panel repair: a blind full-screen drive that ignores the framebuffer, for the stripes a power

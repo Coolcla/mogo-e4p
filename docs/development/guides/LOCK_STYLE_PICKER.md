@@ -19,6 +19,8 @@ Custom art supports independent crop/contain framing. Browsing does not enable i
 电源菜单关机和待机方式「彻底关机」直接显示关机画面；仅浅睡继续显示原锁屏，定时浅睡在10/30/60分钟到期后切换关机画面再断电，提前唤醒取消本轮倒计时。时钟在浅睡中更新，关机后使用静态关机图；重启沿用重启画面。关机画面推屏失败不执行断电；断电交接失败时，菜单关机返回可操作原页，锁屏/定时入口恢复受密码保护的锁屏等待，不因超时解锁。
 Menu shutdown and immediate-off standby present shutdown art directly. Light sleep retains its lock; timed sleep switches to shutdown art at expiry before powering off, while early wake cancels that countdown. Restart retains its own face. A failed present blocks power-off; failed handoff restores the current page or protected locked waiting, never an unlocked timeout.
 
+关机画面准备好后先物理清白，再从白底以完整48相GC16整屏全像素输出。待机壁纸上屏策略不变。/ Once shutdown art is ready, physically clear the panel, then present the art from white with complete 48-phase GC16 and full-pixel coverage. Standby wallpaper presentation is unchanged.
+
 `services/shutdown_wallpaper` 使用独立可取消的优先级1、12 KiB任务，将所选 JPG/JPEG/PNG准备成684×1216、4bpp标准竖屏画布。解码输出不超过一屏像素，工作内存通过内存管理器分配。只写非活动TF槽 `/sdcard/.readpico/shutdown/0.bin` 或 `1.bin`，完整写入、同步并关闭后才让UI提交单个NVS配置 `read_pico/off_art`；两槽总占用约813 KiB，不写机内图片缓存、不改变分区。失败、取消或NVS提交失败不覆盖活动图片。读取核对尺寸、模式、图片身份、精确长度及像素校验和，损坏、缺失或内存不足时使用系统关机画面。
 An independent cancellable worker prepares a canonical portrait frame and writes only the inactive SD slot. The UI publishes one NVS configuration after a complete synced write. Two slots use about 813 KiB on the card, with no internal image writes or partition changes. Exact length, identity, framing and pixel checksums protect reads; absent/corrupt caches or allocation failure use the built-in face.
 

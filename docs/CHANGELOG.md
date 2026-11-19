@@ -5,6 +5,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## v1.1.4 · 本地测试 / Local testing · 2026-11-19
 
+- 关机壁纸先物理清白，再从白底用完整48相GC16整屏出图，以减轻上一页残影；待机壁纸刷新不变。/ Physically clear the panel and present shutdown art from white with complete 48-phase GC16 to reduce ghosting; standby wallpaper refresh is unchanged.
 - 针对阅读背景翻页的残影反馈，黑→白推白由 18 拍增至 21 拍，灰→白恢复原单向推白序列；背景表总相数与翻页节拍不变。/ In response to background-turn ghosting reports, increase black-to-white from 18 to 21 pushes and restore the previous one-way gray-to-white sequence without changing phase count or turn timing.
 - 修正差分刷新的脏列位序；屏幕偏移成功落屏后才切换触摸坐标，旧画面触点、留白触点及滑出按钮的接触不会误触发，自动补试等到手指抬起。/ Correct dirty-column bit order; publish touch offsets only after successful output, reject stale, exposed-strip and drag-out contacts, and wait for physical lift before retrying.
 - 定时关机后仍可续读，启动先清白重建画面，不把锁屏缓存当作关机画面。/ Reader resume still works after timed shutdown; boot clears to rebuild the display baseline rather than assuming the shutdown image matches cached lock art.
