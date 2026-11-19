@@ -31,16 +31,16 @@
  * both saturation runs trimmed again, to=0 boost kept); the two accessors switch to it
  * automatically while a reading background is set; tune the numbers on hardware against
  * ghosting and text blackness.
- * 用户 2026-10-26：背景页翻页旧字转白擦不净（二次裁剪只剩 15 拍白推），白列改回主页
- * 水波纹已验证的 24 拍；该历史修订保留在记录中，当前背景水波纹按 2026-11-17 反馈回退为18拍。
- * User report 2026-10-26: erased text stayed pale on background pages because the second trim
- * left only 15 white pushes. The then-applied to=15 row carried the main water table's verified
- * 24 pushes; the historical change is retained here, while current background turns use 18.
- * 用户 2026-11-17 反馈：背景水波纹的黑→白白闪明显；背景白列改回无背景水波纹的18拍，
- * 保留29相表和末尾保持相，优先降低白闪，擦白余量改由实屏复核。
- * User report 2026-11-17: background water turns show a strong black-to-white flash; the
- * background white column now returns to the no-background water table's 18 pushes, keeping
- * the 29-phase table and trailing holds. Whitening margin requires panel revalidation.
+ * 用户 2026-10-26：二次裁剪让背景页旧字转白擦不净，改借主页水波纹单向白列；
+ * 2026-11-17 为减白闪转用无背景白列，黑→白从 24 拍减到 18 拍。
+ * User reports: the second trim left glyph ghosts, so background turns took the main
+ * page's one-way white column on 2026-10-26. On 2026-11-17 they switched to the plain
+ * reader white column to reduce flash, dropping black-to-white from 24 to 18 pushes.
+ * 用户 2026-11-19 反馈残影：背景表黑→白改为连续 21 拍，灰→白恢复 11-17 改动前的
+ * 单向序列；相数、末尾保持、无背景水波纹和独立插图表不改。
+ * User report 2026-11-19: residual images. Background turns use 21 consecutive white
+ * pushes from black and restore the pre-November 17 one-way sequence from gray. Phase
+ * count, trailing holds, plain reader water, and the illustration table stay unchanged.
  * 用户 2026-10-27：水波纹落到插图页时，剥掉深色对前导擦白的代价显形——旧字转图片灰留下
  * 字形残影；改用整页表后旧字清了，但整页表保留原厂相等对，脏区膨胀带上的未变化像素被
  * 黑白往返推出一圈细线。插图页现在用独立派生表：深色对保留擦白，相等对保持。
@@ -66,6 +66,7 @@
 #define BG_TRIM_SAT_CUT 4
 #define BG_TRIM_WHITE_SAT_CUT 3
 #define BG_TRIM_HOLD 3
+#define BG_BLACK_TO_WHITE_PUSHES 21
 // 插图页不裁擦除：原厂最长 19 相全留，旧字转图片灰才不会半路停住留下字形。
 // Illustration pages keep the vendor erase uncut (19 phases max), so an old glyph turning
 // into an image gray cannot stall halfway and leave its shape behind.
@@ -268,19 +269,15 @@ static void bg_strip_dark_erase(uint8_t (*data)[16][4], int frames) {
     }
 }
 
-static const EpdWaveform* water_table(void);
-
-// 白列回退：基座拿的是原厂18拍白列，二次裁剪会削掉余量；此前借用主页水波纹的24拍，
-// 在背景翻页中造成明显黑→白白闪。现改用无背景水波纹的18拍，右对齐保留末尾保持相。
-// White-column rollback: the base carries the vendor's 18 pushes and the second trim removes
-// slack; borrowing the main water table's 24 pushes caused a strong black-to-white flash.
-// Reuse the no-background water table's 18 pushes, right-aligned with trailing holds intact.
-static void bg_boost_white_column(uint8_t (*data)[16][4], int frames) {
-    const EpdWaveformPhases* water = e0470_waveform_phases(water_table(), MODE_GL16);
+// 把来源的白列右对齐到保持段之前，尽量保留中间保持相。
+// Right-align the source white column before the trailing holds, preserving internal holds when possible.
+static void bg_copy_white_column(uint8_t (*data)[16][4], int frames,
+                                 const EpdWaveform* source, int first_from) {
+    const EpdWaveformPhases* water = e0470_waveform_phases(source, MODE_GL16);
     if (!water || !water->luts || water->phases != E0470_GL16_FRAMES || water->phase_times) return;
     const int limit = frames - BG_TRIM_HOLD;
     if (limit <= 0) return;
-    for (int from = 0; from < 15; ++from) {
+    for (int from = first_from; from < 15; ++from) {
         int first = -1, last = -1;
         for (int f = 0; f < water->phases; ++f) {
             if (!e0470_phase_action(water, f, 15, from)) continue;
@@ -311,14 +308,8 @@ static void bg_boost_white_column(uint8_t (*data)[16][4], int frames) {
     }
 }
 
-// 背景系派生表的共同前半：水波纹基底上再裁擦除与白/黑饱和，to=0 补 18 连推，
-// 相等对全部置保持（变白列随后补强）。擦除上限与是否剥深色对由调用方决定：
-// 纯文字页裁到 7 相并剥掉深色对擦白，插图页保留原厂擦除（≤19 相）。
-// Shared first half of the background derivatives: one more trim of erase and both
-// saturation runs on the water base, the 18-push to=0 boost, and every equal pair held
-// (the white column is boosted afterwards). The caller picks the erase cap and whether dark
-// pairs lose their erase: text pages cap at 7 and strip, illustration pages keep the vendor
-// erase (up to 19).
+// 两张派生表共用二次裁剪、黑列补强与等灰保持；其白列由调用方分别设置。
+// The derivatives share trimming, black-column boost and equal-gray holds; callers set their white columns.
 static int build_bg_derivative(uint8_t (*data)[16][4], int erase_max, bool strip_dark_erase) {
     const EpdWaveformPhases* base = e0470_waveform_phases(water_table(), MODE_GL16);
     if (!base || !base->luts || base->phases != E0470_GL16_FRAMES || base->phase_times) return 0;
@@ -334,7 +325,6 @@ static int build_bg_derivative(uint8_t (*data)[16][4], int erase_max, bool strip
     // pixels that dirty-mask dilation brings along. Hold them all.
     for (int g = 0; g < 15; ++g)
         for (int f = 0; f < frames; ++f) bg_set(data, f, g, g, 0);
-    bg_boost_white_column(data, frames);
     return frames;
 }
 
@@ -344,6 +334,13 @@ const EpdWaveform* display_reader_bg_waveform(void) {
     // Text pages: dark pairs lose their leading erase too, the shortest flash over dark art.
     const int frames = build_bg_derivative(s_bg_data, BG_TRIM_ERASE_MAX, true);
     if (!frames) return water_table();
+    // 从灰恢复原来的主页白列；黑→白单独延长推白段，末尾仍保持 3 相。
+    // Restore the old main-water sequence from gray; extend only black-to-white, leaving three trailing holds.
+    bg_copy_white_column(s_bg_data, frames, display_main_water_waveform(), 1);
+    const int end = frames - BG_TRIM_HOLD;
+    const int start = end > BG_BLACK_TO_WHITE_PUSHES ? end - BG_BLACK_TO_WHITE_PUSHES : 0;
+    for (int f = 0; f < frames; ++f)
+        bg_set(s_bg_data, f, 15, 0, f >= start && f < end ? 2 : 0);
     s_bg_phases = (EpdWaveformPhases){.phases = frames, .luts = (const uint8_t*)s_bg_data, .phase_times = NULL};
     s_bg_ranges[0] = &s_bg_phases;
     s_bg_waveform.temp_intervals = E0470_WAVEFORM.temp_intervals;
@@ -362,6 +359,7 @@ const EpdWaveform* display_reader_image_waveform(void) {
     // outline.
     const int frames = build_bg_derivative(s_image_data, BG_IMAGE_ERASE_MAX, false);
     if (!frames) return water_table();
+    bg_copy_white_column(s_image_data, frames, water_table(), 0);
     s_image_phases = (EpdWaveformPhases){.phases = frames, .luts = (const uint8_t*)s_image_data, .phase_times = NULL};
     s_image_ranges[0] = &s_image_phases;
     s_image_waveform.temp_intervals = E0470_WAVEFORM.temp_intervals;

@@ -166,32 +166,23 @@ int main(void) {
             black += e0470_phase_action(full_page, f, 0, from) == 1;
         assert(black == 18);
     }
-    // 背景派生表：二次裁剪会削掉白列余量；背景水波纹回用无背景表的18拍白推，降低黑→白白闪，
-    // 不增加相数并保留尾部保持。
-    // Background derivative: the second trim removes white-column slack; background turns
-    // reuse the no-background table's 18 white pushes to reduce black-to-white flash, without
-    // adding phases and while retaining trailing holds.
+    // 背景表固定 29 相：黑→白连续 21 拍，末尾 3 相保持。
+    // The background table keeps 29 phases: 21 consecutive white pushes from black, then three holds.
     s_bg_path = "card:/backgrounds/paper.bmp";
     const EpdWaveform* bg = display_reader_bg_waveform();
     const EpdWaveformPhases* bgp = e0470_waveform_phases(bg, MODE_GL16);
     assert(bgp && bgp->luts && !bgp->phase_times);
-    assert(bgp->phases <= E0470_GL16_FRAMES);
-    int bg_white = 0;
-    for (int f = 0; f < bgp->phases; ++f) bg_white += e0470_phase_action(bgp, f, 15, 0) == 2;
-    assert(bg_white == 18);
-    // 所有黑/灰到白的推白次数沿用无背景水波纹，避免背景表额外制造白闪。
-    // All black/gray-to-white push counts match the no-background water table, avoiding extra flash.
-    for (int from = 0; from < 15; ++from) {
-        int raw_pushes = 0, bg_pushes = 0;
-        for (int f = 0; f < ripple->phases; ++f)
-            raw_pushes += e0470_phase_action(ripple, f, 15, from) == 2;
-        for (int f = 0; f < bgp->phases; ++f)
-            bg_pushes += e0470_phase_action(bgp, f, 15, from) == 2;
-        assert(bg_pushes == raw_pushes);
-    }
-    // 白列必须给尾部保持让位，不能把最后一相也拿去推白。
-    // The white column must leave the trailing hold alone instead of pushing on the last phase.
-    assert(e0470_phase_action(bgp, bgp->phases - 1, 15, 0) == 0);
+    assert(bgp->phases == 29);
+    for (int f = 0; f < bgp->phases; ++f)
+        assert(e0470_phase_action(bgp, f, 15, 0) == (f >= 5 && f < 26 ? 2 : 0));
+    // 逐相锁定旧版灰→白：前段单向推白、间隔 2 相、补 6 拍白、末尾保持 3 相。
+    // Check every phase of the old gray-to-white sequence: white pushes, 2 holds, 6 more pushes, 3 holds.
+    static const int first_push[15] = {0, 1, 2, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 11};
+    for (int from = 1; from < 15; ++from)
+        for (int f = 0; f < bgp->phases; ++f) {
+            const int expected = ((f >= first_push[from] && f < 18) || (f >= 20 && f < 26)) ? 2 : 0;
+            assert(e0470_phase_action(bgp, f, 15, from) == expected);
+        }
     // 插图页派生表：深色对保留前导擦白（旧字落到图片灰时从白轨落位，不留字形），相等对
     // 仍置保持（脏区膨胀带上的未变化像素不会被黑白往返推出一圈细线）。背景派生表只保
     // 前半段的裁剪，深色对的前导擦白为 0。
@@ -201,6 +192,18 @@ int main(void) {
     // outline. The background derivative keeps only the trim and drops the dark-pair erase.
     const EpdWaveformPhases* img = e0470_waveform_phases(display_reader_image_waveform(), MODE_GL16);
     assert(img && img->luts && !img->phase_times);
+    // 插图表继续使用无背景白列，右对齐到最后 3 相保持前。
+    // The illustration table still right-aligns the plain reader white column before its three holds.
+    for (int from = 0; from < 15; ++from) {
+        int last = ripple->phases - 1;
+        while (last >= 0 && e0470_phase_action(ripple, last, 15, from) == 0) --last;
+        assert(last >= 0);
+        for (int f = 0; f < img->phases; ++f) {
+            const int src = last + f - (img->phases - 4);
+            const int expected = src >= 0 && src <= last ? e0470_phase_action(ripple, src, 15, from) : 0;
+            assert(e0470_phase_action(img, f, 15, from) == expected);
+        }
+    }
     for (int g = 0; g < 15; ++g)
         for (int f = 0; f < img->phases; ++f)
             assert(e0470_phase_action(img, f, g, g) == 0);
