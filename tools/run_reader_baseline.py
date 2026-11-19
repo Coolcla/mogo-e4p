@@ -141,6 +141,7 @@ SUITES = {
     "ble_recent": [sys.executable, "tools/ble_recent_host_test.py"],
     "pinpad": [sys.executable, "tools/ui_pinpad_host_test.py"],
     "lock": [sys.executable, "tools/lock_screen_host_test.py"],
+    "lock_bookmark": [sys.executable, "tools/book_lock_bookmark_host_test.py"],
     "input": [sys.executable, "tools/app_input_host_test.py"],
     "routing": [sys.executable, "tools/app_navigation_host_test.py"],
     "quick": [sys.executable, "tools/app_quick_layer_host_test.py"],

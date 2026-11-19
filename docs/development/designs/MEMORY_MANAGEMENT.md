@@ -6,6 +6,9 @@
 阅读预绘帧使用分配账本，OTA 复用容量检查。管理页通过 `memory_inventory` 合并账本与现有模块仍持有的资源，覆盖常驻字体、显示缓冲、UI 字形、文件结果和网络传输缓冲。未覆盖的驱动、任务栈及临时分配保留在“未追踪/外部”。业务高峰准入另见下文；驱动、任务栈和临时分配不自动纳入账本。真实泄漏、碎片和并发峰值仍须结合设备数据判断。
 Reader prefetch frames use the allocation ledger, and OTA shares capacity checks. The page merges that ledger with live module-owned resources through `memory_inventory`, covering resident fonts, display buffers, UI glyphs, file results and network transfer buffers. Uncovered drivers, task stacks and temporary allocations remain untracked/external. Startup peak admission is described below; it does not implicitly add driver, stack or scratch allocations to the ledger. Leaks, fragmentation and concurrent peaks still require device evidence.
 
+锁屏书签只在写入可重建的 TF 图层缓存时从 PSRAM 申请 32 KiB 编码暂存；缓存命中或只读预览不申请。申请失败不退回片内 RAM，也不影响本次已解码图层的合成。波形裁剪用小型栈上工作区，不保留全表临时副本。
+Lock bookmarks request a 32 KiB PSRAM encoding buffer only when writing the rebuildable SD layer cache; cache hits and read-only previews do not allocate it. On allocation failure they do not fall back to internal RAM, and compositing the decoded layer still proceeds. Waveform trimming uses small stack scratch buffers instead of keeping a complete scratch copy.
+
 ## 自动刷新 / Automatic refresh
 
 - 天气任务栈和响应缓冲、自动 OTA 清单任务创建共用高峰准入；天气响应缓冲计入网络账本。取得已知分配后，先归还名额，再请求无线；不持有名额等待 DNS/TLS/响应。SDK 分配仍未预留。/ Weather stack/response and automatic OTA task creation share startup admission; the weather body is tracked as network memory. Release the slot before radio acquisition and DNS/TLS/I/O; SDK allocations remain unreserved.

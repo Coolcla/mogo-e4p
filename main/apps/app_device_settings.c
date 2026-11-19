@@ -337,7 +337,9 @@ static app_redraw_t upgrade_start_pending(void) {
     s_update.busy = false;
     if (s_update.state != PICO_UPDATE_FAILED) s_update.message[0] = 0;
     s_update.state = PICO_UPDATE_FAILED;
-    if (!s_update.message[0]) snprintf(s_update.message, sizeof(s_update.message), "无法开始升级，请退出传书后重试");
+    if (!s_update.message[0]) snprintf(s_update.message, sizeof(s_update.message), "%s",
+        error == ESP_ERR_NO_MEM ? "内存不足，无法启动更新任务" :
+        downloading ? "无法开始下载，请稍后重试" : "无法检查更新，请稍后重试");
     snprintf(s_upgrade_notice, sizeof(s_upgrade_notice), "%s", s_update.message);
     return APP_REDRAW_PAGE;
 }

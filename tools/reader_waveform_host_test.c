@@ -3,11 +3,13 @@
  * English: Validate actual reader pulse boundaries; optical tone and ghosting need panel tests.
  */
 #include <assert.h>
+#include <limits.h>
 #include <stdio.h>
 #include <string.h>
 #include "display_normalize.h"
 #include "display_reader_waveform.h"
 #include "e0470_epaper_waveform.h"
+#include "e0470_waveform_trim.h"
 
 // 主机替身：表构建会读背景路径设置；用例先跑无背景分支，再临时打开背景验证归一表。
 // Host stand-in: table builds read the background-path setting; cases run the
@@ -15,7 +17,57 @@
 static const char *s_bg_path = "";
 const char *app_settings_book_background_path(void) { return s_bg_path; }
 
+static void check_trim(void) {
+    uint8_t source[64][16][4] = {0}, dst[64][16][4], expected[64][16][4];
+    EpdWaveformPhases base = {.phases = 10, .luts = &source[0][0][0]};
+    e0470_trim_t trim = {.erase_max = 1, .sat_cut = 2, .white_sat_cut = 0, .hold = 2};
+    const uint8_t black[] = {0, 2, 2, 1, 1, 1, 0, 3, 2, 0};
+    const uint8_t white[] = {0, 0, 1, 2, 2, 0, 0, 0, 0, 0};
+    for (unsigned f = 0; f < sizeof(black); ++f) {
+        source[f][0][0] = (uint8_t)(black[f] << 6);
+        source[f][15][3] = white[f];
+    }
+
+    // 不同长度的黑白轨迹右对齐，灰阶尾的保持和动作 3 都保留；输出后方不改。
+    // Right-align different black/white tracks; preserve the tail hold and action 3, and leave bytes beyond the output untouched.
+    memset(dst, 0xa5, sizeof(dst));
+    memset(expected, 0xa5, sizeof(expected));
+    memset(expected, 0, 7 * sizeof(expected[0]));
+    expected[0][0][0] = 2 << 6;
+    expected[1][0][0] = 1 << 6;
+    expected[3][0][0] = 3 << 6;
+    expected[4][0][0] = 2 << 6;
+    expected[2][15][3] = 1;
+    expected[3][15][3] = 2;
+    expected[4][15][3] = 2;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 7);
+    assert(!memcmp(dst, expected, sizeof(dst)));
+    assert(e0470_waveform_trim(&base, &trim, source) == 7);
+    assert(!memcmp(source, expected, 7 * sizeof(source[0])));
+
+    trim.hold = 6;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 0);
+    trim.hold = INT_MAX;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 0);
+    trim.hold = 0;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 0);
+    assert(!memcmp(dst, expected, sizeof(dst)));
+
+    memset(source, 0, sizeof(source));
+    base.phases = 64;
+    trim.hold = 64;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 64);
+    assert(!memcmp(dst, source, sizeof(dst)));
+    base.phases = 65;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 0);
+    base.phases = 64;
+    base.luts = NULL;
+    assert(e0470_waveform_trim(&base, &trim, dst) == 0);
+    assert(!memcmp(dst, source, sizeof(dst)));
+}
+
 int main(void) {
+    check_trim();
     e0470_waveform_init();
     const EpdWaveformPhases* old = e0470_waveform_phases(&E0470_TEXTTURN_WAVEFORM, MODE_GL16);
     uint8_t saved[E0470_GL16_FRAMES * 16 * 4];

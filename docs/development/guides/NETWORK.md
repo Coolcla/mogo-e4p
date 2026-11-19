@@ -28,6 +28,9 @@ The transfer page owns only the session it started. Page exit and media loss lea
 联网 OTA 的准入失败提示区分未配网、热点占用、网络切换或忙碌、启动内存不足，以及强制 4G 下的模块检测、SIM 未就绪和注册失败；手动检查不以开关关闭为由要求用户先开启 4G。不自动下载或安装发现的版本。提示仅说明当前软件状态，不代替实际网络、SIM 或射频排查。
 OTA admission failures distinguish missing Wi-Fi configuration, AP use, busy/switching radios, startup memory shortage and forced-cellular hardware, SIM and registration states. Manual checks do not ask users to turn on 4G just because its switch is off. Finding an update does not automatically download or install it. Notices describe software state, not a confirmed network, SIM or radio root cause.
 
+仅连接 Wi-Fi 也占用片内 RAM，不代表已启动传书。OTA 内存提示按片内/PSRAM、可用总量/连续块区分，不要求关闭未确认的服务。
+A Wi-Fi-only connection also uses internal RAM and does not imply file transfer is running. OTA notices distinguish internal RAM from PSRAM and total capacity from contiguous blocks without asking users to close unconfirmed services.
+
 租约等待取得 IP 后，须成功将该接口设为默认网卡才允许开始 DNS、TCP 或 TLS。无可用承载时不强行切到 Wi-Fi；自动模式回退后，首选无线恢复也不抢占正在使用的租约。产品启用 `CONFIG_ESP_NETIF_SET_DNS_PER_DEFAULT_NETIF`，分别保存各接口的 DHCP DNS，并随默认网卡切换解析服务器；已有本地 `sdkconfig` 须同步该选项。
 
 天气请求按实际租约承载设置等待：Wi-Fi 连接 6 秒、响应空闲 5 秒；4G 连接 20 秒、响应空闲 10 秒。4G 遇到连接失败或响应传输错误时，在同一租约内最多重新建立一次连接；不重试业务错误，不切换承载。两者均保留整个会话 45 秒上限及最长 200 毫秒读取等待，支持离页取消，不因重连或单段响应到达而延长整个会话。

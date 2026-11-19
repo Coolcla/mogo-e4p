@@ -3,6 +3,11 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## 未发布 / Unreleased
+
+- 区分联网更新的片内 RAM 和 PSRAM 不足，不再误提示退出传书。
+- 减少锁屏书签和波形生成的片内 RAM 常驻占用，为联网和阅读留出更多空间。
+
 ## v1.1.5 · 2026-11-19
 
 - 优化电量估算曲线。

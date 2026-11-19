@@ -56,6 +56,9 @@ static network_use_t s_network_use;
 // Keep the task stack in internal RAM because flash-cache critical sections inspect it.
 static const size_t kOtaStartInternalFree = 49152;
 static const size_t kOtaStartInternalBlock = 16384;
+static const size_t kOtaStartExternalFree = 524288;
+static const size_t kOtaExternalBlock = 32768;
+static const size_t kOtaTaskStackBytes = 12288;
 static const size_t kOtaNetworkInternalFree = 32768;
 static const size_t kOtaNetworkInternalBlock = 8192;
 static const size_t kOtaExternalFree = 262144;
@@ -92,9 +95,16 @@ bool pico_online_display_begin(void) {
 void pico_online_display_end(bool held) {
     if (held) xSemaphoreGiveRecursive(s_flash_display);
 }
-static bool memory_available(size_t internal_min, size_t internal_block, size_t external_min) {
-    return mm_check_capacity(MM_POOL_INTERNAL, internal_min, internal_block) &&
-        mm_check_capacity(MM_POOL_PSRAM, external_min, 32768);
+static const char *memory_check_pool(mm_pool_t pool, size_t min_free, size_t min_block) {
+    const mm_failure_t result = mm_check_capacity(pool, min_free, min_block);
+    if (result == MM_FAIL_NONE) return NULL;
+    if (pool == MM_POOL_INTERNAL)
+        return result == MM_FAIL_FRAGMENTED ? "片内连续内存不足，请稍后重试" : "片内可用内存不足，请稍后重试";
+    return result == MM_FAIL_FRAGMENTED ? "PSRAM 连续内存不足，请稍后重试" : "PSRAM 可用内存不足，请稍后重试";
+}
+static const char *memory_check(size_t internal_min, size_t internal_block, size_t external_min) {
+    const char *error = memory_check_pool(MM_POOL_INTERNAL, internal_min, internal_block);
+    return error ? error : memory_check_pool(MM_POOL_PSRAM, external_min, kOtaExternalBlock);
 }
 static bool release_nonessential_resources(void) {
     app_weather_cancel_join();
@@ -394,7 +404,10 @@ static int read_chunk(esp_http_client_handle_t client, uint8_t *buffer, int cap,
 static bool check_feed(void) {
     char *json = heap_caps_malloc(8193, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     pico_release_t *release = heap_caps_calloc(1, sizeof(*release), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!json || !release) { state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试"); goto failed; }
+    if (!json || !release) {
+        state(PICO_UPDATE_FAILED, "PSRAM 分配失败，无法检查更新");
+        goto failed;
+    }
     char url[192]; snprintf(url, sizeof(url), "%s?t=%lld", PICO_OTA_FEED_URL, (long long)time(NULL));
     int code = -1; int64_t length = -1;
     esp_http_client_handle_t client = NULL;
@@ -464,7 +477,10 @@ static bool download(void) {
     pico_release_t *release = heap_caps_malloc(sizeof(*release), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     uint8_t *buffer = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     uint8_t *header = heap_caps_malloc(288, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (!release || !buffer || !header) { state(PICO_UPDATE_FAILED, "内存不足，无法下载升级包"); goto failed; }
+    if (!release || !buffer || !header) {
+        state(PICO_UPDATE_FAILED, "内存分配失败，无法下载升级包");
+        goto failed;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY); *release = s_status->release; xSemaphoreGive(s_mutex);
     const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
     if (!layout_valid() || !target || target == esp_ota_get_running_partition() || release->size > target->size) {
@@ -570,8 +586,8 @@ static void worker(void *arg) {
         // 更新期间关闭无线省电；完成、取消和失败均恢复原策略。
         // Disable radio power saving for updates, then restore it on success, cancellation or failure.
         restore_ps = esp_wifi_get_ps(&previous_ps) == ESP_OK && esp_wifi_set_ps(WIFI_PS_NONE) == ESP_OK;
-        if (!memory_available(kOtaNetworkInternalFree, kOtaNetworkInternalBlock, kOtaExternalFree))
-            state(PICO_UPDATE_FAILED, "网络内存不足，请退出传书后重试");
+        const char *error = memory_check(kOtaNetworkInternalFree, kOtaNetworkInternalBlock, kOtaExternalFree);
+        if (error) state(PICO_UPDATE_FAILED, error);
         else if (s_download) (void)download(); else (void)check_feed();
     }
     if (restore_ps) (void)esp_wifi_set_ps(previous_ps);
@@ -595,12 +611,15 @@ static esp_err_t start(bool downloading, bool automatic) {
         if (app_weather_busy() || app_time_service_busy() || pico_online_busy()) return MEMORY_PEAK_BUSY;
         const esp_err_t admitted = memory_peak_try_begin(MEMORY_PEAK_OTA_CHECK, &peak);
         if (admitted != ESP_OK) return admitted;
-        if (!memory_available(kOtaStartInternalFree, kOtaStartInternalBlock, 524288)) {
+        if (memory_check(kOtaStartInternalFree, kOtaStartInternalBlock, kOtaStartExternalFree)) {
             memory_peak_finish(peak);
             return ESP_ERR_NO_MEM;
         }
     }
-    if (!initialize()) { memory_peak_finish(peak); return ESP_ERR_NO_MEM; }
+    if (!initialize()) {
+        memory_peak_finish(peak);
+        return ESP_ERR_NO_MEM;
+    }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     bool busy = s_status->busy;
     bool available = s_status->state == PICO_UPDATE_AVAILABLE;
@@ -625,8 +644,9 @@ static esp_err_t start(bool downloading, bool automatic) {
             return admitted;
         }
     }
-    if (!memory_available(kOtaStartInternalFree, kOtaStartInternalBlock, 524288)) {
-        if (!automatic) state(PICO_UPDATE_FAILED, "内存不足，请退出传书后重试");
+    const char *error = memory_check(kOtaStartInternalFree, kOtaStartInternalBlock, kOtaStartExternalFree);
+    if (error) {
+        if (!automatic) state(PICO_UPDATE_FAILED, error);
         memory_peak_finish(peak);
         return ESP_ERR_NO_MEM;
     }
@@ -640,11 +660,11 @@ static esp_err_t start(bool downloading, bool automatic) {
     xSemaphoreGive(s_mutex);
     state(downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING,
           downloading ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
-    BaseType_t task_result = xTaskCreate(worker, "mogo_ota", 12288, (void *)(uintptr_t)peak, 4, NULL);
+    BaseType_t task_result = xTaskCreate(worker, "mogo_ota", kOtaTaskStackBytes, (void *)(uintptr_t)peak, 4, NULL);
     if (task_result != pdPASS) {
         memory_peak_finish(peak);
         xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; xSemaphoreGive(s_mutex);
-        state(PICO_UPDATE_FAILED, "内存不足，无法开始升级"); return ESP_ERR_NO_MEM;
+        state(PICO_UPDATE_FAILED, "内存不足，无法创建更新任务"); return ESP_ERR_NO_MEM;
     }
     s_joinable = true;
     return ESP_OK;

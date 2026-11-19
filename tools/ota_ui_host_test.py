@@ -198,12 +198,18 @@ int main(void){
   assert(upgrade_start_pending()==APP_REDRAW_NONE&&starts==started+1&&s_upgrade_job==UPGRADE_JOB_NONE&&cache_releases==2);
  }
  cache_releases=0;start_error=ESP_ERR_NO_MEM;backend_status.state=PICO_UPDATE_FAILED;
- snprintf(backend_status.message,sizeof(backend_status.message),"内存不足，请退出传书后重试");
+ snprintf(backend_status.message,sizeof(backend_status.message),"片内可用内存不足，请稍后重试");
  upgrade_schedule(true,50);assert(upgrade_start_pending()==APP_REDRAW_PAGE&&!s_update.busy&&s_update.state==PICO_UPDATE_FAILED);
- assert(!strcmp(s_upgrade_notice,"内存不足，请退出传书后重试"));
+ assert(!strcmp(s_upgrade_notice,"片内可用内存不足，请稍后重试"));
  cache_releases=0;backend_status.state=PICO_UPDATE_AVAILABLE;snprintf(backend_status.message,sizeof(backend_status.message),"发现新版本，可下载安装");
  upgrade_schedule(true,60);assert(upgrade_start_pending()==APP_REDRAW_PAGE);
- assert(!strcmp(s_upgrade_notice,"无法开始升级，请退出传书后重试"));
+ assert(!strcmp(s_upgrade_notice,"内存不足，无法启动更新任务"));
+ cache_releases=0;start_error=ESP_FAIL;
+ upgrade_schedule(false,61);assert(upgrade_start_pending()==APP_REDRAW_PAGE);
+ assert(!strcmp(s_upgrade_notice,"无法检查更新，请稍后重试"));
+ cache_releases=0;
+ upgrade_schedule(true,62);assert(upgrade_start_pending()==APP_REDRAW_PAGE);
+ assert(!strcmp(s_upgrade_notice,"无法开始下载，请稍后重试"));
  draw_reader_header(NULL);assert(chrome_center==121&&header_rule==158);
  statusbar=false;draw_reader_header(NULL);assert(chrome_center==41&&header_rule==78);
  snprintf(s_update.release.notes,sizeof(s_update.release.notes),"1. 优化图文混排\n2. 支持滑动翻页\n3. 新增自动休眠\n4. 优化蓝牙翻页器\n5. 优化图标与界面\n6. 优化文件管理排版");
