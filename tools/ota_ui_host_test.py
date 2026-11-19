@@ -132,8 +132,9 @@ static const EpdWaveform *display_main_normal_waveform(void){return &E0470_WAVEF
 enum EpdDrawMode {MODE_DU,MODE_GL16};
 enum EpdDrawError {EPD_DRAW_SUCCESS};
 // 屏幕偏移由专项覆盖；升级呈现若误入此分支必须失败。/ Offset tests cover this path; OTA presentation must never enter it.
-void app_settings_screen_offset(int *x,int *y){(void)x;(void)y;assert(false);}
-static enum EpdDrawError update_display_screen_offset(void *hl,int x,int y){(void)hl;(void)x;(void)y;assert(false);return EPD_DRAW_SUCCESS;}
+enum { SCREEN_OFFSET_RETRIES = 2 };
+static unsigned s_screen_offset_retries;
+static void screen_offset_present(app_ctx_t *ctx){(void)ctx;assert(false);}
 static int diff_pushes,full_pushes,render_calls;
 static enum EpdDrawMode pushed_mode;
 static EpdRect pushed_area;
