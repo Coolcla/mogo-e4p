@@ -227,7 +227,7 @@ with tempfile.TemporaryDirectory(prefix="reader-orientation-") as directory:
     for name, source, extra in (
         ("policy", policy, ["-I" + str(stub), "main/display/display_orientation.c", "components/epdiy/src/epd_output_offset.c", "-Icomponents/epdiy/src", "main/book/reader_orientation.c"]),
         ("layout", layout, ["-Itools/book_layout_stubs", "-Itools/book_source_host_stubs", "main/book/reader_session.c",
-                            "main/book/book_layout.c", "main/book/html_text.c", "main/book/reader_orientation.c"]),
+                            "main/book/book_layout.c", "main/book/book_hyphen_en.c", "main/book/html_text.c", "main/book/reader_orientation.c"]),
     ):
         path, binary = work / f"{name}.c", work / name
         path.write_text(source)

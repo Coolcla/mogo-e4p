@@ -226,6 +226,7 @@ idf_component_register(
         "book/reader_dictionary.c"
         "ui/ui_reader_dictionary.c"
         "book/book_layout.c"
+        "book/book_hyphen_en.c"
         "book/gbk.c"
         "font/ttf_font.c"
         "font/ttf_font_source.c"
