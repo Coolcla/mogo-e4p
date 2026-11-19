@@ -26,6 +26,7 @@ SUITES = {
     "shutdown_wallpaper": [sys.executable, "tools/shutdown_wallpaper_host_test.py"],
     "lock_style_ui": [sys.executable, "tools/lock_style_ui_host_test.py"],
     "image_resample": [sys.executable, "tools/book_cover_resample_host_test.py"],
+    "text_input": ["bash", "tools/run_text_input_host_tests.sh"],
     "image_stream": [sys.executable, "tools/test_image_files.py"],
     "lock_style": [sys.executable, "tools/lock_style_host_test.py"],
     "ticket_settings_ui": [sys.executable, "tools/ticket_background_ui_host_test.py"],

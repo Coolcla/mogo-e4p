@@ -77,13 +77,19 @@ static inline void ui_draw_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_fill_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_menu_handle(uint8_t* f,...) {(void)f;}
 static inline void ui_hairline(uint8_t* f,...) {(void)f;}
-static inline void ui_text(uint8_t* f,...) {(void)f;}
+extern void (*test_observe_text)(const char *text);
+static inline void ui_text(uint8_t* f,int x,int y,int px,const char* text,int align,bool inverted) {
+    (void)f;(void)x;(void)y;(void)px;(void)align;(void)inverted;
+    if (test_observe_text) test_observe_text(text);
+}
 static inline int ui_text_effective_px(int px) {return px + 2;}
 static inline void ui_text_vc(uint8_t* f,...) {(void)f;}
 static inline void ui_text_box(uint8_t* f,EpdRect box,int px,const char* text,int align,bool inverted) {
     (void)f;(void)box;(void)px;(void)text;(void)align;(void)inverted;
 }
-static inline void ui_text_fixed_vc(uint8_t* f,...) {(void)f;}
+static inline void ui_text_fixed_vc(uint8_t* f,int x,int y,int px,const char* text,int align,bool inverted) {
+    ui_text(f,x,y,px,text,align,inverted);
+}
 static inline int ui_text_fixed_width_px(int px,const char* s) {return (int)strlen(s)*px/2;}
 static inline int ui_text_fixed_context_width_px(int px,const char* s,const char* sample) {(void)sample;return ui_text_fixed_width_px(px,s);}
 static inline void ui_text_fixed_context_vc(uint8_t* f,...) {(void)f;}

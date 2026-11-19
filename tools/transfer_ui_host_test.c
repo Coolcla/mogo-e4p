@@ -124,6 +124,15 @@ static void wifi_recovery_regression(app_ctx_t* ctx) {
     s_forget_confirm = false;
     test_status = (wifi_transfer_status_t){0};
 }
+void (*test_observe_text)(const char *text);
+static bool test_password_hint_drawn, test_password_error_drawn;
+static void observe_password_text(const char *text) {
+    assert(strcmp(text, "输入完成后连接，密码只保存在本机"));
+    assert(strcmp(text, "轻点输入，可切换大小写"));
+    assert(!strstr(text, "/64"));
+    if (!strcmp(text, "支持英文、数字、符号和空格")) test_password_hint_drawn = true;
+    if (!strcmp(text, "加密网络密码至少 8 个字符")) test_password_error_drawn = true;
+}
 static void password_caret_regression(app_ctx_t *ctx) {
     clear_password();ui_keyboard_begin(&s_password_input,true);
     assert(s_password_input.cursor==0);
@@ -131,6 +140,7 @@ static void password_caret_regression(app_ctx_t *ctx) {
     for(int i=0;i<8;i++)tap(ctx,(EpdRect){24+i*64,740,30,30});
     assert(!strcmp(s_password,"12345678")&&s_password_input.cursor==8);
     EpdRect field=password_control_rect(47);
+    assert(s_area.y == field.y && !s_input_layout);
     tap(ctx,(EpdRect){field.x+17+3*20-2,329,4,4});assert(s_password_input.cursor==3);
     tap(ctx,(EpdRect){24+64,740,30,30});assert(!strcmp(s_password,"123245678")&&s_password_input.cursor==4);
     tap(ctx,password_control_rect(45));assert(s_password_visible&&s_password_input.cursor==4);
@@ -301,9 +311,13 @@ int main(void) {
     s_view = TRANSFER_NETWORKS; s_network_page = 0;
     tap(&ctx, network_control_rect(0));
     assert(s_view == TRANSFER_PASSWORD && !s_password[0]);
+    test_observe_text = observe_password_text;
+    draw_password(ctx.fb);
+    assert(test_password_hint_drawn);
     tap(&ctx, password_control_rect(46));
-    assert(test_save_count == 0 && s_view == TRANSFER_PASSWORD);
+    assert(test_save_count == 0 && s_view == TRANSFER_PASSWORD && test_password_error_drawn);
     password_caret_regression(&ctx);
+    test_observe_text = NULL;
     ui_gesture_event_t cancel = {.type = UI_GESTURE_PRESS,.x0 = 42,.y0 = 422,.x = 42,.y = 422};
     on_gesture(&ctx, &cancel);
     cancel.type = UI_GESTURE_TAP;

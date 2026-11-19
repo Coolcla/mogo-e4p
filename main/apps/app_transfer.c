@@ -24,8 +24,8 @@
  * User-requested device provisioning scans while stopped; save ASCII passwords only on connect and clear input on leaving the editor.
  * User-requested caret: tap to position a steady password caret; show/hide preserves position, and exit clears it too.
  * Authorized keyboard revision: WiFi passwords share English, case, number and symbol keys without Chinese candidates.
- * 用户修订：输入密码只刷新输入框与字数，布局切换才重画键盘；不在打字时全刷。
- * User revision: password typing refreshes its field/count; repaint keys only on layout switches, with no typing-triggered wipes.
+ * 用户要求移除密码页的冗余说明和字数；打字只局刷，布局切换才重画整个键盘。
+ * User requested removing redundant password hints and the counter; typing stays partial, and only layout switches repaint the whole keyboard.
  * Acceptance requires returning to the page or menu position used to enter transfer; forgetting WiFi requires confirmation.
  * User-requested URL QR follows network readiness; AP switches one code between joining and browsing, discarding stale codes on changes.
  * Lost media stops and joins reception and clears capacity/QR; never switch storage beneath an active request.
@@ -441,15 +441,11 @@ static void draw_networks(uint8_t* fb) {
 
 static void draw_password(uint8_t* fb) {
     ui_clear_page(fb);
-    transfer_header(fb, "连接 WiFi", "输入完成后连接，密码只保存在本机");
+    transfer_header(fb, "连接 WiFi", NULL);
     char name[33];
     snprintf(name, sizeof(name), "%s", s_selected.ssid);
     fit_label(name, UI_PX_BODY, ui_content_width());
     ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
-    char caption[80];
-    size_t len = strlen(s_password);
-    snprintf(caption, sizeof(caption), "%s · %u/%u", s_selected.requires_password ? "密码" : "开放网络，无需密码", (unsigned)len, PASSWORD_MAX);
-    ui_text_fixed_vc(fb, UI_MARGIN, 240, 22, caption, EPD_DRAW_ALIGN_LEFT, false);
     ui_text_input_draw(fb, &s_password_input, password_control_rect(47), UI_PX_BODY,
                        !s_password_visible, NULL);
     ui_text_fixed_vc(fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
@@ -751,13 +747,6 @@ static bool s_input_layout, s_input_settle;
 static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
     ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, password_control_rect(47),
         UI_PX_BODY, !s_password_visible, NULL, field);
-    EpdRect extra = {UI_MARGIN, 215, ui_content_width(), controls ? 287 : 159};
-    if (update.field || controls) {
-        ui_clear_rect_fast(ctx->fb, (EpdRect){UI_MARGIN, 215, ui_content_width() - 156, 58});
-        char caption[80];
-        snprintf(caption, sizeof(caption), "%s · %u/%u", s_selected.requires_password ? "密码" : "开放网络，无需密码", (unsigned)strlen(s_password), PASSWORD_MAX);
-        ui_text_fixed_vc(ctx->fb, UI_MARGIN, 240, 22, caption, EPD_DRAW_ALIGN_LEFT, false);
-    }
     if (controls) {
         ui_clear_rect_fast(ctx->fb, (EpdRect){36, 377, 612, 36});
         ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
@@ -765,8 +754,9 @@ static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
             EpdRect button = password_control_rect(i); ui_clear_rect_fast(ctx->fb, button);
             provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示" : "连接并保存", i);
         }
+        EpdRect extra = {UI_MARGIN, 215, ui_content_width(), 287};
+        update.area = update.area.width ? ui_rect_union(update.area, extra) : extra;
     }
-    if (update.field || controls) update.area = update.area.width ? ui_rect_union(update.area, extra) : extra;
     s_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle; s_settle = false;
     return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
 }
