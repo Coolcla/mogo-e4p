@@ -70,7 +70,7 @@ static void app_settings_set_system_font_path(const char*p){if(!write_fail)snpri
 static void app_settings_set_font_path(const char*p){++reader_writes;if(!write_fail)snprintf(reader_path,sizeof(reader_path),"%s",p);}
 static void app_font_activate_system(void){++system_activations;}
 static void ui_text_set_system_scale(bool b){assert(b);}
-static int s_font_page,s_main_scroll,s_style_scroll;
+static int s_font_page,s_main_scroll;
 static bool s_font_sync_confirm,s_config_confirm,s_panel_repair_pending;
 static bool s_batt_calibration_confirm;
 static int64_t s_batt_calibration_next_ms;

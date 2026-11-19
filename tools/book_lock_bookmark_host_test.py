@@ -76,7 +76,7 @@ typedef struct{unsigned x,y,width,height;}book_crop_t;
 '''
 for n in ('luminance','scale_axis'):u+=function(n,c)+'\n'
 u+='typedef struct{uint16_t at;uint8_t frac;}scale_step_t;\n'
-for n in ('scale_map','scale_next','bilinear4','book_cover_crop'):u+=function(n,c)+'\n'
+for n in ('scale_gap','scale_map','scale_next','bilinear4','book_cover_crop'):u+=function(n,c)+'\n'
 u+='typedef bool (*image_cancel_fn)(void *);\ntypedef struct{const uint8_t *data;size_t size,pos;FILE *file;image_cancel_fn cancelled;void *context;}png_input_t;\n'
 for n in ('png_read_mem','png_gray_input_cancel','png_gray_input','book_png_file_layer_cancel','book_png_file_layer'):u+=function(n,c)+'\n'
 u+=r'''
