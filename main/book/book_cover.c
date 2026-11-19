@@ -21,7 +21,7 @@ bool book_cover_thumbnail(const uint8_t *data, size_t size, bool png,
 /* ---- 共享封面缓存 / Shared cover cache ---- */
 
 #define COVER_CACHE_MAGIC UINT32_C(0x52435041)
-#define COVER_CACHE_SCHEMA 3u
+#define COVER_CACHE_SCHEMA 4u
 
 typedef struct {
     uint32_t magic, schema, template_version, width, height;
@@ -57,13 +57,19 @@ static bool cover_cache_key(const char *source, const char *title, const char *a
                     (unsigned long long)path_hash, BOOK_COVER_W, BOOK_COVER_H) < (int)cap;
 }
 
+// 只读票根/预览允许上一版小图，后台生成则必须重建，升级后无须在锁屏时解码 EPUB。
+// Read-only ticket/preview paths allow the previous thumbnail; producers rebuild it off the lock path.
+static bool cover_schema_matches(uint32_t found, uint32_t expected, bool allow_decode) {
+    return found == expected || (!allow_decode && found == 3u);
+}
+
 static bool cover_cache_read(const char *path, const cover_cache_header_t *expected,
-                             uint8_t out[BOOK_COVER_W * BOOK_COVER_H]) {
+                             uint8_t out[BOOK_COVER_W * BOOK_COVER_H], bool allow_decode) {
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     cover_cache_header_t found;
     bool ok = fread(&found, 1, sizeof(found), file) == sizeof(found) &&
-              found.magic == expected->magic && found.schema == expected->schema &&
+              found.magic == expected->magic && cover_schema_matches(found.schema, expected->schema, allow_decode) &&
               found.template_version == expected->template_version &&
               found.width == expected->width && found.height == expected->height &&
               found.file_size == expected->file_size && found.modified == expected->modified &&
@@ -104,7 +110,7 @@ static bool book_cover_load_gray_impl(const char *path, const char *title, const
     cover_cache_header_t key;
     bool cacheable = cover_cache_key(path, title, author, cache_path, sizeof(cache_path), &key);
     if (!cacheable) return false;
-    if (cover_cache_read(cache_path, &key, out)) return true;
+    if (cover_cache_read(cache_path, &key, out, allow_decode)) return true;
     if (!allow_decode) { if (pending) *pending = true; return false; }
 
     bool good = false;
@@ -150,7 +156,7 @@ static bool book_cover_load_list_gray_impl(const char *path, const char *title, 
     if (file) {
         cover_cache_header_t found;
         bool good = fread(&found, 1, sizeof(found), file) == sizeof(found) &&
-            found.magic == key.magic && found.schema == key.schema &&
+            found.magic == key.magic && cover_schema_matches(found.schema, key.schema, allow_decode) &&
             found.template_version == key.template_version && found.file_size == key.file_size &&
             found.modified == key.modified && found.path_hash == key.path_hash && found.text_hash == key.text_hash &&
             found.width && found.height && found.width <= BOOK_COVER_W && found.height <= BOOK_COVER_H;
@@ -207,7 +213,7 @@ static bool book_cover_load_list_gray_impl(const char *path, const char *title, 
 /* ---- 已处理的黑白点阵落卡 / Persistent finished monochrome raster ---- */
 // 更改封面点阵算法时递增此版本；首页与书架各保留一个快刷结果，不按相位累积文件。
 // Bump for changes to dithering; retain one Home and one shelf raster per book, not one per phase.
-#define FAST_COVER_REVISION 1u
+#define FAST_COVER_REVISION 3u
 typedef struct {
     cover_cache_header_t source;
     uint32_t revision, width, height, stride, contrast, phase, white_edge;

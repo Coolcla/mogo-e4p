@@ -167,30 +167,34 @@ int main(void) {
     }
     assert(!memcmp(saved_gray,gray_table->luts,sizeof(saved_gray)));
     puts("PASS: shelf white pixels never reverse-darken; all 15 art targets, GL16/GC16 counts and vendor LUTs preserved");
-    // 点阵亮度随输入单调增加且稳定，不引入中灰；阅读插图原16灰输出仍保留。
-    // Dot brightness increases monotonically and remains stable with no intermediate grays; existing 16-gray reader output is retained.
-    int previous_white = 0, previous_cover_white = 0;
-    for (int gray = 0; gray <= 255; ++gray) {
-        int white = 0, cover_white = 0;
-        for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
-            int v = ui_image_dither_bw((uint8_t)gray, x, y);
-            assert(v == 0 || v == 255);
-            assert(v == ui_image_dither_bw((uint8_t)gray, x + 4, y + 4));
-            assert(v == ui_image_dither_bw((uint8_t)gray, x - 4, y - 4));
-            white += v == 255;
-            int cover=ui_image_dither_cover_bw((uint8_t)gray,x,y);
-            assert(cover==0 || cover==255);
-            assert(cover==ui_image_dither_cover_bw((uint8_t)gray,x+4,y+4));
-            assert(cover==ui_image_dither_cover_bw((uint8_t)gray,x-4,y-4));
-            assert(cover>=v);
-            cover_white+=cover==255;
+    // 封面映射单调、保留端点，黑白点阵相位稳定；通用灰阶抖动保持原样。
+    // Cover tones are monotone and endpoint-preserving; BW dots stay phase-stable and generic gray dithering is unchanged.
+    for (unsigned contrast = 100; contrast <= 200; contrast += 10) {
+        uint8_t previous = 0;
+        for (int gray = 0; gray <= 255; ++gray) {
+            uint8_t tone = ui_image_cover_tone((uint8_t)gray, contrast);
+            assert(tone >= previous);
+            previous = tone;
+            if (gray == 0 || gray == 255) assert(tone == gray);
+            for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+                int v = ui_image_dither_bw(tone, x, y);
+                assert(v == 0 || v == 255);
+                assert(v == ui_image_dither_bw(tone, x + 4, y + 4));
+                assert(v == ui_image_dither_bw(tone, x - 4, y - 4));
+                if (gray == 0 || gray == 255) assert(v == gray);
+            }
         }
-        assert(white >= previous_white); previous_white = white;
-        assert(cover_white>=previous_cover_white); previous_cover_white=cover_white;
-        if (gray == 0) assert(white == 0 && cover_white==1);
-        if (gray == 128) assert(white == 8 && cover_white==8);
     }
-    assert(previous_white == 16 && previous_cover_white==16 && ui_image_dither_gray(119, 0, 0) == 119);
-    puts("navigation waveform: calibrated GL16, unchanged grays, shelf whitespace erase, original water midgrays, vendor tables and lighter covers passed; optical behavior requires hardware");
+    for (int gray = 32; gray <= 224; gray += 32) {
+        uint8_t tone = ui_image_cover_tone((uint8_t)gray, 100);
+        unsigned old_total = 0, new_total = 0;
+        for (int y = 0; y < 4; ++y) for (int x = 0; x < 4; ++x) {
+            old_total += ui_image_dither_gray((uint8_t)gray, x, y);
+            new_total += ui_image_dither_gray(tone, x, y);
+        }
+        assert(new_total < old_total && old_total - new_total <= 21 * 16);
+    }
+    assert(ui_image_cover_tone(248, 100) >= 245 && ui_image_dither_gray(119, 0, 0) == 119);
+    puts("navigation waveform: calibrated GL16, unchanged grays, shelf whitespace erase, original water midgrays, vendor tables and darker cover tones passed; optical behavior requires hardware");
     return 0;
 }

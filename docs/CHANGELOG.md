@@ -3,6 +3,11 @@
 按版本简述对用户可见的变化；使用方法见 [README](../README.zh-CN.md)。
 User-visible changes by release; see [README](../README.md) for usage.
 
+## 未发布 / Unreleased
+
+- 改善 EPUB 插图大幅缩小时的细节保留，减少 PNG 行转灰和软件 JPEG 的解码开销，不扩大插图缓存。
+- 改善书架、首页最近阅读和锁屏票根等处的封面采样，保留平滑边缘并加深封面暗部，快刷纯黑不掺白点，不扩大封面缓存。
+
 ## v1.1.5 · 2026-11-19
 
 - 优化电量估算曲线。

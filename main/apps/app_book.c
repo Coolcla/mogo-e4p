@@ -839,16 +839,17 @@ static void prepare_fast_covers(void) {
                 unsigned sw = app_settings_shelf_style() == 5 ? cover->width : BOOK_COVER_W;
                 unsigned sh = app_settings_shelf_style() == 5 ? cover->height : BOOK_COVER_H;
                 book_crop_t crop = book_cover_crop(sw, sh, image.width, image.height);
-                unsigned sample_x[SHELF_FAST_COVER_WIDTH];
+                const image_gray_axis_t xs = image_gray_axis(crop.width, image.width);
+                const image_gray_axis_t ys = image_gray_axis(crop.height, image.height);
+                const uint8_t *window = cover->gray + (size_t)crop.y * sw + crop.x;
                 uint8_t tones[256];
-                for(int x=0;x<image.width;++x)sample_x[x]=crop.x+(uint64_t)(unsigned)x*crop.width/(unsigned)image.width;
-                for(unsigned v=0;v<256;++v)tones[v]=(ui_contrast_gray((uint8_t)v)>>4)*17u;
+                const uint8_t contrast = app_settings_system_contrast();
+                for (unsigned v = 0; v < 256; ++v) tones[v] = ui_image_cover_tone((uint8_t)v, contrast);
                 for (int y = 0; y < image.height; ++y) {
-                    const unsigned sy = crop.y + (uint64_t)(unsigned)y * crop.height / (unsigned)image.height;
+                    const image_gray_row_t row = image_gray_row(window, sw, ys, y);
                     for (int x = 0; x < image.width; ++x) {
-                        const unsigned sx = sample_x[x];
-                        uint8_t tone = tones[cover->gray[sy * sw + sx]];
-                        if (ui_image_dither_cover_bw(tone, image.x + x, image.y + y))
+                        const uint8_t tone = tones[image_gray_sample(row, xs, x)];
+                        if (ui_image_dither_bw(tone, image.x + x, image.y + y))
                             bits[y * SHELF_FAST_COVER_STRIDE + x / 8] |= (uint8_t)(1u << (x & 7));
                     }
                 }
@@ -1048,20 +1049,20 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
         unsigned sw = s_view == SHELF && app_settings_shelf_style() == 5 ? cover->width : BOOK_COVER_W;
         unsigned sh = s_view == SHELF && app_settings_shelf_style() == 5 ? cover->height : BOOK_COVER_H;
         const book_crop_t crop = book_cover_crop(sw, sh, frame_width, frame_height);
-        unsigned sample_x[SHELF_FAST_COVER_WIDTH];
+        const image_gray_axis_t xs = image_gray_axis(crop.width, frame_width);
+        const image_gray_axis_t ys = image_gray_axis(crop.height, frame_height);
+        const uint8_t *window = gray + (size_t)crop.y * sw + crop.x;
         uint8_t tones[256];
-        const bool sampled=image.width<=SHELF_FAST_COVER_WIDTH;
-        const bool binary=app_settings_main_fast_refresh()&&s_view==SHELF;
-        if(sampled)for(int x=0;x<image.width;++x)sample_x[x]=crop.x+(uint64_t)(unsigned)x*crop.width/frame_width;
-        for(unsigned v=0;v<256;++v)tones[v]=ui_contrast_gray((uint8_t)v);
+        const uint8_t contrast = app_settings_system_contrast();
+        const bool binary = app_settings_main_fast_refresh() && s_view == SHELF;
+        for (unsigned v = 0; v < 256; ++v) tones[v] = ui_image_cover_tone((uint8_t)v, contrast);
         for (int y = 0; y < image.height; ++y) {
-            const int sy = (int)(crop.y + (uint64_t)(unsigned)y * crop.height / frame_height);
+            const image_gray_row_t row = image_gray_row(window, sw, ys, y);
             for (int x = 0; x < image.width; ++x) {
-                const unsigned sx = sampled?sample_x[x]:crop.x+(uint64_t)(unsigned)x*crop.width/frame_width;
-                const uint8_t tone = tones[gray[sy * sw + sx]];
+                const uint8_t tone = tones[image_gray_sample(row, xs, x)];
                 epd_draw_pixel(image.x + x, image.y + y,
                                binary
-                                   ? ui_image_dither_cover_bw((tone>>4)*17u, image.x + x, image.y + y)
+                                   ? ui_image_dither_bw(tone, image.x + x, image.y + y)
                                    : ui_image_dither_gray(tone, image.x + x, image.y + y), fb);
             }
         }
@@ -1577,12 +1578,13 @@ static void draw_editor(uint8_t* fb) {
     EpdRect cover = {36, 175, 112, 152};
     ui_fill_rect_fast(cover, UI_GRAY_LIGHT, fb);
     if (s_editor_cover) {
-
+        const uint8_t contrast = app_settings_system_contrast();
+        const image_gray_axis_t xs = image_gray_axis(BOOK_COVER_W, cover.width);
+        const image_gray_axis_t ys = image_gray_axis(BOOK_COVER_H, cover.height);
         for (int y = 0; y < cover.height; ++y) {
+            const image_gray_row_t row = image_gray_row(s_editor_cover, BOOK_COVER_W, ys, y);
             for (int x = 0; x < cover.width; ++x) {
-                const uint8_t tone = ui_contrast_gray(
-                    s_editor_cover[(y * BOOK_COVER_H / cover.height) * BOOK_COVER_W +
-                                   x * BOOK_COVER_W / cover.width]);
+                const uint8_t tone = ui_image_cover_tone(image_gray_sample(row, xs, x), contrast);
                 epd_draw_pixel(cover.x + x, cover.y + y,
                     ui_image_dither_gray(tone, cover.x + x, cover.y + y), fb);
             }
@@ -4903,8 +4905,15 @@ static void category_cover_draw(uint8_t *fb,int row,int index,EpdRect rect) {
     const book_shelf_cover_t *cover=book_shelf_covers_slot(&s_category_covers,(unsigned)row);
     if(cover->index==index && cover->gray && !book_shelf_covers_pending(&s_category_covers)) {
         unsigned width=cover->width?cover->width:BOOK_COVER_W,height=cover->height?cover->height:BOOK_COVER_H;
-        for(int y=0;y<rect.height;++y)for(int x=0;x<rect.width;++x)
-            epd_draw_pixel(rect.x+x,rect.y+y,ui_image_dither_gray(ui_contrast_gray(cover->gray[(size_t)(y*height/rect.height)*width+x*width/rect.width]),rect.x+x,rect.y+y),fb);
+        const uint8_t contrast = app_settings_system_contrast();
+        const image_gray_axis_t xs = image_gray_axis(width, rect.width), ys = image_gray_axis(height, rect.height);
+        for (int y=0;y<rect.height;++y) {
+            const image_gray_row_t sample = image_gray_row(cover->gray, width, ys, y);
+            for (int x=0;x<rect.width;++x) {
+                const uint8_t tone = ui_image_cover_tone(image_gray_sample(sample, xs, x), contrast);
+                epd_draw_pixel(rect.x+x,rect.y+y,ui_image_dither_gray(tone,rect.x+x,rect.y+y),fb);
+            }
+        }
     } else ui_draw_control_frame(fb,rect,0,0x90);
 }
 static bool category_prepare_covers(app_ctx_t *ctx) {

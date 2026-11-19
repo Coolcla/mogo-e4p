@@ -20,6 +20,7 @@ for retired in ("HOME_COMPONENT", "HOME_GOAL", "HOME_TIME", "ui_home_clock",
 
 unit = r'''
 #include <assert.h>
+#include "''' + str(ROOT/'main/image/image_decode.h') + r'''"
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

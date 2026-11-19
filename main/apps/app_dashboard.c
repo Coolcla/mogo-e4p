@@ -379,10 +379,27 @@ static void draw_cover(uint8_t *fb,const home_book_t *item,EpdRect bounds,bool p
         if((uint64_t)w*box.height>(uint64_t)h*box.width)box.height=(uint64_t)box.width*h/w;
         else box.width=(uint64_t)box.height*w/h;
         box.x=bounds.x+(bounds.width-box.width)/2;box.y=bounds.y+bounds.height-box.height;
-        for(int y=0;y<box.height;++y)for(int x=0;x<box.width;++x) {
-            unsigned sx=(unsigned)x*w/box.width,sy=(unsigned)y*h/box.height;
-            uint8_t g=item->cover_fast?(item->cover[sy*((w+7)/8)+sx/8]&(1u<<(sx&7))?255:0):ui_image_dither_gray(ui_contrast_gray(item->cover[sy*w+sx]),box.x+x,box.y+y);
-            epd_draw_pixel(box.x+x,box.y+y,g,fb);
+        if (box.width > 0 && box.height > 0) {
+            if (item->cover_fast) {
+                const unsigned stride = (w + 7) / 8;
+                for (int y = 0; y < box.height; ++y) {
+                    const uint8_t *row = item->cover + ((unsigned)y * h / box.height) * stride;
+                    for (int x = 0; x < box.width; ++x) {
+                        const unsigned sx = (unsigned)x * w / box.width;
+                        epd_draw_pixel(box.x+x, box.y+y, row[sx/8] & (1u << (sx&7)) ? 255 : 0, fb);
+                    }
+                }
+            } else {
+                const uint8_t contrast = app_settings_system_contrast();
+                const image_gray_axis_t xs = image_gray_axis(w, box.width), ys = image_gray_axis(h, box.height);
+                for (int y = 0; y < box.height; ++y) {
+                    const image_gray_row_t row = image_gray_row(item->cover, w, ys, y);
+                    for (int x = 0; x < box.width; ++x) {
+                        const uint8_t tone = ui_image_cover_tone(image_gray_sample(row, xs, x), contrast);
+                        epd_draw_pixel(box.x+x, box.y+y, ui_image_dither_gray(tone, box.x+x, box.y+y), fb);
+                    }
+                }
+            }
         }
     } else ui_fill_rect_fast(box,0xe0,fb);
     // 错层纸页与按下外缘分开，避免反馈刷新改变装饰。/ Offset pages stay clear of the press outline.

@@ -115,6 +115,12 @@ The cover slot array retains its existing resident policy. Cancellation frees un
 macOS 默认使用可用的 Command Line Tools 编译器及其 SDK；可以显式设置 `CC` 和 `SDKROOT`。入口先验证 sanitizer 编译与运行，失败即停止；不会静默取消 sanitizer。各组日志与 `results.json` 保留实际退出码。
 On macOS the runner defaults to an available Command Line Tools compiler and SDK; explicit `CC` and `SDKROOT` overrides are supported. A sanitizer compile/run probe must succeed; sanitizers are never silently removed. Suite logs and `results.json` retain actual exit codes.
 
+书内 JPEG/PNG 大幅缩小时，在同样的输出像素数下拓宽取样间距，减轻细线漏采和条纹混叠。PNG 仍逐行解压，但只把会取样的行转为灰度；不透明 RGB 行不扩为 RGBA。基线 JPEG 的软件回退优先从仍有足够缩图取样的 IDCT 档开始，原有硬件路径、解码预算和低内存回退保留。渐进式 JPEG 仍为低内存的 1/8 DC 解码，无法还原高频细节。
+For strong reductions of in-book JPEG/PNG, spread the taps without adding output pixels. PNG still inflates by row, converts only sampled rows to gray, and keeps opaque RGB at three channels. Baseline JPEG software fallback starts at a reduced IDCT size when it still has enough samples. Hardware decoding, memory caps and low-memory fallbacks remain in place. Progressive JPEG still uses low-memory 1/8 DC decoding and cannot recover high-frequency detail.
+
+封面缩略图保持原有尺寸上限；书架、首页灰阶封面与锁屏票根用双线性采样直接写入现有帧缓冲，封面在采样后加深中间调，保留纯黑与纯白，再按显示模式量化；快刷从 8 位亮度直接生成 1 位点阵。后台按需更新旧封面缓存，只读票根仍可用上一版灰阶小图，不在锁屏时打开 EPUB 解码。票根铺屏仍基于缩略图，不是从原书解码一幅满屏封面。
+Cover thumbnails keep their existing dimension caps. Shelf, grayscale Home covers and lock tickets sample into the existing framebuffer. Cover midtones are deepened after sampling without shifting pure black or white. Fast refresh dithers directly from 8-bit tone to 1-bit pixels. Workers regenerate old thumbnail caches on demand; the read-only lock ticket can use the previous grayscale cache without decoding the EPUB while locking. The full-screen ticket art is still based on a thumbnail, not a panel-resolution decode of the original cover.
+
 `python3 tools/gen_book_fixtures.py` 在 `build/book-fixtures/books/` 生成原创测试书。`河边记事_图文.epub` 每章交替包含 60 段短文和 60 张灰阶 PNG（384×128，十六阶灰阶带及黑白棋盘格），用于补充正文图片混排场景。生成器固定 ZIP 元数据并在 manifest 记录校验值；书源宿主回归验证实际解析后的图片数量、尺寸和资源读取。传入设备后，仍须独立采集并确认显示效果。
 `python3 tools/gen_book_fixtures.py` generates original books in `build/book-fixtures/books/`. `河边记事_图文.epub` alternates 60 short paragraphs with 60 grayscale PNGs per chapter (384×128, sixteen gray bands and a black/white checkerboard). Fixed ZIP metadata and manifest checksums support repeatable mixed-page measurements. Source host tests verify parsed image counts, dimensions and resource reads. Device capture and visual acceptance remain separate checks.
 

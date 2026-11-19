@@ -40,7 +40,8 @@ static uint64_t wallpaper_key(void){
     if(app_settings_lock_style()==4)return lock_calendar_key();
     // 背景选择参与缓存身份，切换后不能复用另一种背景。/ Include the ticket background in the cache identity.
     if(app_settings_lock_style()==0)return app_settings_ticket_background()==APP_TICKET_BACKGROUND_COVER
-        ?UINT64_C(0x5449434b45543033):UINT64_C(0x5449434b45543032);
+        ?UINT64_C(0x5449434b45543035):UINT64_C(0x5449434b45543036);
+    if(app_settings_lock_style()==2)return UINT64_C(0x434f4c4c41474535);
     if(app_settings_lock_style()!=1 && app_settings_lock_style()!=3)return 0;
     const char *path=app_settings_lock_style()==3?app_settings_bookmark_path():app_settings_wallpaper_path();
     uint64_t key=UINT64_C(14695981039346656037);

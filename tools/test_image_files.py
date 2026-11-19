@@ -34,7 +34,8 @@ def main():
         png_link = shlex.split(subprocess.check_output(["pkg-config", "--libs", "libpng"], text=True))
     with tempfile.TemporaryDirectory(prefix="pico-image-stream-") as temp:
         work = Path(temp)
-        env,_ = toolchain(work)
+        env, cc = toolchain(work)
+        cxx = shlex.split(env.get("CXX", str(Path(cc[0]).with_name("clang++")) if sys.platform == "darwin" else "c++"))
         (work / "sdkconfig.h").write_text("\n".join([
             "#define CONFIG_JD_SZBUF 512", "#define CONFIG_JD_FORMAT 0", "#define CONFIG_JD_USE_SCALE 1",
             "#define CONFIG_JD_TBLCLIP 1", "#define CONFIG_JD_FASTDECODE 0"]) + "\n")
@@ -53,12 +54,12 @@ def main():
             # Upstream JPEGDEC intentionally uses unaligned loads and signed shifts;
             # retain ASan there, and full UB checks in the new file/stream wrappers.
             upstream_flags = ["-fno-sanitize=alignment,shift"] if source.endswith("JPEGDEC.cpp") else []
-            subprocess.run(["c++" if cpp else "cc", "-std=c++17" if cpp else "-std=c11", *flags, *upstream_flags,
+            subprocess.run([*(cxx if cpp else cc), "-std=c++17" if cpp else "-std=c11", *flags, *upstream_flags,
                             "-c", str(ROOT / source), "-o", str(obj)], check=True,env=env)
             objects.append(str(obj))
         gc = "-Wl,-dead_strip" if sys.platform == "darwin" else "-Wl,--gc-sections"
         exe = work / "test"
-        subprocess.run(["c++", *flags, gc, *objects, *png_link, "-o", str(exe)], check=True,env=env)
+        subprocess.run([*cxx, *flags, gc, *objects, *png_link, "-o", str(exe)], check=True,env=env)
         image = Image.frombytes("RGB", (1536, 1536), random.Random(82).randbytes(1536 * 1536 * 3))
         image.save(work / "large.jpg", quality=100, subsampling=0)
         image.save(work / "large.png")

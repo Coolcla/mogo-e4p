@@ -257,7 +257,7 @@ static void release(void *p){if(p){assert(live==BOOK_COVER_W*BOOK_COVER_H);live=
 #define free(p) release(p)
 static bool book_cover_load_gray(const char *path,const char *title,const char *author,uint8_t *gray,bool decode,bool *pending){assert(*path&&*title&&*author&&!decode&&!pending);++cover_loads;if(!cover_ok)return false;memset(gray,0,BOOK_COVER_W*BOOK_COVER_H);return true;}
 static bool book_cover_load_list_gray(const char *path,const char *title,const char *author,uint8_t *gray,bool decode,bool *pending,unsigned *width,unsigned *height){(void)path;(void)title;(void)author;assert(!decode&&!pending&&width&&height);if(!list_cover_ok)return false;*width=list_cover_width;*height=list_cover_height;memset(gray,UI_GRAY_WHITE,BOOK_COVER_W*BOOK_COVER_H);for(unsigned y=0;y<*height;++y)for(unsigned x=0;x<*width;++x)gray[y*(*width)+x]=(uint8_t)((x+y)%200);return true;}
-static uint8_t ui_contrast_gray(uint8_t gray){return gray;}
+static uint8_t app_settings_system_contrast(void){return 100;}
 static bool book_progress_last_path(char *path,size_t size){snprintf(path,size,"/missing.epub");return history;}
 static bool book_excerpt_load(const char *path,char out[BOOK_EXCERPT_CAP]){assert(!strcmp(path,"/missing.epub"));snprintf(out,BOOK_EXCERPT_CAP,"A sentence from the recent book.");return true;}
 static bool book_progress_load(const char *path,uint32_t size,book_progress_t *out){(void)path;(void)size;*out=(book_progress_t){.chapter=4,.pct=42};return true;}
@@ -268,6 +268,8 @@ static void stats_load(ticket_stats_t *stats){*stats=(ticket_stats_t){0};}
 static uint32_t local_day(void){return 0;}
 '''
 ticket_path=ROOT/'main/book/book_ticket.c'
+ticket_art += '#include "' + str(ROOT/'main/image/image_decode.h') + '"\n'
+ticket_art += '#include "' + str(ROOT/'main/ui/ui_image_dither.h') + '"\n'
 ticket_art+=function('ui_image_dither_gray',ROOT/'main/ui/ui_image_dither.c')+'\n'
 for name in ('text_fit','cover_load_list_cache','cover_load','cover_background_draw','notch_depth','ticket_paper_draw','ticket_shadow_draw','cover_draw','ticket_stat','ticket_heading','book_ticket_preview','book_ticket_draw'):
  ticket_art+=function(name,ticket_path)+'\n'

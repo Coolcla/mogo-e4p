@@ -40,6 +40,7 @@ static bool book_category_pending(const char *root){(void)root;return pending;}
 static const char *app_settings_books_dir(void){return "/sdcard/books";}
 static int shelf_style;
 static int app_settings_shelf_style(void){return shelf_style;}
+static uint8_t app_settings_system_contrast(void){return 100;}
 static int shelf_rows(void){return shelf_style==5?4:9;}
 #include "book_shelf_covers.h"
 #include "book_cover_auto.h"

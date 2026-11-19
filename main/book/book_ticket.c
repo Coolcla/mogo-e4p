@@ -204,11 +204,14 @@ static void cover_background_draw(uint8_t *fb, const uint8_t *gray) {
         crop_h = BOOK_COVER_W * UI_LOCK_HEIGHT / UI_LOCK_WIDTH;
         crop_y = (BOOK_COVER_H - crop_h) / 2;
     }
+    const uint8_t *window = gray + (size_t)crop_y * BOOK_COVER_W + crop_x;
+    const uint8_t contrast = app_settings_system_contrast();
+    const image_gray_axis_t xs = image_gray_axis(crop_w, UI_LOCK_WIDTH);
+    const image_gray_axis_t ys = image_gray_axis(crop_h, UI_LOCK_HEIGHT);
     for (int y = 0; y < UI_LOCK_HEIGHT; ++y) {
-        const int sy = crop_y + y * crop_h / UI_LOCK_HEIGHT;
+        const image_gray_row_t row = image_gray_row(window, BOOK_COVER_W, ys, y);
         for (int x = 0; x < UI_LOCK_WIDTH; ++x) {
-            const int sx = crop_x + x * crop_w / UI_LOCK_WIDTH;
-            const uint8_t tone = ui_contrast_gray(gray[sy * BOOK_COVER_W + sx]);
+            const uint8_t tone = ui_image_cover_tone(image_gray_sample(row, xs, x), contrast);
             epd_draw_pixel(x, y, ui_image_dither_gray(tone, x, y), fb);
         }
     }
@@ -245,14 +248,17 @@ static void cover_draw(uint8_t *fb, const uint8_t *gray, const char *title) {
     EpdRect box = {216, 378, 252, 344};
     ui_fill_rect_fast(box, UI_GRAY_LIGHT, fb);
     if (gray) {
-        for (int y = 0; y < box.height; ++y)
+        const uint8_t contrast = app_settings_system_contrast();
+        const image_gray_axis_t xs = image_gray_axis(BOOK_COVER_W, box.width);
+        const image_gray_axis_t ys = image_gray_axis(BOOK_COVER_H, box.height);
+        for (int y = 0; y < box.height; ++y) {
+            const image_gray_row_t row = image_gray_row(gray, BOOK_COVER_W, ys, y);
             for (int x = 0; x < box.width; ++x) {
-                int sx = x * BOOK_COVER_W / box.width;
-                int sy = y * BOOK_COVER_H / box.height;
-                const uint8_t tone = ui_contrast_gray(gray[sy * BOOK_COVER_W + sx]);
+                const uint8_t tone = ui_image_cover_tone(image_gray_sample(row, xs, x), contrast);
                 epd_draw_pixel(box.x + x, box.y + y,
                                ui_image_dither_gray(tone, box.x + x, box.y + y), fb);
             }
+        }
     } else {
         char short_title[96]; snprintf(short_title, sizeof(short_title), "%s", title);
         text_fit(short_title, 32, box.width - 20);

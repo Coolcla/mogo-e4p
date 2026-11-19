@@ -86,6 +86,10 @@ int main(int argc,char **argv){
  old.source.schema=COVER_CACHE_SCHEMA-1;rewind(f);assert(fwrite(&old,1,sizeof(old),f)==sizeof(old));fclose(f);
  assert(!book_cover_fast_cache_read(path,"name","author",key,out,&edge)&&!load_shelf_cover_fast(0,0)&&!live);
  book_cover_fast_cache_write(path,"name","author",key,bits,true);
+ f=fopen(cache,"r+b");assert(f&&fread(&old,1,sizeof(old),f)==sizeof(old));
+ --old.revision;rewind(f);assert(fwrite(&old,1,sizeof(old),f)==sizeof(old));fclose(f);
+ assert(!book_cover_fast_cache_read(path,"name","author",key,out,&edge)&&!load_shelf_cover_fast(0,0)&&!live);
+ book_cover_fast_cache_write(path,"name","author",key,bits,true);
  uint8_t stale[4494];memset(stale,0,sizeof(stale));
  book_cover_fast_cache_write_checked(path,"name","author",key,stale,false,(int64_t)h.source.file_size+1,h.source.modified);
  assert(book_cover_fast_cache_read(path,"name","author",key,out,&edge)&&!memcmp(out,bits,4494));
