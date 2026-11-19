@@ -6,8 +6,8 @@
  * AP/STA networking, HTTP reception and file commit; page injects capacity policy.
  * 冻结：分类上传限制书籍/图片/字体格式；目录中的「添加文件」接受任意格式，保留 UTF-8 名字并先验容量。
  * Frozen: Typed uploads limit book/image/font formats; Add File accepts any format within the TF root, preserving UTF-8 names and checking capacity first.
- * 为传入升级包等其他文件增加目录上传；分类上传仍保持原有限额和失败清理。
- * Directory uploads also accept upgrade packages; typed uploads retain their limits and failed-part cleanup.
+ * 书籍专用入口与 TF 的 books/ 路径预算对齐；图片、字体和内置存储保留原文件名上限。
+ * Typed TF book uploads share the books/ path budget; images, fonts and internal storage keep their previous filename limit.
  * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；凭据只存单个NVS blob，状态不含密码。
  * 用户要求保存多网络：版本化 NVS blob 最多保存八组，兼容旧单网络，最近选择的网络用于连接与对时。
  * User-requested multi-network storage: a versioned NVS blob holds eight profiles, accepts legacy data and connects/syncs using the latest selection.
@@ -24,6 +24,7 @@
 #include <string.h>
 #include <strings.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <dirent.h>
@@ -34,6 +35,35 @@
 
 #define IMAGE_UPLOAD_LIMIT (20u * 1024u * 1024u)
 #define FONT_UPLOAD_LIMIT (32u * 1024u * 1024u)
+#define TRANSFER_MEDIA_NAME_MAX 120
+#define TRANSFER_SD_PATH_MAX 238
+#define TRANSFER_BOOK_NAME_MAX (TRANSFER_SD_PATH_MAX - (sizeof("books/") - 1))
+#define BOOK_STAGE_PREFIX ".mogo-u-"
+#define PART_SUFFIX ".part"
+#define BACKUP_SUFFIX ".rename-backup"
+_Static_assert(TRANSFER_BOOK_NAME_MAX + sizeof(BOOK_STAGE_PREFIX BACKUP_SUFFIX) - 1 <= 255,
+               "book staging filename exceeds FatFs long filename budget");
+
+static size_t book_upload_name_limit(const char *root, bool is_flash) {
+    if (is_flash || strncmp(root, "/sdcard/", sizeof("/sdcard/") - 1)) return TRANSFER_MEDIA_NAME_MAX;
+    size_t prefix = strlen(root) - (sizeof("/sdcard") - 1);
+    if (prefix >= TRANSFER_SD_PATH_MAX) return 0;
+    size_t limit = TRANSFER_SD_PATH_MAX - prefix;
+    return limit < TRANSFER_BOOK_NAME_MAX ? limit : TRANSFER_BOOK_NAME_MAX;
+}
+
+static bool book_staging_name(const char *name, size_t len) {
+    const size_t prefix = sizeof(BOOK_STAGE_PREFIX) - 1;
+    if (len <= prefix + TRANSFER_MEDIA_NAME_MAX || strncasecmp(name, BOOK_STAGE_PREFIX, prefix)) return false;
+    const char *suffixes[] = {PART_SUFFIX, BACKUP_SUFFIX};
+    for (size_t i = 0; i < sizeof(suffixes) / sizeof(suffixes[0]); ++i) {
+        const char *suffix = suffixes[i];
+        size_t tail = strlen(suffix);
+        if (len > prefix + tail + TRANSFER_MEDIA_NAME_MAX && len <= prefix + tail + TRANSFER_BOOK_NAME_MAX &&
+            !strncasecmp(name + len - tail, suffix, tail)) return true;
+    }
+    return false;
+}
 
 /* ---- 请求与存储 / Requests and storage ---- */
 static int hex_value(unsigned char c) {
@@ -43,21 +73,11 @@ static int hex_value(unsigned char c) {
     return -1;
 }
 
-static bool decode_name_limit(const char *encoded, char *out, size_t cap, unsigned kind) {
-    if (!cap) return false;
-    size_t n = 0;
-    while (*encoded) {
-        unsigned char c = (unsigned char)*encoded++;
-        if (c == '%') {
-            if (!encoded[0] || !encoded[1]) return false;
-            int a = hex_value(encoded[0]), b = hex_value(encoded[1]);
-            if (a < 0 || b < 0) return false;
-            c = (unsigned char)((a << 4) | b); encoded += 2;
-        }
-        if (n + 1 >= cap || c < 32 || c == 127 || strchr("/\\:*?\"<>|", c)) return false;
-        out[n++] = (char)c;
+static bool valid_typed_name(const char *out, size_t n, unsigned kind) {
+    for (size_t i = 0; i < n; ++i) {
+        unsigned char c = (unsigned char)out[i];
+        if (c < 32 || c == 127 || strchr("/\\:*?\"<>|", c)) return false;
     }
-    out[n] = 0;
     if (!n || out[0] == '.' || out[0] == ' ' || out[n - 1] == ' ' || strstr(out, "..")) return false;
     const char *ext = strrchr(out, '.');
     if (!ext || (kind == 1 ? (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png"))
@@ -82,19 +102,35 @@ static bool decode_name_limit(const char *encoded, char *out, size_t cap, unsign
     return true;
 }
 
-static bool decode_name(const char *encoded, char out[121]) { return decode_name_limit(encoded, out, 121, false); }
+typedef enum { NAME_INVALID, NAME_OK, NAME_TOO_LONG } transfer_name_result_t;
+
+static transfer_name_result_t decode_typed_name(const char *encoded, char *out, size_t cap, unsigned kind) {
+    if (!cap) return NAME_INVALID;
+    size_t n = 0;
+    while (*encoded) {
+        unsigned char c = (unsigned char)*encoded++;
+        if (c == '%') {
+            if (!encoded[0] || !encoded[1]) return NAME_INVALID;
+            int a = hex_value(encoded[0]), b = hex_value(encoded[1]);
+            if (a < 0 || b < 0) return NAME_INVALID;
+            c = (unsigned char)((a << 4) | b); encoded += 2;
+        }
+        if (n + 1 >= cap) return NAME_TOO_LONG;
+        out[n++] = (char)c;
+    }
+    out[n] = 0;
+    return valid_typed_name(out, n, kind) ? NAME_OK : NAME_INVALID;
+}
+
+static bool decode_name_limit(const char *encoded, char *out, size_t cap, unsigned kind) {
+    return decode_typed_name(encoded, out, cap, kind) == NAME_OK;
+}
 
 static bool raw_book_name(const char *entry, char *name, size_t cap) {
     size_t len = strlen(entry);
-    if (!len || len >= cap || len > 255) return false;
-    static const char digits[] = "0123456789ABCDEF";
-    char encoded[766];
-    for (size_t i = 0; i < len; ++i) {
-        unsigned char c = (unsigned char)entry[i];
-        encoded[i * 3] = '%'; encoded[i * 3 + 1] = digits[c >> 4]; encoded[i * 3 + 2] = digits[c & 15];
-    }
-    encoded[len * 3] = 0;
-    return decode_name_limit(encoded, name, cap, false);
+    if (len >= cap || len > 255 || !valid_typed_name(entry, len, 0)) return false;
+    memcpy(name, entry, len + 1);
+    return true;
 }
 
 // 两个存储根都是FAT；变更使用目录真实拼写，不明别名拒绝操作，避免漏清阅读记录。
@@ -154,7 +190,7 @@ static int resolve_mutation_path(const char *root, const char *name,
 static bool sd_relative_valid(const char *relative, bool allow_root) {
     size_t length = strlen(relative);
     if (!length) return allow_root;
-    if (length > 238 || relative[0] == '/' || relative[length - 1] == '/') return false;
+    if (length > TRANSFER_SD_PATH_MAX || relative[0] == '/' || relative[length - 1] == '/') return false;
     const char *segment = relative;
     for (const char *p = relative;; ++p) {
         unsigned char ch = (unsigned char)*p;
@@ -165,6 +201,7 @@ static bool sd_relative_valid(const char *relative, bool allow_root) {
         size_t n = (size_t)(p - segment);
         if (!n || n > 240 || (n == 1 && segment[0] == '.') ||
             (n == 2 && segment[0] == '.' && segment[1] == '.') ||
+            book_staging_name(segment, n) ||
             segment[0] == ' ' || segment[n - 1] == ' ' || segment[n - 1] == '.') return false;
         if (!ch) return true;
         segment = p + 1;
@@ -201,41 +238,57 @@ static int check_length(size_t total, size_t limit, uint64_t available) {
     return 0;
 }
 
-static bool temporary_basename(const char *entry, const char *suffix, char name[121]) {
-    size_t len = strlen(entry), tail = strlen(suffix);
-    if (len <= tail || len - tail > 120 || strcmp(entry + len - tail, suffix)) return false;
-    // 目录项已解码；重新百分号编码后复用校验，保留文件名里的字面百分号。
-    // Directory entries are already decoded; encode before validation to preserve literal percent signs.
-    static const char digits[] = "0123456789ABCDEF";
-    char encoded[361];
-    for (size_t i = 0; i < len - tail; ++i) {
-        unsigned char c = (unsigned char)entry[i];
-        encoded[i * 3] = '%'; encoded[i * 3 + 1] = digits[c >> 4]; encoded[i * 3 + 2] = digits[c & 15];
-    }
-    encoded[(len - tail) * 3] = 0;
-    return decode_name(encoded, name);
+static bool staged_book_path(const char *root, const char *name, const char *suffix, char *out, size_t cap) {
+    int len = snprintf(out, cap, "%s/%s%s%s", root, BOOK_STAGE_PREFIX, name, suffix);
+    return len >= 0 && (size_t)len < cap;
 }
 
-static int cleanup_interrupted(const char *root, unsigned *removed, unsigned *restored) {
+static bool temporary_basename(const char *entry, const char *suffix, size_t limit, bool *staged, char *name) {
+    *staged = book_staging_name(entry, strlen(entry));
+    if (*staged) entry += sizeof(BOOK_STAGE_PREFIX) - 1;
+    size_t len = strlen(entry), tail = strlen(suffix), max = *staged ? limit : TRANSFER_MEDIA_NAME_MAX;
+    if (len <= tail || len - tail > max || (*staged ? strcasecmp(entry + len - tail, suffix) : strcmp(entry + len - tail, suffix)) ||
+        (*staged && len - tail <= TRANSFER_MEDIA_NAME_MAX)) return false;
+    memcpy(name, entry, len - tail);
+    name[len - tail] = 0;
+    return valid_typed_name(name, len - tail, 0);
+}
+
+static int cleanup_interrupted(const char *root, size_t limit, unsigned *removed, unsigned *restored) {
     *removed = *restored = 0;
-    // 先恢复缺失的旧书，再删未提交片段；不递归、不删除已有完整书或其备份。
-    // Restore missing old books before removing uncommitted parts; never recurse or delete complete books or their backups.
+    // 先恢复缺失的旧书，再清片段；仅已提交的新版私有备份可清理，不动旧协议的备份。
+    // Restore missing books before clearing parts; only committed private backups are eligible for cleanup.
     for (int pass = 0; pass < 2; ++pass) {
         DIR *dir = opendir(root);
         if (!dir) return -1;
         int result = 0;
         struct dirent *entry;
         while (errno = 0, (entry = readdir(dir)) != NULL) {
-            char name[121], path[320], target[288];
-            if (!temporary_basename(entry->d_name, pass ? ".part" : ".rename-backup", name)) continue;
+            char name[TRANSFER_BOOK_NAME_MAX + 1], path[320], target[288];
+            bool staged;
+            if (!temporary_basename(entry->d_name, pass ? PART_SUFFIX : BACKUP_SUFFIX, limit, &staged, name)) continue;
             if (snprintf(path, sizeof(path), "%s/%s", root, entry->d_name) >= (int)sizeof(path) ||
                 snprintf(target, sizeof(target), "%s/%s", root, name) >= (int)sizeof(target)) { result = -1; break; }
             struct stat st;
             if (stat(path, &st)) { result = -1; break; }
             if (!S_ISREG(st.st_mode)) continue;
             if (!pass) {
-                if (!stat(target, &st)) continue;
-                if (errno != ENOENT || rename(path, target)) { result = -1; break; }
+                bool target_exists = stat(target, &st) == 0;
+                if (!target_exists && errno != ENOENT) { result = -1; break; }
+                bool target_regular = target_exists && S_ISREG(st.st_mode);
+                if (staged) {
+                    char part[320];
+                    if (!staged_book_path(root, name, PART_SUFFIX, part, sizeof(part))) { result = -1; break; }
+                    bool pending = stat(part, &st) == 0;
+                    if (!pending && errno != ENOENT) { result = -1; break; }
+                    // 临时片段是未提交标记；没有片段的备份不恢复，避免复活已删除的新书。
+                    // The part marks an uncommitted replacement; never restore a backup alone after a later deletion.
+                    if (!pending || !S_ISREG(st.st_mode) || target_exists) {
+                        if (!pending && target_regular && !remove(path)) ++*removed;
+                        continue;
+                    }
+                } else if (target_exists) continue;
+                if (rename(path, target)) { result = -1; break; }
                 ++*restored;
             } else {
                 if (remove(path)) { result = -1; break; }
@@ -249,17 +302,23 @@ static int cleanup_interrupted(const char *root, unsigned *removed, unsigned *re
     return 0;
 }
 
-static int commit_file(const char *part, const char *path) {
+enum { COMMIT_ROLLBACK_PENDING = -2 };
+
+static int commit_file(const char *part, const char *path, const char *staged_backup) {
     if (rename(part, path) == 0) return 0;
     // FatFs 不支持直接覆盖；保留旧书直至新文件成功就位。/ FatFs cannot replace directly; retain the old book until commit.
     if (errno != EEXIST && errno != EACCES) return -1;
     struct stat st;
     if (stat(path, &st) || !S_ISREG(st.st_mode)) return -1;
-    char backup[320];
-    if (snprintf(backup, sizeof(backup), "%s.rename-backup", path) >= (int)sizeof(backup)) return -1;
+    char legacy_backup[320];
+    if (!staged_backup && snprintf(legacy_backup, sizeof(legacy_backup), "%s" BACKUP_SUFFIX, path) >= (int)sizeof(legacy_backup)) return -1;
+    const char *backup = staged_backup ? staged_backup : legacy_backup;
     if (!stat(backup, &st) || errno != ENOENT) return -1;
     if (rename(path, backup)) return -1;
-    if (rename(part, path)) { rename(backup, path); return -1; }
+    if (rename(part, path)) {
+        if (rename(backup, path) && staged_backup) return COMMIT_ROLLBACK_PENDING;
+        return -1;
+    }
     // 新书已提交；备份删除失败只能报告警告，不能跳过进度失效回调。
     // The new book is committed; failed backup removal is a warning and must not skip progress invalidation.
     return remove(backup) ? 1 : 0;
@@ -268,10 +327,20 @@ static int commit_file(const char *part, const char *path) {
 typedef int (*receive_cb_t)(void *, char *, size_t);
 typedef void (*progress_cb_t)(size_t);
 enum { TRANSFER_COMMITTED_BACKUP_RETAINED = 299 };
-static int receive_file(const char *path, const char *part, size_t total, char *buf,
+static int receive_file(const char *path, const char *part, const char *staged_backup, size_t total, char *buf,
                         size_t cap, receive_cb_t recv, void *ctx, progress_cb_t progress) {
-    FILE *f = fopen(part, "wb");
-    if (!f) return 507;
+    FILE *f;
+    if (staged_backup) {
+        struct stat st;
+        if (!stat(staged_backup, &st) || errno != ENOENT) return 507;
+        int fd = open(part, O_WRONLY | O_CREAT | O_EXCL, 0666);
+        if (fd < 0) return 507;
+        f = fdopen(fd, "wb");
+        if (!f) { close(fd); remove(part); return 507; }
+    } else {
+        f = fopen(part, "wb");
+        if (!f) return 507;
+    }
     // HTTP 常按小包到达；扩大文件缓冲可显著减少 TF 卡零碎写入。
     // HTTP arrives in small packets; a larger file buffer cuts fragmented SD writes.
 #ifdef ESP_PLATFORM
@@ -296,7 +365,8 @@ static int receive_file(const char *path, const char *part, size_t total, char *
     if (fclose(f) != 0) error = 507;
     free(write_buffer);
     if (!error) {
-        int committed = commit_file(part, path);
+        int committed = commit_file(part, path, staged_backup);
+        if (committed == COMMIT_ROLLBACK_PENDING) return 507;
         if (committed < 0) error = 507;
         else if (committed > 0) return TRANSFER_COMMITTED_BACKUP_RETAINED;
     }
@@ -325,12 +395,12 @@ static int destination_status(const char *path, bool overwrite) {
     return errno == ENOENT ? 0 : 507;
 }
 
-static file_result_t upload_managed(const char *path, const char *part, size_t total, size_t limit,
+static file_result_t upload_managed(const char *path, const char *part, const char *staged_backup, size_t total, size_t limit,
         uint64_t available, bool overwrite, char *buf, size_t cap, receive_cb_t recv, void *ctx,
         progress_cb_t progress, file_changed_cb_t changed) {
     int status = destination_status(path, overwrite);
     if (!status) status = check_length(total, limit, available);
-    if (!status) status = receive_file(path, part, total, buf, cap, recv, ctx, progress);
+    if (!status) status = receive_file(path, part, staged_backup, total, buf, cap, recv, ctx, progress);
     if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) return (file_result_t){.status = status};
     file_result_t result = changed_result(path, changed);
     result.storage_cleanup_failed = status == TRANSFER_COMMITTED_BACKUP_RETAINED;
@@ -362,7 +432,7 @@ static file_result_t upload_directory_file(const char *root, const char *relativ
     if (close(fd)) { remove(part); return (file_result_t){.status = 507}; }
     // 空文件也有效；图书快捷上传仍由原来的长度策略拒绝空内容。
     // Empty general files are valid; typed book uploads still reject empty content.
-    status = receive_file(path, part, total, buf, cap, recv, ctx, progress);
+    status = receive_file(path, part, NULL, total, buf, cap, recv, ctx, progress);
     if (status && status != TRANSFER_COMMITTED_BACKUP_RETAINED) {
         remove(part);
         return (file_result_t){.status = status};
@@ -1345,6 +1415,9 @@ static esp_err_t info_handler(httpd_req_t *req) {
     if (!cJSON_AddBoolToObject(json, "is_flash", s_cfg.is_flash) ||
         !cJSON_AddNumberToObject(json, "free_bytes", (double)s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx)) ||
         !cJSON_AddNumberToObject(json, "file_limit", (double)s_cfg.file_limit) ||
+        !cJSON_AddNumberToObject(json, "book_name_limit", book_upload_name_limit(s_root, s_cfg.is_flash)) ||
+        !cJSON_AddNumberToObject(json, "media_name_limit", TRANSFER_MEDIA_NAME_MAX) ||
+        !cJSON_AddNumberToObject(json, "relative_path_limit", TRANSFER_SD_PATH_MAX) ||
         !cJSON_AddStringToObject(json, "mode", status.mode == WIFI_TRANSFER_MODE_AP ? "ap" : "sta") ||
         !cJSON_AddBoolToObject(json, "wifi_configured", status.wifi_configured) ||
         !cJSON_AddStringToObject(json, "wifi_ssid", status.wifi_ssid) ||
@@ -1731,13 +1804,27 @@ static esp_err_t titles_handler(httpd_req_t *req) {
 
 static esp_err_t upload_handler(httpd_req_t *req) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
-    char query[512], encoded[361], name[121], path[288], part[296], replace[8];
-    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
-        httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK || !decode_name(encoded, name))
-        return respond_error(req, 400);
+    char query[800], encoded[TRANSFER_BOOK_NAME_MAX * 3 + 1], name[TRANSFER_BOOK_NAME_MAX + 1];
+    char path[288], part[296], backup[320], replace[8];
+    size_t limit = book_upload_name_limit(s_root, s_cfg.is_flash);
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK) return respond_error(req, 400);
+    esp_err_t query_status = httpd_query_key_value(query, "name", encoded, sizeof(encoded));
+    if (query_status != ESP_OK && query_status != ESP_ERR_HTTPD_RESULT_TRUNC) return respond_error(req, 400);
+    transfer_name_result_t decoded = query_status == ESP_OK ? decode_typed_name(encoded, name, limit + 1, 0) : NAME_TOO_LONG;
+    if (decoded == NAME_TOO_LONG) {
+        char body[112];
+        snprintf(body, sizeof(body), "{\"error\":\"文件名最多 %u 个 UTF-8 字节（含扩展名）\"}", (unsigned)limit);
+        return wifi_response(req, "400 Bad Request", body);
+    }
+    if (decoded != NAME_OK) return respond_error(req, 400);
     int resolved = resolve_mutation_path(s_root, name, path, sizeof(path));
     if (resolved) return respond_error(req, resolved);
-    snprintf(part, sizeof(part), "%s.part", path);
+    const char *actual = strrchr(path, '/') + 1;
+    bool staged = strlen(actual) > TRANSFER_MEDIA_NAME_MAX;
+    if (staged) {
+        if (!staged_book_path(s_root, actual, PART_SUFFIX, part, sizeof(part)) ||
+            !staged_book_path(s_root, actual, BACKUP_SUFFIX, backup, sizeof(backup))) return respond_error(req, 400);
+    } else if (snprintf(part, sizeof(part), "%s" PART_SUFFIX, path) >= (int)sizeof(part)) return respond_error(req, 400);
     bool overwrite = httpd_query_key_value(query, "overwrite", replace, sizeof(replace)) == ESP_OK && !strcmp(replace, "1");
     portENTER_CRITICAL(&s_lock);
     if (!admission_begin(s_stopping || s_files_disabled, &s_upload_active)) {
@@ -1750,7 +1837,7 @@ static esp_err_t upload_handler(httpd_req_t *req) {
     portEXIT_CRITICAL(&s_lock);
     int64_t started = esp_timer_get_time();
     ESP_LOGI("transfer", "receive name=%s bytes=%u", name, (unsigned)req->content_len);
-    file_result_t result = upload_managed(path, part, req->content_len, s_cfg.file_limit,
+    file_result_t result = upload_managed(path, part, staged ? backup : NULL, req->content_len, s_cfg.file_limit,
         s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx), overwrite, s_buffer, 16384, receive_http, req, upload_progress, s_cfg.file_changed_cb);
     portENTER_CRITICAL(&s_lock);
     s_upload_active = false;
@@ -1764,7 +1851,8 @@ static esp_err_t upload_handler(httpd_req_t *req) {
 static esp_err_t media_upload_handler(httpd_req_t *req, const char *root, unsigned kind, size_t limit) {
     if (!management_request(req)) return wifi_response(req, "403 Forbidden", "{\"error\":\"请从设备显示的地址打开管理页面\"}");
     if (s_cfg.is_flash) return wifi_response(req, "400 Bad Request", "{\"error\":\"请插入 TF 卡后重试\"}");
-    char query[512], encoded[361], name[121], path[320], part[328], replace[8];
+    char query[512], encoded[TRANSFER_MEDIA_NAME_MAX * 3 + 1], name[TRANSFER_MEDIA_NAME_MAX + 1];
+    char path[320], part[328], replace[8];
     if (httpd_req_get_url_query_str(req, query, sizeof(query)) != ESP_OK ||
         httpd_query_key_value(query, "name", encoded, sizeof(encoded)) != ESP_OK ||
         !decode_name_limit(encoded, name, sizeof(name), kind)) return respond_error(req, 400);
@@ -1786,7 +1874,7 @@ static esp_err_t media_upload_handler(httpd_req_t *req, const char *root, unsign
     memcpy(s_status.cur_name, name, strlen(name) + 1);
     s_status.cur_bytes = 0; s_status.cur_total = req->content_len;
     portEXIT_CRITICAL(&s_lock);
-    file_result_t result = upload_managed(path, part, req->content_len,
+    file_result_t result = upload_managed(path, part, NULL, req->content_len,
         set_wallpaper && limit > 2u * 1024u * 1024u ? 2u * 1024u * 1024u : limit,
         s_cfg.free_bytes_cb(s_cfg.free_bytes_ctx), overwrite, s_buffer, 16384, receive_http, req, upload_progress, NULL);
     bool wallpaper_failed = set_wallpaper && result.status == 200 && result.changed && !s_cfg.wallpaper_set_cb(path);
@@ -1877,7 +1965,7 @@ static esp_err_t files_list_handler(httpd_req_t *req) {
         while ((entry = readdir(dir))) {
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
             size_t len = strlen(entry->d_name);
-            if (!len || len >= sizeof(items[0].name)) continue;
+            if (!len || len >= sizeof(items[0].name) || book_staging_name(entry->d_name, len)) continue;
             char child[512];
             if (snprintf(child, sizeof(child), "%s/%s", path, entry->d_name) >= (int)sizeof(child)) continue;
             struct stat st;
@@ -2368,7 +2456,7 @@ esp_err_t wifi_transfer_start_admitted(const wifi_transfer_cfg_t *cfg, memory_pe
         struct stat st;
         if (stat(cfg->root_dir, &st) || !S_ISDIR(st.st_mode)) { err = ESP_ERR_NOT_FOUND; goto fail; }
         unsigned removed = 0, restored = 0;
-        if (cleanup_interrupted(cfg->root_dir, &removed, &restored)) {
+        if (cleanup_interrupted(cfg->root_dir, book_upload_name_limit(cfg->root_dir, cfg->is_flash), &removed, &restored)) {
             ESP_LOGW("transfer", "cleanup failed removed=%u restored=%u", removed, restored);
             err = ESP_FAIL; goto fail;
         }

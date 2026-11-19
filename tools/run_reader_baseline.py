@@ -69,6 +69,7 @@ SUITES = {
     "ota_auto": [sys.executable, "tools/ota_auto_host_test.py"],
     "ota_auto_ui": [sys.executable, "tools/ota_auto_ui_host_test.py"],
     "storage": ["bash", "tools/run_storage_host_tests.sh"],
+    "transfer_storage": ["sh", "tools/run_transfer_storage_host_test.sh"],
     "transfer_web": ["node", "tools/transfer_web_host_test.js"],
     "transfer_assets": [sys.executable, "tools/transfer_assets_host_test.py"],
     "transfer_memory": [sys.executable, "tools/transfer_memory_host_test.py"],
