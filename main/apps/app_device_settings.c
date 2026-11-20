@@ -398,6 +398,10 @@ static void upgrade_open(void) {
     s_upgrade_notice[0] = 0;
     s_page = SETTINGS_UPGRADE;
 }
+bool app_device_settings_navigation_busy(void) {
+    return s_boot_pending || s_local_pending || s_upgrade_restart;
+}
+
 bool app_device_settings_offer_update(bool already_in_settings) {
     if (already_in_settings) {
         if ((s_page != SETTINGS_MAIN && s_page != SETTINGS_UPGRADE) || s_upgrade_confirm) return false;

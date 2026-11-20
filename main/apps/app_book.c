@@ -2464,7 +2464,7 @@ static EpdRect reader_key_card(unsigned slot) { return (EpdRect){36 + (int)slot 
 // 视口外的整行不画；滚动量总是整行，所以不会出现半张卡片。
 // Rows outside the viewport are skipped; the offset is always whole rows, so no card is partial.
 static void draw_key_row(uint8_t *fb, int row) {
-    static const char *const names[] = {"中键长按", "中键双击", "上键单击", "音量键翻页"};
+    static const char *const names[] = {"中键长按", "中键双击", "上键（AI键）单击", "音量键翻页"};
     EpdRect card = reader_key_row_rect(row);
     if (card.y + card.height <= KEY_ROW_TOP || card.y >= KEY_ROW_TOP + KEY_ROW_VIEW_HEIGHT) return;
     ui_fill_round_rect(fb, card, 20, 0xf0);
@@ -2523,7 +2523,7 @@ static EpdRect reader_key_action_card(int index) {
 _Static_assert(KEY_ACTION_TOP + (READER_KEY_ACTION_ROWS - 1) * KEY_ACTION_PITCH + KEY_ACTION_HEIGHT <= UI_LOCK_HEIGHT-60,
                "key action rows must clear the hint");
 static void draw_key_picker(uint8_t *fb) {
-    static const char *const titles[] = {"左键功能", "中键功能", "右键功能", "中键长按功能", "中键双击功能", "上键单击功能"};
+    static const char *const titles[] = {"左键功能", "中键功能", "右键功能", "中键长按功能", "中键双击功能", "上键（AI键）单击功能"};
     draw_sheet(fb, 270, titles[s_reader_key_pick < 6 ? s_reader_key_pick : 0]);
     draw_sheet_back(fb, 270);
     app_reader_key_action_t current = s_reader_key_pick == 3 ? app_settings_reader_hold_action()
@@ -7761,37 +7761,17 @@ static app_redraw_t reader_volume_tick(app_ctx_t* ctx) {
     s_stats_activity_ms = ctx->now_ms;
     return turn_page(ctx, (edges & BOARD_VOLUME_UP) ? -1 : 1);
 }
-// 上键单击：按下沿去抖，松开时仍在短按窗口内才执行；按住不会重复触发。
-// Up-key single press: debounce the press edge and fire on release inside the short-press window;
-// holding the key never repeats.
-#define READER_UP_KEY_DEBOUNCE_MS 30
-#define READER_UP_KEY_LONG_MS 1000
-static app_redraw_t reader_up_key_tick(app_ctx_t* ctx) {
-    static int64_t s_poll_ms;
-    static bool s_down;
-    static int64_t s_down_ms;
-    app_reader_key_action_t action = app_settings_reader_up_action();
-    bool panel_keys = s_view == READING && (action == APP_READER_KEY_TOUCH || app_settings_reader_touch_disabled());
-    if (action == APP_READER_KEY_NONE || (!panel_keys && !app_book_reader_body_visible() && !s_dictionary_selection.active)) {
-        s_down = false;
+bool app_book_reader_keys_active(void) { return s_view == READING; }
+
+app_redraw_t app_book_up_key_action(app_ctx_t *ctx) {
+    const app_reader_key_action_t action = app_settings_reader_up_action();
+    const bool sheet_action = action == APP_READER_KEY_TOUCH || app_settings_reader_touch_disabled() ||
+        action == APP_READER_KEY_HOME || action == APP_READER_KEY_REFRESH || action == APP_READER_KEY_FRONTLIGHT;
+    if (!app_book_reader_keys_active() ||
+        (!sheet_action && !app_book_reader_body_visible() && !s_dictionary_selection.active))
         return APP_REDRAW_NONE;
-    }
-    if (ctx->now_ms - s_poll_ms < READER_VOLUME_POLL_MS) return APP_REDRAW_NONE;
-    s_poll_ms = ctx->now_ms;
-    bool pressed = false;
-    if (board_read_up_key(&pressed) != ESP_OK) {
-        s_down = false;
-        return APP_REDRAW_NONE;
-    }
-    if (pressed) {
-        if (!s_down) { s_down = true; s_down_ms = ctx->now_ms; }
-        return APP_REDRAW_NONE;
-    }
-    if (!s_down) return APP_REDRAW_NONE;
-    s_down = false;
-    int64_t held = ctx->now_ms - s_down_ms;
-    if (held < READER_UP_KEY_DEBOUNCE_MS || held >= READER_UP_KEY_LONG_MS) return APP_REDRAW_NONE;
     s_stats_activity_ms = ctx->now_ms;
+    ctx->user_activity = true;
     return reader_key_action(ctx, action);
 }
 // 屏轴映射：基准为倒置竖屏，整机 X（board_accel_to_device 已转换）为屏幕短边横轴，
@@ -7940,8 +7920,6 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     }
     app_redraw_t volume = reader_volume_tick(ctx);
     if (volume != APP_REDRAW_NONE) return volume;
-    app_redraw_t up_key = reader_up_key_tick(ctx);
-    if (up_key != APP_REDRAW_NONE) return up_key;
     app_redraw_t shake = reader_shake_tick(ctx);
     if (shake != APP_REDRAW_NONE) return shake;
     app_redraw_t notice = reader_notice_tick(ctx);

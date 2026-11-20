@@ -339,13 +339,14 @@ app_reader_key_action_t app_settings_reader_key_action(unsigned key);
 bool app_settings_reader_key_action_allowed(unsigned key, app_reader_key_action_t action);
 /// 返回是否成功保存；失败不改变映射。/ Return successful persistence, leaving the mapping unchanged on failure.
 bool app_settings_set_reader_key_action(unsigned key, app_reader_key_action_t action);
-/// 中键长按，默认手动全刷；与短按独立保存。/ Middle hold defaults to full refresh and persists independently.
+/// 中键长按，默认返回主页；与短按独立保存。/ Middle hold defaults to Home and persists independently.
 app_reader_key_action_t app_settings_reader_hold_action(void);
 bool app_settings_set_reader_hold_action(app_reader_key_action_t action);
 /// 中键双击，默认不操作；绑定后单击需等双击窗口结束才生效。/ Middle double press defaults to no action; once bound, a single click waits for the double-press window.
 app_reader_key_action_t app_settings_reader_double_action(void);
 bool app_settings_set_reader_double_action(app_reader_key_action_t action);
-/// 上键单击（机身顶部实体键），默认不操作；「开关前光」绑定在阅读正文外的所有页面同样生效，其余动作仍只在阅读正文生效。/ Up-key single press (top physical key), no action by default; the frontlight toggle also works on every page outside the reader body, while other actions stay reader-body-only.
+/// 上键（AI键）单击默认不操作；所有按键映射中的返回主页、手动全刷和前光开关在普通页面全局生效。
+/// The AI key defaults to no action; mapped Home, full refresh and frontlight actions are global on ordinary pages.
 app_reader_key_action_t app_settings_reader_up_action(void);
 bool app_settings_set_reader_up_action(app_reader_key_action_t action);
 /// 一次提交整套推荐设置，1为翻页，2为首页/工具栏/工具栏。/ Commit preset 1 (page turns) or 2 (Home/tools/tools) together.

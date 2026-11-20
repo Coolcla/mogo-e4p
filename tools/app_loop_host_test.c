@@ -83,6 +83,9 @@ static int reader_returns;
 static char reader_return_path[64];
 static bool transfer_returns;
 bool app_book_reader_body_visible(void) {return reader_body;}
+bool app_book_reader_keys_active(void) {return reader_body;}
+static int reader_up_presses;
+app_redraw_t app_book_up_key_action(app_ctx_t *ctx) { (void)ctx; ++reader_up_presses; return APP_REDRAW_NONE; }
 bool app_book_resume_context(char *p,size_t c) {
     if (!reader_resume_ok || !p || strlen(reader_resume_path) >= c) return false;
     memcpy(p, reader_resume_path, strlen(reader_resume_path) + 1);
@@ -214,7 +217,8 @@ static bool media_test, sd_font, saved_sd_font;
 static bool mounted_steps[32], present_steps[32];
 static int media_lost, media_ready, builtin_opens, font_opens, probes, remounts, loss_step;
 static bool fl_ready, fl_on;
-static bool up_key_bound, up_key_steps[32];
+static app_reader_key_action_t key_actions[3], key_hold_action, key_double_action, up_key_action;
+static bool up_key_steps[32];
 static uint8_t fl_bri=40, fl_cct=50;
 static int fl_applies, fl_control_draws, fl_sweep_draws, fl_drag_pushes, fl_white_pushes, fl_gray_pushes, fl_key_gl, quick_gl_height;
 int E0470_WAVEFORM;
@@ -392,7 +396,10 @@ const char* app_settings_font_path(void) {return "builtin";}
 bool app_settings_reader_power_turn(void) {return false;}
 // 默认不绑定；前光回归按主循环帧注入真实上键按下/抬起。
 // Unbound by default; frontlight regressions inject up-key press/release levels by loop frame.
-app_reader_key_action_t app_settings_reader_up_action(void) {return up_key_bound?APP_READER_KEY_FRONTLIGHT:APP_READER_KEY_NONE;}
+app_reader_key_action_t app_settings_reader_key_action(unsigned key) {return key_actions[key];}
+app_reader_key_action_t app_settings_reader_hold_action(void) {return key_hold_action;}
+app_reader_key_action_t app_settings_reader_double_action(void) {return key_double_action;}
+app_reader_key_action_t app_settings_reader_up_action(void) {return up_key_action;}
 esp_err_t board_read_up_key(bool* pressed) {*pressed=up_key_steps[step];return ESP_OK;}
 app_shutdown_style_t app_settings_shutdown_style(void) {return light_only_shutdown ? APP_SHUTDOWN_LIGHT : staged_shutdown ? APP_SHUTDOWN_STAGED : APP_SHUTDOWN_FULL;}
 bool ttf_font_path_is_builtin(const char*p) {(void)p;return !font_due&&!saved_sd_font;}
@@ -480,7 +487,10 @@ static void reset(void) {
     transfer_returns=false;
     haptic_pulses=haptic_stops=0;
     fl_ready=fl_on=false;fl_bri=40;fl_cct=50;fl_applies=fl_control_draws=fl_sweep_draws=fl_drag_pushes=fl_white_pushes=fl_gray_pushes=fl_key_gl=quick_gl_height=0;
-    up_key_bound=false;memset(up_key_steps,0,sizeof(up_key_steps));
+    for (unsigned i = 0; i < 3; ++i) key_actions[i] = APP_READER_KEY_NONE;
+    key_hold_action = key_double_action = up_key_action = APP_READER_KEY_NONE;
+    reader_up_presses = 0;
+    memset(up_key_steps,0,sizeof(up_key_steps));
     main_fast=main_water=false;shelf_exit_arms=0;idle_minutes=0;idle_locks=before_locks=lock_feedback_calls=lock_badges=wake_clean_requests=0;feedback_enabled=false;online_busy=false;
     nav_arms=nav_draws=nav_full_arms=nav_area_draws=0;nav_armed=NULL;
     main_source_visible=main_target_visible=true;
@@ -1167,7 +1177,7 @@ int main(void) {
     // 真实上键关灯后，手动/自动锁屏的快捷层重置都不得把开灯缓存写回设置。
     // After a real up-key switch-off, manual/idle lock resets must not persist the stale on preview.
     for (unsigned idle = 0; idle < 2; ++idle) {
-        reset();fl_ready=fl_on=up_key_bound=true;time_step=100000;
+        reset();fl_ready=fl_on=true;up_key_action=APP_READER_KEY_FRONTLIGHT;time_step=100000;
         // 上键轮询时钟跨 app_loop_run 保留，后续场景必须继续向前。
         // Up-key polling retains its clock across app_loop_run, so later scenarios must advance it.
         time_offset=(int64_t)(idle+1)*1000000000000LL;
@@ -1284,6 +1294,54 @@ int main(void) {
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(root_key_taps==0&&fulls==2&&!keys[1]);
     reset();enable_main_tabs();first.owns_keys=true;first.on_main_key=root_key_tap;first.on_tick=root_disappears;root_key_taps=0;time_step=100000;
     add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();assert(root_key_taps==0&&!keys[1]);
+    // 非阅读页的全局绑定抢占同一个手势，但不夺走未绑定手势。
+    // Outside reading, global bindings take only their mapped gesture; unmapped gestures fall through.
+    reset();start_second=true;second.owns_keys=true;time_step=100000;
+    key_actions[UI_KEY_1]=APP_READER_KEY_HOME;
+    add(0,0,0,0);add(80,1500,1,0);add(0,0,0,0);run();
+    assert(enters==2&&!keys[UI_KEY_1]);
+    reset();first.owns_keys=true;time_step=100000;fl_ready=true;
+    key_actions[UI_KEY_3]=APP_READER_KEY_FRONTLIGHT;
+    add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
+    assert(fl_on&&fl_applies==1&&!keys[UI_KEY_3]);
+    reset();first.owns_keys=true;time_step=100000;
+    key_actions[UI_KEY_2]=APP_READER_KEY_REFRESH;
+    add(0,0,0,0);add(240,1500,1,0);add(0,0,0,0);run();
+    assert(fulls==2&&!keys[UI_KEY_2]);
+    reset();enable_main_tabs();start_second=true;second.owns_keys=true;time_step=300000;
+    key_hold_action=APP_READER_KEY_HOME;
+    add(0,0,0,0);add(240,1500,1,0);add(240,1500,1,0);add(240,1500,1,0);add(0,0,0,0);run();
+    assert(enters==2&&fulls==1&&!keys[UI_KEY_2]);
+    for(int replay=0;replay<2;++replay) {
+        reset();first.owns_keys=true;time_step=100000;fl_ready=true;
+        key_actions[UI_KEY_2]=APP_READER_KEY_REFRESH;
+        key_double_action=APP_READER_KEY_FRONTLIGHT;
+        touch_sampler_test_enable(replay);
+        if(replay) {
+            touch_sampler_test_push(100,240,1500,1);touch_sampler_test_push(150,0,0,0);
+            touch_sampler_test_push(220,240,1500,1);touch_sampler_test_push(270,0,0,0);
+        }
+        add(0,0,0,0);add(replay?0:240,1500,!replay,0);add(0,0,0,0);
+        add(replay?0:240,1500,!replay,0);add(0,0,0,0);run();
+        touch_sampler_test_enable(false);
+        assert(fl_on&&fl_applies==1&&fulls==1&&!keys[UI_KEY_2]);
+    }
+    reset();first.owns_keys=true;time_step=100000;fl_ready=true;
+    key_double_action=APP_READER_KEY_FRONTLIGHT;
+    add(0,0,0,0);add(240,1500,1,0);
+    for(unsigned i=0;i<7;++i)add(0,0,0,0);
+    run();assert(!fl_applies&&keys[UI_KEY_2]==1);
+    for(unsigned reader=0;reader<2;++reader) {
+        reset();start_book=reader;reader_body=reader;time_step=100000;
+        up_key_action=APP_READER_KEY_REFRESH;up_key_steps[3]=true;
+        for(unsigned i=0;i<7;++i)add(0,0,0,0);
+        run();assert(fulls==2-(int)reader&&reader_up_presses==(int)reader);
+    }
+    reset();first.holds_pmu=true;time_step=100000;
+    up_key_action=APP_READER_KEY_REFRESH;up_key_steps[3]=true;
+    for(unsigned i=0;i<7;++i)add(0,0,0,0);
+    run();assert(fulls==1);
+    puts("PASS: global key mappings on ordinary pages, double-click suppression, native fallback, and reader/PMU ownership");
     puts("app_loop: 50 scheduler scenarios passed, including automatic lock, save callback, input reset and busy guards");
     return 0;
 }
@@ -1328,3 +1386,5 @@ void lock_images_close(void){}
 bool ui_avatar_quiesce(unsigned timeout) { (void)timeout; return true; }
 esp_err_t ble_pt_stop(uint32_t timeout) { (void)timeout; return ESP_OK; }
 esp_err_t ble_pt_stop_for_sleep(uint32_t timeout) { (void)timeout; return ESP_OK; }
+
+bool app_device_settings_navigation_busy(void) { return false; }
