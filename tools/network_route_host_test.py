@@ -295,7 +295,28 @@ static void manual_weather_cellular(void) {
     network_service_release(&lease);
     assert(cellular.enabled && cellular.running && !cell_starts && !cell_stops);
 }
+static void cloudzao_borrows_only_connected_sta(void) {
+    network_lease_t lease;
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_CELLULAR_FIRST);
+    unsigned starts = wifi_starts + cell_starts;
+    assert(network_service_borrow_ready_wifi(&lease) == ESP_ERR_INVALID_STATE && !lease.active);
+    wifi.network_ready = true;
+    wifi.mode = WIFI_TRANSFER_MODE_STA;
+    assert(network_service_borrow_ready_wifi(&lease) == ESP_ERR_INVALID_STATE && !lease.active);
+    wifi.network_only = true;
+    atomic_store(&s_cellular_leases, 1);
+    assert(network_service_borrow_ready_wifi(&lease) == ESP_ERR_INVALID_STATE && !lease.active);
+    atomic_store(&s_cellular_leases, 0);
+    assert(network_service_borrow_ready_wifi(&lease) == ESP_OK && lease.active && !lease.owns_wifi);
+    assert(lease.bearer == NETWORK_BEARER_WIFI && !network_service_pause_for_sleep());
+    unsigned stops = wifi_stops;
+    network_service_release(&lease);
+    assert(!lease.active && wifi_stops == stops && wifi_starts + cell_starts == starts);
+    wifi = (wifi_transfer_status_t){0};
+}
+
 int main(void) {
+    cloudzao_borrows_only_connected_sta();
     manual_weather_cellular();
     network_lease_t lease;
     reset(NETWORK_ROUTE_CELLULAR, NETWORK_AUTO_WIFI_FIRST);
@@ -837,7 +858,7 @@ def main(cases=CASES, extra=""):
                      "acquire_bearer", "stop_unused_business_wifi", "stop_unused_business_cellular_under_gate", "poll_switch_rollback",
                      "resume_under_gate", "network_service_resume_after_sleep", "network_service_pause_for_sleep",
                      "stop_owned_wifi_under_gate", "network_service_poll",
-                     "network_service_get_status", "network_service_acquire",
+                     "network_service_get_status", "network_service_acquire", "network_service_borrow_ready_wifi",
                      "network_service_wait_ready", "network_service_wait_ready_cancelable",
                      "network_service_release", "remember_rollback",
                      "restore_cellular_after_wifi_error", "network_service_set_enabled",

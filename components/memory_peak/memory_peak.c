@@ -29,7 +29,7 @@ memory_peak_heap_t memory_peak_snapshot(void) {
 esp_err_t memory_peak_try_begin(memory_peak_kind_t kind, memory_peak_token_t *token) {
     if (!token) return ESP_ERR_INVALID_ARG;
     *token = 0;
-    if ((unsigned)kind > MEMORY_PEAK_OTA_CHECK) return ESP_ERR_INVALID_ARG;
+    if ((unsigned)kind > MEMORY_PEAK_CLOUDZAO) return ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&s_lock);
     if (s_active.token) {
         const memory_peak_kind_t owner = s_active.kind;
@@ -78,7 +78,8 @@ const char *memory_peak_hint(esp_err_t error) {
         case MEMORY_PEAK_BLE: return "蓝牙正在启动，请稍后重试";
         case MEMORY_PEAK_BLE_CONNECT: return "蓝牙翻页器正在连接，请稍后重试";
         case MEMORY_PEAK_WEATHER:
-        case MEMORY_PEAK_OTA_CHECK: return "资源切换中，请稍后重试";
+        case MEMORY_PEAK_OTA_CHECK:
+        case MEMORY_PEAK_CLOUDZAO: return "资源切换中，请稍后重试";
         default: break;
         }
     }

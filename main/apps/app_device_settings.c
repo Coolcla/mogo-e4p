@@ -98,6 +98,7 @@
 #include "display.h"
 #include "display_refresh.h"
 #include "pmu_selftest.h"
+#include "cloudzao_service.h"
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 #include "soc/rtc_cntl_reg.h"
 #endif
@@ -2060,6 +2061,11 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         !(ctx->touch && ctx->touch->touched) && settings_network_poll()) return APP_REDRAW_PAGE;
 
     (void)ctx;
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    // 等待已离页的接收任务完成 TF 交还；不阻塞设置页轮询。
+    // Defer restart until an exiting receiver returns TF handles without blocking settings ticks.
+    if ((s_boot_pending || s_upgrade_restart) && !cloudzao_quiesce(0)) return APP_REDRAW_NONE;
+#endif
     if (s_boot_pending) {
         s_boot_pending = false;
         pmu_selftest_prepare_powerdown();
@@ -2084,6 +2090,9 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
         }
         pico_online_get_status(&s_update);
         if (s_update.state == PICO_UPDATE_READY && !s_update.busy) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+            if (!cloudzao_quiesce(0)) return APP_REDRAW_NONE;
+#endif
             if (pico_online_commit() == ESP_OK) { esp_restart(); return APP_REDRAW_NONE; }
             pico_online_get_status(&s_update);
         }

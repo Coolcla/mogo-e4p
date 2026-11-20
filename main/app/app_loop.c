@@ -49,6 +49,10 @@
 #include "../diagnostics/lock_sleep_trace.h"
 #endif
 #include "app_lifecycle.h"
+#include "cloudzao_service.h"
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+#include "book_store.h"
+#endif
 #include "memory_manager.h"
 #include "platform/s31_input.h"
 #include "app_input.h"
@@ -416,6 +420,10 @@ static void prepare_lock(app_ctx_t *ctx, const app_desc_t *current, bool feedbac
 }
 static void run_power_action(app_ctx_t *ctx, const app_desc_t *current, bool restart) {
     prepare_lock(ctx, current, false);
+    if (!cloudzao_quiesce(2000)) {
+        app_present(ctx, current, APP_REDRAW_PAGE);
+        return;
+    }
     if (restart) {
         ui_power_final_draw(ctx->fb, true);
         guard_draw_result(ctx->hl, update_display_full(ctx->hl));
@@ -583,6 +591,9 @@ void app_loop_run(const app_loop_config_t* config) {
     bool just_transitioned = false;
     app_input_touch_filter_t touch_filter = {0};
     while (true) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+        if (cloudzao_take_books_changed()) book_store_notify_changed();
+#endif
 #if CONFIG_APP_LOCK_SLEEP_TRACE
         lock_sleep_trace_replay(esp_timer_get_time());
 #endif

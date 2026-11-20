@@ -6,12 +6,16 @@
  * English: Shutdown-art/picker/cover/avatar handoff shared by USB, files and sleep, retaining per-job budgets and caller guards.
  */
 #include "storage_jobs.h"
+#include "cloudzao_service.h"
 #include "book_cover_jobs.h"
 #include "ui_avatar.h"
 #include "lock_style_images.h"
 #include "shutdown_wallpaper.h"
 
 bool storage_jobs_quiesce(unsigned timeout_ms) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (!cloudzao_quiesce(timeout_ms)) return false;
+#endif
     return shutdown_wallpaper_quiesce(timeout_ms) && lock_images_quiesce(timeout_ms) &&
         book_cover_jobs_quiesce(timeout_ms) && ui_avatar_quiesce(timeout_ms);
 }

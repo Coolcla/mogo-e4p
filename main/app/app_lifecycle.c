@@ -3,6 +3,7 @@
  * English: Centralize lock checkpoints and pre-sleep service handoff order; services retain resources and callers retain painting, logs and hardware recovery.
  */
 #include "app_lifecycle.h"
+#include "cloudzao_service.h"
 #include "app_content_open.h"
 #include "app_registry.h"
 #include "boot_state.h"
@@ -32,6 +33,9 @@ bool app_lifecycle_pause_for_lock(void) {
     app_weather_cancel_join();
     pico_ota_auto_cancel();
     app_time_service_cancel();
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (!cloudzao_quiesce(2000)) return false;
+#endif
     return network_service_pause_for_sleep();
 }
 

@@ -29,6 +29,7 @@ typedef enum {
     NETWORK_USE_WEATHER_MANUAL,
     NETWORK_USE_TIME_MANUAL,
     NETWORK_USE_OTA_MANUAL,
+    NETWORK_USE_CLOUDZAO,
 } network_use_t;
 
 /// 仅明确发起的操作可临时启用关闭的 4G。/ Only explicit actions may temporarily start switched-off cellular.

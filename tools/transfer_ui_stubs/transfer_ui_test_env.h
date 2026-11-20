@@ -25,9 +25,13 @@ typedef enum { APP_REDRAW_NONE, APP_REDRAW_AREA, APP_REDRAW_PAGE, APP_REDRAW_FUL
 struct app_desc;
 typedef struct { bool touched; uint8_t count; uint16_t x,y; } cst836u_touch_t;
 typedef struct { uint8_t* fb; void* hl; bool consumed,released; int64_t now_ms; const cst836u_touch_t* touch; const struct app_desc* request_app; bool request_return; } app_ctx_t;
-typedef enum { UI_GESTURE_PRESS, UI_GESTURE_TAP, UI_GESTURE_CANCEL, UI_GESTURE_LONG_PRESS } ui_gesture_type_t;
+typedef enum {
+    UI_GESTURE_PRESS, UI_GESTURE_MOVE, UI_GESTURE_LONG_PRESS, UI_GESTURE_TAP,
+    UI_GESTURE_SWIPE_L, UI_GESTURE_SWIPE_R, UI_GESTURE_SWIPE_U, UI_GESTURE_SWIPE_D,
+    UI_GESTURE_CANCEL, UI_GESTURE_RELEASE,
+} ui_gesture_type_t;
 typedef struct { ui_gesture_type_t type; uint16_t x,y,x0,y0; } ui_gesture_event_t;
-typedef struct app_desc { const char *title,*detail; bool enter_full,owns_keys; bool(*menu_handle_enabled)(app_ctx_t*); void(*on_enter)(app_ctx_t*); void(*on_exit)(app_ctx_t*); void(*on_media_lost)(app_ctx_t*); void(*render)(app_ctx_t*,uint8_t*); bool(*present)(app_ctx_t*,app_redraw_t); app_redraw_t(*on_tick)(app_ctx_t*); app_redraw_t(*on_gesture)(app_ctx_t*,const ui_gesture_event_t*); app_redraw_t(*on_key)(app_ctx_t*,int); } app_desc_t;
+typedef struct app_desc { const char *title,*detail; bool enter_full,owns_keys; bool(*menu_handle_enabled)(app_ctx_t*); void(*on_enter)(app_ctx_t*); void(*on_exit)(app_ctx_t*); void(*on_media_lost)(app_ctx_t*); void(*on_before_lock)(app_ctx_t*); void(*render)(app_ctx_t*,uint8_t*); bool(*present)(app_ctx_t*,app_redraw_t); app_redraw_t(*on_tick)(app_ctx_t*); app_redraw_t(*on_gesture)(app_ctx_t*,const ui_gesture_event_t*); app_redraw_t(*on_key)(app_ctx_t*,int); } app_desc_t;
 enum EpdDrawMode { MODE_DU,MODE_GL16,MODE_GC16 };
 #define UI_MARGIN 40
 #define UI_CONTENT_TOP 176
@@ -75,6 +79,7 @@ static inline void ui_draw_icon(uint8_t* f,int x,int y,int size,ui_icon_t icon,u
 static inline void ui_draw_pressed_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_round_rect(uint8_t* f,...) {(void)f;}
 static inline void ui_fill_round_rect(uint8_t* f,...) {(void)f;}
+static inline void ui_fill_round_rect_raw(uint8_t* f,...) {(void)f;}
 static inline void ui_draw_menu_handle(uint8_t* f,...) {(void)f;}
 static inline void ui_hairline(uint8_t* f,...) {(void)f;}
 extern void (*test_observe_text)(const char *text);
@@ -85,7 +90,8 @@ static inline void ui_text(uint8_t* f,int x,int y,int px,const char* text,int al
 static inline int ui_text_effective_px(int px) {return px + 2;}
 static inline void ui_text_vc(uint8_t* f,...) {(void)f;}
 static inline void ui_text_box(uint8_t* f,EpdRect box,int px,const char* text,int align,bool inverted) {
-    (void)f;(void)box;(void)px;(void)text;(void)align;(void)inverted;
+    (void)f;(void)box;(void)px;(void)align;(void)inverted;
+    if (test_observe_text) test_observe_text(text);
 }
 static inline void ui_text_fixed_vc(uint8_t* f,int x,int y,int px,const char* text,int align,bool inverted) {
     ui_text(f,x,y,px,text,align,inverted);
@@ -93,6 +99,11 @@ static inline void ui_text_fixed_vc(uint8_t* f,int x,int y,int px,const char* te
 static inline int ui_text_fixed_width_px(int px,const char* s) {return (int)strlen(s)*px/2;}
 static inline int ui_text_fixed_context_width_px(int px,const char* s,const char* sample) {(void)sample;return ui_text_fixed_width_px(px,s);}
 static inline void ui_text_fixed_context_vc(uint8_t* f,...) {(void)f;}
+extern void (*test_observe_pixel)(int x, int y, uint8_t gray);
+static inline void epd_draw_pixel(int x,int y,uint8_t gray,uint8_t* f) {
+    (void)f;
+    if (test_observe_pixel) test_observe_pixel(x,y,gray);
+}
 static inline void epd_fill_rect(EpdRect r,...) {(void)r;}
 static inline void epd_draw_rect(EpdRect r,...) {(void)r;}
 static inline void epd_draw_circle(int x,int y,int radius,...) {(void)x;(void)y;(void)radius;}

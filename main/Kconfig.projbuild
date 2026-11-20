@@ -187,3 +187,10 @@ menu "Online update (OTA)"
             rejected. Must stay off for production releases.
 
 endmenu
+
+config MOGO_CLOUDZAO_TRANSFER
+    bool "CloudZao single-device transfer test (not for release)"
+    default n
+    help
+        开启单机 CloudZao 接收联调入口；不包含密钥，不用于正式发布。
+        Enable the local CloudZao receive test; contains no key and is not for release.

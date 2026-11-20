@@ -14,6 +14,7 @@
 - [docs/ONBOARDING.md](../ONBOARDING.md)
 - [docs/development/guides/BLUETOOTH.md](guides/BLUETOOTH.md)
 - [docs/development/guides/CALENDAR.md](guides/CALENDAR.md)
+- [docs/development/guides/CLOUDZAO_TRANSFER.md](guides/CLOUDZAO_TRANSFER.md)
 - [docs/development/guides/LOCK_CLOCK.md](guides/LOCK_CLOCK.md)
 - [docs/development/guides/LOCK_STYLE_PICKER.md](guides/LOCK_STYLE_PICKER.md)
 - [docs/development/guides/MANUAL.md](guides/MANUAL.md)

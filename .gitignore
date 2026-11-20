@@ -123,3 +123,6 @@ Desktop.ini
 /flash/Pico-update-*.bin
 # tidy local state
 /docs/local/tidy/
+
+# 本地联调密钥 / Local integration-test key
+/docs/temp.txt

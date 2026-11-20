@@ -662,6 +662,24 @@ esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     return fallback_error == ESP_ERR_NOT_FOUND ? err : fallback_error;
 }
 
+esp_err_t network_service_borrow_ready_wifi(network_lease_t *lease) {
+    if (!lease) return ESP_ERR_INVALID_ARG;
+    *lease = (network_lease_t){0};
+    bool idle = false;
+    if (!atomic_compare_exchange_strong(&s_cellular_control, &idle, true)) return MEMORY_PEAK_BUSY;
+    wifi_transfer_status_t wifi = {0};
+    wifi_transfer_get_status(&wifi);
+    esp_err_t error = ESP_ERR_INVALID_STATE;
+    if (!s_radios_paused && !atomic_load(&s_cellular_leases) && wifi.network_ready &&
+        wifi.network_only && wifi.mode == WIFI_TRANSFER_MODE_STA && select_bearer_netif(NETWORK_BEARER_WIFI)) {
+        *lease = (network_lease_t){.bearer = NETWORK_BEARER_WIFI, .use = NETWORK_USE_CLOUDZAO, .active = true};
+        atomic_fetch_add(&s_wifi_leases, 1);
+        error = ESP_OK;
+    }
+    atomic_store(&s_cellular_control, false);
+    return error;
+}
+
 bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
     return network_service_wait_ready_cancelable(lease, timeout_ms, NULL);
 }

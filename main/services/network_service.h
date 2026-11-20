@@ -51,6 +51,8 @@ network_auto_priority_t network_service_auto_priority(void);
 
 /// Acquire the user-selected bearer. Forced routes fail closed; AUTO follows priority.
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease);
+/// 只借用已经就绪的纯联网 STA；不启动无线、不回退。/ Borrow only a ready network-only STA; no radio start or fallback.
+esp_err_t network_service_borrow_ready_wifi(network_lease_t *lease);
 bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms);
 /// 取消不消费租约；调用者照常释放。/ Cancellation leaves lease ownership with the caller.
 bool network_service_wait_ready_cancelable(network_lease_t *lease, uint32_t timeout_ms,

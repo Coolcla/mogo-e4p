@@ -6,6 +6,7 @@
  * 冻结：仅供宿主测试，不访问网络。/ Frozen: Host tests only; no network access.
  */
 #include "transfer_ui_test_env.h"
+#define TRANSFER_UI_RECORD_REFRESH
 #include "../main/apps/app_transfer.c"
 #include <assert.h>
 #include "../components/wifi_transfer/transfer_signature.h"
@@ -28,6 +29,529 @@ static void tap(app_ctx_t* ctx, EpdRect rect) {
     ev.type = UI_GESTURE_TAP;
     on_gesture(ctx, &ev);
 }
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+static unsigned test_cloud_starts, test_cloud_cancels, test_history_reads, test_history_clears;
+static cz_error_t test_history_clear_start_error;
+static cz_job_t test_cloud_job;
+static unsigned test_offer_rows;
+static cz_selection_t test_downloaded_selection;
+static cz_error_t test_cloud_start_error;
+static unsigned test_batch_first, test_batch_drawn;
+static unsigned test_history_first, test_history_drawn;
+static cz_status_t test_cloud_status;
+static cz_history_status_t test_history_status;
+static cz_transfer_t test_transfer_status;
+
+cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *selection) {
+    assert(!strcmp(key, "test-key"));
+    assert((job == CZ_JOB_DOWNLOAD) == (selection != NULL));
+    if (test_cloud_start_error) return test_cloud_start_error;
+    test_cloud_job = job;
+    if (selection) test_downloaded_selection = *selection;
+    ++test_cloud_starts;
+    return CZ_OK;
+}
+void cloudzao_discard_queue(void) { test_offer_rows = 0; }
+bool cloudzao_offer(unsigned index, cz_row_t *out, cz_kind_t *kind) {
+    if (index >= test_offer_rows) return false;
+    if (kind) *kind = index == 2 ? CZ_KIND_NONE : index == 7 ? CZ_KIND_PNG : CZ_KIND_TXT;
+    if (out) *out = (cz_row_t){.size = 2000, .name = "queued-file"};
+    return true;
+}
+cz_status_t cloudzao_status(void) { return test_cloud_status; }
+cz_transfer_t cloudzao_transfer_status(void) { return test_transfer_status; }
+bool cloudzao_transfer_row(unsigned index, cz_row_t *out) {
+    assert(index < test_transfer_status.rows);
+    if (!test_batch_drawn++) test_batch_first = index;
+    *out = (cz_row_t){.size=8192, .state=CZ_ROW_WAIT, .name="listed.txt"};
+    return true;
+}
+cz_error_t cloudzao_start_history(void) { ++test_history_reads; return CZ_OK; }
+cz_error_t cloudzao_start_history_clear(void) {
+    ++test_history_clears;
+    if (test_history_clear_start_error) return test_history_clear_start_error;
+    test_history_status.busy = true;
+    return CZ_OK;
+}
+cz_history_status_t cloudzao_history_status(void) { return test_history_status; }
+bool cloudzao_history_item(unsigned index, cz_history_item_t *out) {
+    if (index >= test_history_status.count) return false;
+    if (!test_history_drawn++) test_history_first = index;
+    *out = (cz_history_item_t){.file = {.size = 1536, .state = CZ_ROW_SAVED, .name = "novel.EPUB"}};
+    return true;
+}
+void cloudzao_cancel(void) { ++test_cloud_cancels; }
+bool cloudzao_key_valid(const char *key) { return !strcmp(key, "test-key"); }
+
+static const char *test_expected_cloud_text;
+static bool test_cloud_text_drawn, test_key_setting_drawn;
+static void observe_cloud_text(const char *text) {
+    assert(!strstr(text, "本机中转") && !strstr(text, "单机联调凭据"));
+    if (!strcmp(text, test_expected_cloud_text)) test_cloud_text_drawn = true;
+    if (!strcmp(text, "设置联调密钥")) test_key_setting_drawn = true;
+}
+
+static void assert_cloud_settings_text(app_ctx_t *ctx, const char *text) {
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS);
+    test_expected_cloud_text = text;
+    test_cloud_text_drawn = test_key_setting_drawn = false;
+    test_observe_text = observe_cloud_text;
+    draw_cloud(ctx->fb);
+    test_observe_text = NULL;
+    assert(test_cloud_text_drawn);
+#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
+    assert(!test_key_setting_drawn);
+#else
+    assert(test_key_setting_drawn);
+#endif
+}
+
+static unsigned test_mark_black, test_mark_edge;
+
+static void observe_cloud_mark(int x, int y, uint8_t gray) {
+    assert(x > 86 && x < UI_LOCK_WIDTH / 2 && y > 93 && y < 120);
+    assert(gray < 0xf0 && (gray & 0x0f) == 0);
+    if (gray == 0) ++test_mark_black;
+    else ++test_mark_edge;
+}
+
+static void cloud_header_regression(app_ctx_t *ctx) {
+    test_observe_pixel = observe_cloud_mark;
+    draw_cloud_header(ctx->fb);
+    test_observe_pixel = NULL;
+    assert(test_mark_black > 0 && test_mark_edge > 0);
+}
+
+static void cloud_back_regression(app_ctx_t *ctx) {
+    const EpdRect back = {36, 79, 50, 50};
+    for (int i = CLOUD_PANEL_TRANSFER; i <= CLOUD_PANEL_SETTINGS; ++i) {
+        for (int key = 0; key < 3; ++key) {
+            app_transfer_request_cloudzao();
+            on_enter(ctx);
+            strcpy(s_cloud_key, "test-key");
+            tap(ctx, cloud_tab(i));
+            assert(s_cloud_panel == (cloud_panel_t)i && !ctx->request_return);
+            if (i == CLOUD_PANEL_SETTINGS) tap(ctx, cloud_button(CLOUD_BIND));
+            if (i == CLOUD_PANEL_TRANSFER) tap(ctx, cloud_offer_fetch());
+            const unsigned cancels = test_cloud_cancels;
+            if (!key) tap(ctx, back);
+            else assert(on_key(ctx, key == 1 ? UI_KEY_1 : UI_KEY_3) == APP_REDRAW_NONE);
+            assert(ctx->request_return && !ctx->request_app && s_view == TRANSFER_METHODS);
+            assert(test_cloud_cancels == cancels + 1 && !s_cloud_key[0]);
+            assert(!s_cloud_bind_status.busy && !s_cloud_history.busy && !s_cloud_status.busy);
+            transfer_on_exit(ctx);
+            ctx->request_return = false;
+        }
+    }
+}
+
+static void cloud_direct_entry_regression(app_ctx_t *ctx) {
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    assert(s_view == TRANSFER_CLOUDZAO && s_direct_entry && !s_cloud_entry_requested);
+    assert(!s_start_pending && !s_scan_pending && !s_usb_start_pending);
+    assert(!test_cloud_starts && on_tick(ctx) == APP_REDRAW_NONE);
+    strcpy(s_cloud_key, "test-key");
+    const EpdRect receive = cloud_button(CLOUD_RECEIVE);
+    const EpdRect fetch = cloud_offer_fetch();
+    const EpdRect download = cloud_offer_submit();
+    const ui_gesture_event_t outside = {.type=UI_GESTURE_TAP, .x0=fetch.x+4, .y0=fetch.y+4,
+                                        .x=fetch.x+4, .y=fetch.y-1};
+    assert(on_gesture(ctx, &outside) == APP_REDRAW_NONE && !test_cloud_starts);
+    assert(fetch.x - UI_MARGIN == UI_MARGIN + ui_content_width() - (fetch.x + fetch.width));
+    assert(fetch.y == download.y && fetch.y + fetch.height <= UI_NAV_TOP);
+    EpdRect right_edge = {download.x + download.width - 8, download.y, 8, download.height};
+    tap(ctx, right_edge);
+    assert(!test_cloud_starts);
+    assert(download.y + download.height <= UI_NAV_TOP);
+    tap(ctx, fetch);
+    assert(test_cloud_starts == 1 && test_cloud_job == CZ_JOB_PREVIEW && s_cloud_status.busy && !s_cloud_batch);
+    test_offer_rows = 9;
+    test_cloud_status = (cz_status_t){.total = 9};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_cloud_selectable == 8 && !s_cloud_checked);
+    const EpdRect refresh = cloud_offer_fetch();
+    assert(refresh.y + refresh.height < CLOUD_OFFER_TABLE_TOP);
+    assert(cloud_offer_all().y + cloud_offer_all().height < cloud_offer_rect(0).y);
+    const EpdRect last = cloud_offer_rect(CLOUD_OFFER_PAGE_ROWS - 1);
+    const EpdRect pager = cloud_offer_pager(false);
+    const EpdRect notice = cloud_offer_notice();
+    assert(last.y + last.height < pager.y);
+    assert(pager.y + pager.height < notice.y && notice.height > 0);
+    assert(notice.y + notice.height < CLOUD_OFFER_SELECTION_Y);
+    assert(pager.y + pager.height + 40 >= download.y);
+    tap(ctx, download);
+    tap(ctx, cloud_offer_rect(2));
+    assert(!s_cloud_checked && test_cloud_starts == 1);
+    tap(ctx, cloud_offer_all());
+    assert(s_cloud_checked == 8 && s_cloud_selection.checked[8] && !s_cloud_selection.checked[2]);
+    assert(s_area.y == CLOUD_OFFER_TABLE_TOP && s_area.y + s_area.height == CLOUD_OFFER_END);
+    assert(present(ctx, APP_REDRAW_AREA) && test_refresh_intent == DISPLAY_REFRESH_DETAIL);
+    tap(ctx, cloud_offer_all());
+    assert(!s_cloud_checked && !s_cloud_selection.checked[8]);
+    tap(ctx, cloud_offer_rect(0));
+    tap(ctx, cloud_offer_pager(true));
+    tap(ctx, cloud_offer_rect(1));
+    assert(s_cloud_offer_page == 1 && s_cloud_checked == 2 && s_cloud_selection.checked[0] && s_cloud_selection.checked[7]);
+    tap(ctx, pager);
+    assert(!s_cloud_offer_page && s_cloud_checked == 2);
+    tap(ctx, cloud_offer_pager(true));
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    tap(ctx, cloud_tab(CLOUD_PANEL_TRANSFER));
+    assert(s_cloud_offer_page == 1 && s_cloud_checked == 2);
+    test_cloud_start_error = CZ_MEDIA;
+    tap(ctx, download);
+    assert(s_cloud_action_error == CZ_MEDIA && s_cloud_checked == 2 && !s_cloud_batch && test_cloud_starts == 1);
+    test_cloud_start_error = CZ_OK;
+    tap(ctx, download);
+    assert(test_cloud_starts == 2 && test_cloud_job == CZ_JOB_DOWNLOAD && s_cloud_status.busy && s_cloud_batch);
+    assert(test_downloaded_selection.checked[0] && test_downloaded_selection.checked[7]);
+    for (unsigned i = 1; i < CLOUDZAO_LIST_ROWS; ++i) if (i != 7) assert(!test_downloaded_selection.checked[i]);
+    test_cloud_status = (cz_status_t){.busy=true, .total=8, .processed=2, .saved=1, .pending=1};
+    test_transfer_status = (cz_transfer_t){.rows=8, .revision=1, .active=true, .received=4096, .rate=2048,
+        .file={.size=8192, .state=CZ_ROW_DOWNLOAD, .name="test.txt"}};
+    assert(on_tick(ctx) == APP_REDRAW_AREA && !strcmp(cloud_result_title(), "正在下载推送"));
+    assert(s_cloud_transfer.received==4096 && s_cloud_transfer.rate==2048);
+    const EpdRect batch = cloud_batch_area();
+    assert(s_area.y == cloud_result_area().y && s_area.y + s_area.height == batch.y + batch.height);
+    assert(test_batch_drawn == CLOUD_BATCH_PAGE_ROWS && test_batch_first == 0);
+    assert(present(ctx, APP_REDRAW_AREA) && test_refresh_intent == DISPLAY_REFRESH_DETAIL);
+
+    // 当前项在本页时，速率或进度也只推数值条。/ A visible active row must not refresh on byte or rate changes.
+    test_transfer_status.received += 512;
+    ctx->now_ms += CLOUD_SAMPLE_PAINT_MS - 1;
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+    ++ctx->now_ms;
+    assert(on_tick(ctx) == APP_REDRAW_AREA);
+    assert(s_area.y == cloud_sample_area().y && s_area.height == cloud_sample_area().height);
+    assert(test_batch_drawn == CLOUD_BATCH_PAGE_ROWS);
+    assert(present(ctx, APP_REDRAW_AREA) && test_refresh_intent == DISPLAY_REFRESH_FEEDBACK);
+    assert(test_refresh_area.y + test_refresh_area.height < batch.y);
+
+    // 速率归零更新一次，停滞时不周期刷屏。/ Paint a stalled rate once, then remain idle.
+    test_transfer_status.rate = 0;
+    ctx->now_ms += CLOUD_SAMPLE_PAINT_MS;
+    assert(on_tick(ctx) == APP_REDRAW_AREA && s_cloud_transfer.rate == 0);
+    ctx->now_ms += CLOUD_SAMPLE_PAINT_MS;
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+
+    // 阶段变化不必等实时采样，但密集切换会合并。/ Stages bypass the sample timer but coalesce rapid transitions.
+    test_transfer_status.file.state = CZ_ROW_VERIFY;
+    ++test_transfer_status.revision;
+    assert(on_tick(ctx) == APP_REDRAW_AREA && test_batch_drawn == 2 * CLOUD_BATCH_PAGE_ROWS);
+    assert(present(ctx, APP_REDRAW_AREA) && test_refresh_intent == DISPLAY_REFRESH_DETAIL);
+    test_transfer_status.file.state = CZ_ROW_DOWNLOAD;
+    test_transfer_status.file.size = 8 * 1048576;
+    test_transfer_status.received = 4 * 1048576;
+    ++test_transfer_status.revision;
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+    ctx->now_ms += CLOUD_LAYOUT_PAINT_MS;
+    assert(on_tick(ctx) == APP_REDRAW_AREA);
+    tap(ctx, cloud_tab(CLOUD_PANEL_HISTORY));
+    assert(!test_history_reads && s_cloud_panel == CLOUD_PANEL_TRANSFER);
+    tap(ctx, cloud_pager(false, true));
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && s_cloud_batch_page == 1);
+    test_batch_drawn = 0;
+    draw_cloud(ctx->fb);
+    assert(test_batch_first == 5 && test_batch_drawn == 3);
+    tap(ctx, cloud_tab(CLOUD_PANEL_TRANSFER));
+    assert(s_cloud_batch_page == 1);
+    test_transfer_status.received += 512;
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+    ctx->now_ms += CLOUD_SAMPLE_PAINT_MS;
+    assert(on_tick(ctx) == APP_REDRAW_NONE); // 进度条和格式化数字未变。/ Same displayed bar and numbers.
+    test_transfer_status.received += 256 * 1024;
+    ctx->now_ms += CLOUD_SAMPLE_PAINT_MS;
+    assert(on_tick(ctx) == APP_REDRAW_AREA && s_area.height == cloud_sample_area().height);
+    assert(test_batch_drawn == 3);
+
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && !test_cloud_cancels);
+    assert_cloud_settings_text(ctx, "接收结束后可检查");
+    tap(ctx, cloud_button(CLOUD_BIND));
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    tap(ctx, cloud_button(CLOUD_KEY));
+#endif
+    assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
+    test_cloud_status.pending = 0;
+    ctx->now_ms += 1000;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_status.pending == 0);
+    tap(ctx, cloud_tab(CLOUD_PANEL_TRANSFER));
+    assert(s_cloud_batch_page == 1 && s_cloud_status.busy);
+    tap(ctx, cloud_pager(false, false));
+    assert(s_cloud_batch_page == 0);
+    tap(ctx, receive);
+    tap(ctx, receive);
+    assert(test_cloud_cancels == 1 && !strcmp(cloud_result_title(), "正在取消"));
+    test_cloud_status.busy = false;
+    test_cloud_status.error = CZ_CANCELLED;
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_result_title(), "已取消"));
+
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    tap(ctx, cloud_button(CLOUD_KEY));
+    assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
+#endif
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    assert_cloud_settings_text(ctx, "尚未检查绑定");
+    assert_cloud_settings_text(ctx, "检查绑定 / 获取绑定码");
+#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
+    tap(ctx, (EpdRect){36, 598, 612, 90});
+    assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
+#endif
+    tap(ctx, cloud_button(CLOUD_BIND));
+    assert(test_cloud_starts == 3 && test_cloud_job == CZ_JOB_BIND && s_cloud_bind_status.busy && !s_cloud_status.busy);
+    test_cloud_status = (cz_status_t){.code="001234"};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "绑定码"));
+    assert_cloud_settings_text(ctx, "001234");
+    assert(s_cloud_transfer.rows == 8 && s_cloud_status.error == CZ_CANCELLED);
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.binding_probed=true};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "已绑定"));
+    assert_cloud_settings_text(ctx, "已绑定");
+    assert_cloud_settings_text(ctx, "可直接接收推送，无需重新绑定");
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.binding_probed=true, .error=CZ_SERVER};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "无法确认绑定状态"));
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.error=CZ_WIFI};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "绑定请求失败"));
+    assert(!strcmp(cloud_bind_detail(), "请先在设置中连接 WiFi"));
+    assert(s_cloud_transfer.rows == 8 && s_cloud_status.error == CZ_CANCELLED);
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    tap(ctx, cloud_button(CLOUD_KEY));
+    assert(s_view == TRANSFER_CLOUDZAO_KEY);
+    tap(ctx, (EpdRect){36, 79, 50, 50});
+    assert(s_view == TRANSFER_CLOUDZAO && s_cloud_panel == CLOUD_PANEL_SETTINGS && !ctx->request_return);
+    tap(ctx, cloud_button(CLOUD_KEY));
+    assert(s_view == TRANSFER_CLOUDZAO_KEY);
+    strcpy(s_cloud_draft, "test-key");
+    assert(cloud_save_key() == APP_REDRAW_PAGE && s_view == TRANSFER_CLOUDZAO);
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && !s_cloud_bind_visible && s_cloud_transfer.rows == 8);
+#endif
+    tap(ctx, cloud_tab(CLOUD_PANEL_HISTORY));
+    assert(test_history_reads == 1 && s_cloud_panel == CLOUD_PANEL_HISTORY && s_cloud_history.busy);
+    test_history_status.count = 3;
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_cloud_history.count == 3);
+    app_transfer.on_media_lost(ctx);
+    assert(s_cloud_history.error == CZ_MEDIA && !s_cloud_history.count);
+    tap(ctx, (EpdRect){36, 79, 50, 50});
+    assert(ctx->request_return && test_cloud_cancels == 2 && !s_cloud_key[0]);
+    transfer_on_exit(ctx);
+
+    ctx->request_return = false;
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    strcpy(s_cloud_key, "test-key");
+    app_transfer.on_before_lock(ctx);
+    assert(!ctx->request_return && s_view == TRANSFER_CLOUDZAO && test_cloud_cancels == 3);
+    assert(!s_cloud_key[0] && !s_cloud_requested && !s_cloud_status.busy);
+    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_NONE && ctx->request_return);
+    transfer_on_exit(ctx);
+    ctx->request_return = false;
+    cloud_back_regression(ctx);
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    strcpy(s_cloud_key, "test-key");
+    tap(ctx, fetch);
+    test_cloud_status = (cz_status_t){.busy = true};
+    tap(ctx, fetch);
+    assert(s_cloud_cancelling && on_tick(ctx) == APP_REDRAW_NONE);
+    test_cloud_status = (cz_status_t){.error = CZ_CANCELLED};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !s_cloud_cancelling && !cloud_offer_count());
+    tap(ctx, fetch);
+    test_cloud_status = (cz_status_t){0};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !cloud_offer_count());
+    tap(ctx, fetch);
+    test_offer_rows = 4;
+    test_cloud_status = (cz_status_t){.total = 4};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_cloud_selectable == 3);
+    tap(ctx, cloud_offer_rect(0));
+    assert(s_cloud_checked == 1);
+    tap(ctx, refresh);
+    assert(test_cloud_job == CZ_JOB_PREVIEW && s_cloud_status.busy && !s_cloud_checked && !test_offer_rows);
+    transfer_on_exit(ctx);
+    on_enter(ctx);
+    assert(s_view == TRANSFER_METHODS && !s_direct_entry);
+    puts("CloudZao queue preview, selection, progress, cancellation, binding, back and lock: PASS");
+}
+
+static app_redraw_t cloud_swipe(app_ctx_t *ctx, ui_gesture_type_t type, uint16_t y) {
+    const bool left = type == UI_GESTURE_SWIPE_L;
+    const ui_gesture_event_t swipe = {.type = type, .x0 = left ? 550 : 135,
+                                     .x = left ? 135 : 550, .y0 = y, .y = y};
+    return on_gesture(ctx, &swipe);
+}
+
+static void cloud_swipe_regression(app_ctx_t *ctx) {
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    const unsigned reads = test_history_reads, cancels = test_cloud_cancels, starts = test_cloud_starts;
+    const uint16_t tab_y = cloud_tab(CLOUD_PANEL_TRANSFER).y + 2, body_y = 450;
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_NONE);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, 110) == APP_REDRAW_NONE);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, UI_NAV_TOP) == APP_REDRAW_NONE);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_U, body_y) == APP_REDRAW_NONE);
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && test_history_reads == reads);
+
+    s_cloud_status.busy = true;
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, body_y) == APP_REDRAW_NONE);
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && test_history_reads == reads);
+    s_cloud_status.busy = false;
+    s_cloud_history_page = 2;
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, tab_y) == APP_REDRAW_PAGE);
+    assert(s_cloud_panel == CLOUD_PANEL_HISTORY && s_cloud_history.busy && !s_cloud_history_page);
+    assert(test_history_reads == reads + 1);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, body_y) == APP_REDRAW_PAGE);
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && test_cloud_cancels == cancels + 1);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, body_y) == APP_REDRAW_NONE);
+
+    s_cloud_bind_status.busy = true;
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_NONE);
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && test_history_reads == reads + 1);
+    s_cloud_bind_status.busy = false;
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    tap(ctx, cloud_button(CLOUD_KEY));
+    assert(s_view == TRANSFER_CLOUDZAO_KEY);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_NONE);
+    assert(s_view == TRANSFER_CLOUDZAO_KEY && s_cloud_panel == CLOUD_PANEL_SETTINGS);
+    tap(ctx, password_control_rect(44));
+#endif
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_PAGE);
+    assert(s_cloud_panel == CLOUD_PANEL_HISTORY && test_history_reads == reads + 2);
+    test_history_status = (cz_history_status_t){0};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_PAGE);
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && test_cloud_cancels == cancels + 1);
+    assert(test_cloud_starts == starts && !ctx->request_return);
+    transfer_on_exit(ctx);
+    puts("CloudZao tab swipes: PASS");
+}
+
+static void assert_history_text(app_ctx_t *ctx, const char *text) {
+    test_expected_cloud_text = text;
+    test_cloud_text_drawn = false;
+    test_observe_text = observe_cloud_text;
+    draw_cloud(ctx->fb);
+    test_observe_text = NULL;
+    assert(test_cloud_text_drawn);
+}
+
+static void cloud_history_regression(app_ctx_t *ctx) {
+    assert(!strcmp(cloud_history_format("novel.EPUB"), "EPUB"));
+    assert(!strcmp(cloud_history_format("notes.txt"), "TXT"));
+    assert(!strcmp(cloud_history_format("font.ttf"), "TTF"));
+    assert(!strcmp(cloud_history_format("image.png"), "PNG"));
+    assert(!strcmp(cloud_history_format("no-extension"), "文件"));
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    tap(ctx, cloud_tab(CLOUD_PANEL_HISTORY));
+    assert_history_text(ctx, "正在读取记录");
+    test_history_status = (cz_history_status_t){.count = 8};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    const EpdRect next = cloud_pager(true, true), prev = cloud_pager(true, false);
+    assert(next.y + next.height <= UI_NAV_TOP);
+    tap(ctx, prev);
+    test_history_drawn = 0;
+    assert_history_text(ctx, "8 条");
+    assert(s_cloud_history_page == 0 && test_history_first == 0 && test_history_drawn == CLOUD_HISTORY_PAGE_ROWS);
+    tap(ctx, next);
+    tap(ctx, next);
+    test_history_drawn = 0;
+    assert_history_text(ctx, "2 / 2");
+    assert(s_cloud_history_page == 1 && test_history_first == CLOUD_HISTORY_PAGE_ROWS && test_history_drawn == 2);
+    tap(ctx, prev);
+    assert(s_cloud_history_page == 0);
+    assert_history_text(ctx, "时间未校准 · 1.5 KiB");
+    test_history_drawn = 0;
+    s_cloud_history = (cz_history_status_t){0};
+    assert_history_text(ctx, "还没有接收记录");
+    s_cloud_history_page = 1;
+    s_cloud_history.error = CZ_MEDIA;
+    tap(ctx, prev);
+    assert(s_cloud_history_page == 1);
+    assert_history_text(ctx, "请插入已挂载的 TF 卡");
+    s_cloud_history.error = CZ_STORAGE;
+    assert_history_text(ctx, "请检查 TF 卡，再重新打开历史记录");
+    assert(test_history_drawn == 0);
+    transfer_on_exit(ctx);
+    puts("CloudZao history layout states and pager: PASS");
+}
+
+static void cloud_history_clear_regression(app_ctx_t *ctx) {
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    ctx->request_return = false;
+    const EpdRect history = cloud_tab(CLOUD_PANEL_HISTORY), clear = cloud_history_clear_button();
+    const EpdRect confirm = cloud_history_confirm_button(true), cancel = cloud_history_confirm_button(false);
+    tap(ctx, history);
+    tap(ctx, clear);
+    assert(!s_cloud_history_confirm && !test_history_clears);
+    test_history_status = (cz_history_status_t){.count = 8};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    tap(ctx, cloud_pager(true, true));
+    assert_history_text(ctx, "清除");
+    tap(ctx, clear);
+    assert(s_cloud_history_confirm && !test_history_clears);
+    assert_history_text(ctx, "仅清除当前 TF 卡的接收记录");
+    tap(ctx, clear);
+    assert(s_cloud_history_confirm && !test_history_clears);
+    tap(ctx, cancel);
+    assert(!s_cloud_history_confirm && !test_history_clears && s_cloud_history_page == 1);
+    tap(ctx, clear);
+    tap(ctx, (EpdRect){22, 65, 90, 83});
+    assert(!s_cloud_history_confirm && !ctx->request_return && !test_history_clears);
+    tap(ctx, clear);
+    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_PAGE);
+    assert(!s_cloud_history_confirm && !ctx->request_return && !test_history_clears);
+
+    tap(ctx, clear);
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, confirm.y + 10) == APP_REDRAW_PAGE);
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && !s_cloud_history_confirm && !test_history_clears);
+    tap(ctx, history);
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    tap(ctx, clear);
+    transfer_on_media_lost(ctx);
+    tap(ctx, confirm);
+    assert(!s_cloud_history_confirm && !test_history_clears && s_cloud_history.error == CZ_MEDIA);
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    tap(ctx, history);
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    tap(ctx, clear);
+    cloud_before_lock(ctx);
+    assert(!s_cloud_history_confirm && !test_history_clears && s_cloud_panel == CLOUD_PANEL_TRANSFER);
+    tap(ctx, history);
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    tap(ctx, cloud_pager(true, true));
+
+    test_history_clear_start_error = CZ_RESOURCES;
+    tap(ctx, clear);
+    tap(ctx, confirm);
+    assert_history_text(ctx, "清除失败，可重试");
+    assert(test_history_clears == 1 && !s_cloud_history.busy && s_cloud_history.count == 8);
+    test_history_clear_start_error = CZ_OK;
+    tap(ctx, clear);
+    tap(ctx, confirm);
+    tap(ctx, confirm);
+    assert(test_history_clears == 2 && s_cloud_history.busy && s_cloud_history_clearing);
+    assert_history_text(ctx, "正在清除记录");
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+    test_history_status = (cz_history_status_t){.count = 8, .error = CZ_STORAGE};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    test_history_drawn = 0;
+    assert_history_text(ctx, "清除失败，可重试");
+    assert(test_history_drawn == 2 && s_cloud_history_page == 1);
+    tap(ctx, clear);
+    tap(ctx, confirm);
+    assert(test_history_clears == 3);
+    test_history_status = (cz_history_status_t){0};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    assert_history_text(ctx, "还没有接收记录");
+    tap(ctx, clear);
+    assert(!s_cloud_history_confirm && !s_cloud_history_page && !s_cloud_history.count && test_history_clears == 3);
+    transfer_on_exit(ctx);
+    puts("CloudZao history clear confirmation, dismissal, failure and success: PASS");
+}
+#endif
+
 static void qr_regression(app_ctx_t* ctx) {
     test_status = (wifi_transfer_status_t){.mode=WIFI_TRANSFER_MODE_AP,.state=WIFI_TRANSFER_READY,.network_ready=true};
     strcpy(test_status.ssid,"ReadPico-test");
@@ -125,6 +649,7 @@ static void wifi_recovery_regression(app_ctx_t* ctx) {
     test_status = (wifi_transfer_status_t){0};
 }
 void (*test_observe_text)(const char *text);
+void (*test_observe_pixel)(int x, int y, uint8_t gray);
 static bool test_password_hint_drawn, test_password_error_drawn;
 static void observe_password_text(const char *text) {
     assert(strcmp(text, "输入完成后连接，密码只保存在本机"));
@@ -231,7 +756,13 @@ int main(void) {
     assert(s_signature_revision==1);s_signature_seen=s_signature_revision;
     uint8_t fb = 0;
     app_ctx_t ctx = {.fb = &fb};
-    app_transfer_request_method_picker();
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    cloud_header_regression(&ctx);
+    cloud_direct_entry_regression(&ctx);
+    cloud_swipe_regression(&ctx);
+    cloud_history_regression(&ctx);
+    cloud_history_clear_regression(&ctx);
+#endif
     on_enter(&ctx);
     assert(s_view == TRANSFER_METHODS && !s_wifi_settings_only && !s_start_pending);
     on_tick(&ctx);

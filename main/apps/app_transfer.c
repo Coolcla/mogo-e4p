@@ -2,8 +2,10 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 传书页负责两种接入模式生命周期、书源注入与状态展示；HTTP和文件接收属于独立组件。
- * Transfer page owns both network modes, storage injection and status; the component receives files.
+ * 传书页负责两种浏览器接入模式生命周期、书源注入与状态展示；HTTP和文件接收属于独立组件。
+ * Transfer page owns both browser modes, storage injection and status; the component receives files.
+ * CloudZao 联调仅增加独立接收入口，不将云端客户端归为浏览器传书模式。
+ * CloudZao testing only adds a separate receive entry, not a browser transfer mode.
  *
  * 冻结：按用户双模式要求提供热点与已有WiFi；离开传书时停服，配网后已连接的 STA 保持在线；深睡/断电会中断传输。
  * render只画快照；内置存储单文件上限由book_store提供，不格式化TF卡。
@@ -58,6 +60,13 @@
 #include "ui_nav.h"
 #include "ui_wifi_qr.h"
 #include "usb_storage.h"
+#include "cloudzao_service.h"
+#include "app_transfer_mode.h"
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+#include "assets/cloudzao_mark.h"
+#include "mbedtls/platform_util.h"
+#include <time.h>
+#endif
 
 static const char* TAG = "transfer_page";
 static book_store_root_t s_root;
@@ -134,11 +143,6 @@ static bool transfer_set_wallpaper(const char *path) {
     return app_settings_lock_style() == 1;
 }
 
-void app_transfer_request_method_picker(void) {
-    s_usb_requested = s_hotspot_requested = s_wifi_upload_requested = s_wifi_setup_requested = false;
-    s_wifi_settings_only = false;
-}
-
 void app_transfer_request_usb_start(void) {
     s_usb_requested = true;
 }
@@ -173,7 +177,12 @@ static void prepare_qr(void) {
         : ui_wifi_qr_prepare(s_status.ssid, WIFI_TRANSFER_PASSWORD);
 }
 
-typedef enum { TRANSFER_METHODS, TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD } transfer_view_t;
+typedef enum { TRANSFER_METHODS, TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD,
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    TRANSFER_CLOUDZAO, TRANSFER_CLOUDZAO_KEY,
+#endif
+} transfer_view_t;
+#define TRANSFER_METHOD_COUNT 2
 #define NETWORK_ROWS 6
 #define PASSWORD_MAX 64
 static transfer_view_t s_view;
@@ -213,16 +222,16 @@ static void draw_methods(uint8_t *fb) {
     ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, UI_GRAY_WHITE, fb);
     transfer_header(fb, "Wifi/热点传书", NULL);
     ui_text(fb, 42, 180, 21, "选择方式", EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect card = {36, 224, 612, 224};
+    EpdRect card = {36, 224, 612, TRANSFER_METHOD_COUNT * 112};
     ui_fill_round_rect(fb, card, 24, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, card, 24, 0x60);
-    ui_draw_round_rect(fb, (EpdRect){37, 225, 610, 222}, 23, 0x60);
+    ui_draw_round_rect(fb, (EpdRect){37, 225, 610, TRANSFER_METHOD_COUNT * 112 - 2}, 23, 0x60);
     static const char *titles[] = {"WiFi传书", "热点传书"};
     static const char *details[] = {
         "与手机或电脑连接同一个无线网络",
-        "由墨水屏创建临时网络，离线也能传书"
+        "由墨水屏创建临时网络，离线也能传书",
     };
-    for (int i = 0; i < 2; ++i) {
+    for (int i = 0; i < TRANSFER_METHOD_COUNT; ++i) {
         EpdRect row = method_control_rect(i);
         if (s_pressed == i) ui_draw_pressed_round_rect(fb, row, 0);
         if (i) ui_fill_rect_fast((EpdRect){68, row.y, 548, 2}, UI_GRAY_LIGHT, fb);
@@ -234,8 +243,9 @@ static void draw_methods(uint8_t *fb) {
         ui_text_vc(fb, 617, cy, 29, "›", EPD_DRAW_ALIGN_CENTER, false);
     }
     if (s_method_message[0]) {
-        ui_fill_round_rect(fb, (EpdRect){36, 478, 612, 76}, 20, 0xd8);
-        ui_text_vc(fb, 342, 516, 20, s_method_message, EPD_DRAW_ALIGN_CENTER, false);
+        int y = 478;
+        ui_fill_round_rect(fb, (EpdRect){36, y, 612, 76}, 20, 0xd8);
+        ui_text_vc(fb, 342, y + 38, 20, s_method_message, EPD_DRAW_ALIGN_CENTER, false);
     }
     ui_text(fb, 42, 594, 19, "浏览器传书支持 EPUB、TXT、字体和图片文件。", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 42, 634, 18, "传输完成后，新内容会自动出现在书架或字体列表。", EPD_DRAW_ALIGN_LEFT, false);
@@ -454,6 +464,946 @@ static void draw_password(uint8_t* fb) {
     provisioning_button(fb, password_control_rect(46), "连接并保存", 46);
     ui_keyboard_draw(fb, 560);
 }
+
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+static char s_cloud_key[CLOUDZAO_KEY_MAX + 1], s_cloud_draft[CLOUDZAO_KEY_MAX + 1];
+#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
+#include "cloudzao_local_relay.h"
+#endif
+static ui_text_edit_t s_cloud_editor;
+static cz_status_t s_cloud_status, s_cloud_bind_status;
+static bool s_cloud_bind_visible, s_cloud_requested, s_cloud_invalid_key, s_cloud_cancelling;
+static bool s_cloud_entry_requested;
+typedef enum { CLOUD_PANEL_TRANSFER, CLOUD_PANEL_HISTORY, CLOUD_PANEL_SETTINGS } cloud_panel_t;
+static cloud_panel_t s_cloud_panel;
+static unsigned s_cloud_batch_page, s_cloud_history_page;
+static bool s_cloud_batch;
+static unsigned s_cloud_offer_page, s_cloud_selectable, s_cloud_checked;
+static cz_selection_t s_cloud_selection;
+static cz_error_t s_cloud_action_error;
+#define CLOUD_SAMPLE_PAINT_MS 2000
+#define CLOUD_LAYOUT_PAINT_MS 500
+static int64_t s_cloud_next_sample_ms, s_cloud_next_layout_ms;
+static bool s_cloud_sample_paint;
+static cz_transfer_t s_cloud_transfer;
+static cz_history_status_t s_cloud_history;
+static bool s_cloud_history_confirm, s_cloud_history_clearing, s_cloud_history_clear_failed;
+
+static void cloud_reset_history_actions(void) {
+    s_cloud_history_confirm = s_cloud_history_clearing = s_cloud_history_clear_failed = false;
+}
+
+void app_transfer_request_cloudzao(void) {
+    s_cloud_entry_requested = true;
+    s_wifi_settings_only = false;
+}
+
+static void cloud_end_editor(void) {
+    ui_keyboard_end();
+    mbedtls_platform_zeroize(s_cloud_draft, sizeof(s_cloud_draft));
+    s_cloud_invalid_key = false;
+}
+
+static void cloud_reset_selection(void) {
+    s_cloud_offer_page = s_cloud_selectable = s_cloud_checked = 0;
+    s_cloud_selection = (cz_selection_t){0};
+    s_cloud_action_error = CZ_OK;
+}
+
+static void cloud_leave(void) {
+    if (s_view != TRANSFER_CLOUDZAO && s_view != TRANSFER_CLOUDZAO_KEY) return;
+    cloudzao_cancel();
+    cloudzao_discard_queue();
+    cloud_reset_selection();
+    s_cloud_batch = false;
+    if (s_view == TRANSFER_CLOUDZAO_KEY) cloud_end_editor();
+    mbedtls_platform_zeroize(s_cloud_key, sizeof(s_cloud_key));
+    s_cloud_status = (cz_status_t){0};
+    s_cloud_bind_status = (cz_status_t){0};
+    s_cloud_requested = s_cloud_cancelling = s_cloud_bind_visible = false;
+    s_cloud_batch_page = s_cloud_history_page = 0;
+    s_cloud_panel = CLOUD_PANEL_TRANSFER;
+    s_cloud_transfer = (cz_transfer_t){0};
+    s_cloud_history = (cz_history_status_t){0};
+    cloud_reset_history_actions();
+    s_cloud_next_sample_ms = s_cloud_next_layout_ms = 0;
+    s_view = TRANSFER_METHODS;
+}
+
+static const char *cloud_error(cz_error_t error) {
+    switch (error) {
+        case CZ_AUTH: return "请检查联调密钥";
+        case CZ_WIFI: return "请先在设置中连接 WiFi";
+        case CZ_MEDIA: return "请插入已挂载的 TF 卡";
+        case CZ_TIMEOUT: return "接收超时，可再次接收";
+        case CZ_CANCELLED: return "已取消";
+        case CZ_RESOURCES: return "设备忙或内存不足";
+        case CZ_STORAGE: return "TF 卡空间不足或写入失败";
+        case CZ_CONFLICT: return "存在内容不同的同名文件，未覆盖";
+        case CZ_DIGEST: return "文件大小或摘要不匹配";
+        case CZ_SERVER: return "服务请求失败";
+        case CZ_INVALID: return "资源或响应格式无效";
+        default: return "";
+    }
+}
+
+enum { CLOUD_BIND, CLOUD_RECEIVE, CLOUD_KEY };
+
+static EpdRect cloud_button(int id) {
+    if (id == CLOUD_BIND) return (EpdRect){56, 480, 572, 72};
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    if (id == CLOUD_KEY) return (EpdRect){36, 598, 612, 90};
+#endif
+    return (EpdRect){36, 282, 612, 72};
+}
+
+static const char *cloud_result_title(void) {
+    if (s_cloud_status.busy) {
+        if (s_cloud_cancelling) return "正在取消";
+        return "正在下载推送";
+    }
+    if (s_cloud_status.error == CZ_CANCELLED) return "已取消";
+    if (s_cloud_status.error) return s_cloud_requested ? "接收已中断" : "暂时无法接收";
+    if (!s_cloud_requested) return "等待接收";
+    if (!s_cloud_status.total) return "没有待接收推送";
+    if (s_cloud_status.failed || s_cloud_status.pending || s_cloud_status.skipped) return "接收结束";
+    return "接收完成";
+}
+
+static const char *cloud_result_detail(char *out, size_t cap) {
+    if (s_cloud_status.busy) {
+        if (s_cloud_cancelling) return "正在结束本次操作，请稍候";
+        if (!s_cloud_status.total) return "正在核对所选推送";
+        snprintf(out, cap, "已处理 %u / %u 项", s_cloud_status.processed, s_cloud_status.total);
+        return out;
+    }
+    if (s_cloud_status.error == CZ_CANCELLED) return "已经保存的文件会保留";
+    if (s_cloud_status.error == CZ_SERVER) return "云造请求失败，可稍后再试";
+    if (s_cloud_status.error) return cloud_error(s_cloud_status.error);
+    if (!s_cloud_requested) return s_cloud_key[0] ? "" : "请先在「设置」中填写联调密钥";
+    if (s_cloud_status.item_error) {
+        const bool ack = s_cloud_status.item_request == CZ_ACK;
+        snprintf(out, cap, "%s：%s", ack ? "确认失败，文件已保存" : "下载或保存失败",
+                 cloud_error(s_cloud_status.item_error));
+        return out;
+    }
+    if (s_cloud_status.unavailable) return "部分推送已变化或失效，请重新获取列表";
+    if (s_cloud_status.saved) return "已保存的文件可在 TF 卡中查看";
+    return "在云造端推送文件后可再次接收";
+}
+
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+static void draw_cloud_test_key(uint8_t *fb, const char *subtitle, bool enabled) {
+    const EpdRect row = cloud_button(CLOUD_KEY);
+    ui_draw_round_rect(fb, row, 22, 0x90);
+    ui_text_box(fb, (EpdRect){56, row.y + 7, 540, 40}, 24, "设置联调密钥", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){56, row.y + 47, 540, 32}, 17, subtitle, EPD_DRAW_ALIGN_LEFT, false);
+    if (enabled) ui_draw_icon(fb, 612, row.y + 45, 26, UI_ICON_CHEVRON_RIGHT, 0x50);
+}
+#endif
+
+static EpdRect cloud_tab(int index) { return (EpdRect){36 + index * 204, 151, 204, 48}; }
+
+static void cloud_tabs(uint8_t *fb) {
+    static const char *const labels[] = {"传输", "历史记录", "设置"};
+    ui_fill_rect_fast((EpdRect){36, 199, 612, 2}, 0xc0, fb);
+    for (int i = 0; i < 3; ++i) {
+        EpdRect rect = cloud_tab(i);
+        ui_text_box(fb, rect, 21, labels[i], EPD_DRAW_ALIGN_CENTER, false);
+        if (i == (int)s_cloud_panel)
+            ui_fill_rect_fast((EpdRect){rect.x + 52, rect.y + 46, 100, 4}, UI_GRAY_BLACK, fb);
+    }
+}
+
+static const char *cloud_row_label(cz_row_state_t state) {
+    switch (state) {
+        case CZ_ROW_WAIT: return s_cloud_status.busy ? "等待" : "未处理";
+        case CZ_ROW_CHECK: return "准备下载";
+        case CZ_ROW_DOWNLOAD: return "下载中";
+        case CZ_ROW_VERIFY: return "校验中";
+        case CZ_ROW_CONFIRM: return "确认中";
+        case CZ_ROW_SAVED: return "已保存";
+        case CZ_ROW_PENDING: return "待确认";
+        case CZ_ROW_SKIPPED: return "已跳过";
+        case CZ_ROW_FAILED: return "失败";
+        case CZ_ROW_UNAVAILABLE: return "推送已失效";
+        default: return "已中断";
+    }
+}
+
+static void cloud_bytes(char *out, size_t cap, uint32_t bytes) {
+    const unsigned n = (unsigned)bytes;
+    const unsigned unit = n >= 1048576 ? 1048576 : n >= 1024 ? 1024 : 1;
+    if (unit == 1) snprintf(out, cap, "%u B", n);
+    else snprintf(out, cap, "%u.%u %s", n / unit, (n % unit) * 10 / unit, unit == 1024 ? "KiB" : "MiB");
+}
+
+static void cloud_name_label(char out[CLOUDZAO_NAME_MAX + 1], const cz_row_t *file, int width) {
+    if (file->name[0]) memcpy(out, file->name, sizeof(file->name));
+    else strcpy(out, "未命名文件");
+    out[CLOUDZAO_NAME_MAX] = 0;
+    fit_label(out, 24, width);
+}
+
+typedef struct {
+    int fill_width;
+    char detail[80], rate[24];
+} cloud_sample_t;
+
+static EpdRect cloud_sample_area(void) { return (EpdRect){56, 515, 572, 51}; }
+
+static cloud_sample_t cloud_sample(const cz_transfer_t *current) {
+    cloud_sample_t sample = {0};
+    const uint32_t size = current->file.size;
+    const uint32_t used = current->received > size ? size : current->received;
+    if (size) sample.fill_width = (int)((uint64_t)used * cloud_sample_area().width / size);
+    if (current->file.state == CZ_ROW_DOWNLOAD) {
+        char downloaded[20], total[20], rate[20];
+        cloud_bytes(downloaded, sizeof(downloaded), used);
+        cloud_bytes(total, sizeof(total), size);
+        cloud_bytes(rate, sizeof(rate), current->rate);
+        const unsigned pct = size ? (unsigned)((uint64_t)used * 100 / size) : 0;
+        snprintf(sample.detail, sizeof(sample.detail), "%s / %s · %u%%", downloaded, total, pct);
+        snprintf(sample.rate, sizeof(sample.rate), "%s/s", rate);
+    } else snprintf(sample.detail, sizeof(sample.detail), "%s", cloud_row_label(current->file.state));
+    return sample;
+}
+
+static void draw_cloud_sample(uint8_t *fb, const cloud_sample_t *sample) {
+    EpdRect bar = {56, 515, cloud_sample_area().width, 8};
+    ui_fill_rect_fast(bar, 0xd0, fb);
+    bar.width = sample->fill_width;
+    if (bar.width) ui_fill_rect_fast(bar, UI_GRAY_BLACK, fb);
+    if (sample->rate[0]) {
+        ui_text_box(fb, (EpdRect){56, 527, 410, 39}, 18, sample->detail, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){469, 527, 159, 39}, 18, sample->rate, EPD_DRAW_ALIGN_RIGHT, false);
+    } else ui_text_box(fb, (EpdRect){56, 527, 572, 39}, 18, sample->detail, EPD_DRAW_ALIGN_LEFT, false);
+}
+
+static void cloud_live_progress(uint8_t *fb) {
+    char name[CLOUDZAO_NAME_MAX + 1];
+    cloud_name_label(name, &s_cloud_transfer.file, 552);
+    ui_text_box(fb, (EpdRect){56, 469, 572, 43}, 24, name, EPD_DRAW_ALIGN_LEFT, false);
+    const cloud_sample_t sample = cloud_sample(&s_cloud_transfer);
+    draw_cloud_sample(fb, &sample);
+}
+
+#define CLOUD_BATCH_PAGE_ROWS 5u
+#define CLOUD_HISTORY_PAGE_ROWS 6u
+#define CLOUD_HISTORY_ROW_TOP 332
+#define CLOUD_HISTORY_ROW_HEIGHT 111
+#define CLOUD_HISTORY_PAGER_TOP (CLOUD_HISTORY_ROW_TOP + CLOUD_HISTORY_PAGE_ROWS * CLOUD_HISTORY_ROW_HEIGHT + 28)
+
+static EpdRect cloud_pager(bool history, bool next) {
+    return (EpdRect){next ? 478 : 36, history ? CLOUD_HISTORY_PAGER_TOP : 1116, 170, 64};
+}
+
+static EpdRect cloud_batch_area(void) { return (EpdRect){36, 656, 612, 524}; }
+
+static void draw_cloud_batch(uint8_t *fb) {
+    const unsigned count = s_cloud_transfer.rows;
+    char line[96];
+    const EpdRect batch = cloud_batch_area();
+    ui_text_box(fb, (EpdRect){36, batch.y, 220, 41}, 25, "本批文件", EPD_DRAW_ALIGN_LEFT, false);
+    if (s_cloud_status.total > CLOUDZAO_LIST_ROWS) {
+        snprintf(line, sizeof(line), "仅显示前 %u 项", CLOUDZAO_LIST_ROWS);
+        ui_text_box(fb, (EpdRect){260, batch.y, 388, 41}, 18, line, EPD_DRAW_ALIGN_RIGHT, false);
+    }
+    if (!count) {
+        const char *msg = s_cloud_status.busy ? "正在获取待接收文件…" : "暂无本批文件";
+        ui_text_box(fb, (EpdRect){36, 716, 612, 80}, 25, msg, EPD_DRAW_ALIGN_CENTER, false);
+        return;
+    }
+    const unsigned pages = (count + CLOUD_BATCH_PAGE_ROWS - 1) / CLOUD_BATCH_PAGE_ROWS;
+    const unsigned page = s_cloud_batch_page < pages ? s_cloud_batch_page : pages - 1;
+    for (unsigned i = 0; i < CLOUD_BATCH_PAGE_ROWS; ++i) {
+        const unsigned index = page * CLOUD_BATCH_PAGE_ROWS + i;
+        if (index >= count) break;
+        cz_row_t file = {0};
+        if (!cloudzao_transfer_row(index, &file)) break;
+        const int y = 704 + (int)i * 80;
+        char name[CLOUDZAO_NAME_MAX + 1], size[20];
+        cloud_name_label(name, &file, 580);
+        if (file.size) cloud_bytes(size, sizeof(size), file.size);
+        else snprintf(size, sizeof(size), "—");
+        snprintf(line, sizeof(line), "%u.  %s", index + 1, size);
+        ui_text_box(fb, (EpdRect){36, y + 5, 612, 35}, 24, name, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){36, y + 40, 428, 33}, 18, line, EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){480, y + 40, 168, 33}, 18, cloud_row_label(file.state), EPD_DRAW_ALIGN_RIGHT, false);
+        ui_fill_rect_fast((EpdRect){36, y + 77, 612, 2}, 0xc0, fb);
+    }
+    const EpdRect pager = cloud_pager(false, false);
+    snprintf(line, sizeof(line), "%u / %u", page + 1, pages);
+    if (page) ui_draw_button(fb, pager, "上一页", false);
+    if (page + 1 < pages) ui_draw_button(fb, cloud_pager(false, true), "下一页", false);
+    ui_text_box(fb, (EpdRect){228, pager.y, 228, pager.height}, 20, line, EPD_DRAW_ALIGN_CENTER, false);
+}
+
+static const char *cloud_history_format(const char *name) {
+    const char *ext = strrchr(name, '.');
+    if (ext) {
+        if (!strcasecmp(ext, ".epub")) return "EPUB";
+        if (!strcasecmp(ext, ".txt")) return "TXT";
+        if (!strcasecmp(ext, ".ttf")) return "TTF";
+        if (!strcasecmp(ext, ".png")) return "PNG";
+    }
+    return "文件";
+}
+
+static void draw_cloud_history_row(uint8_t *fb, int y, const cz_history_item_t *entry) {
+    const EpdRect format = {36, y + 29, 66, 49};
+    ui_draw_round_rect(fb, format, 8, 0xc0);
+    ui_text_box(fb, (EpdRect){format.x + 4, format.y + 3, format.width - 8, format.height - 6}, 16,
+                cloud_history_format(entry->file.name), EPD_DRAW_ALIGN_CENTER, false);
+
+    const EpdRect title = {122, y + 11, 526, 46};
+    char name[CLOUDZAO_NAME_MAX + sizeof("…")];
+    snprintf(name, sizeof(name), "%s", entry->file.name[0] ? entry->file.name : "未命名文件");
+    const int px = ui_text_effective_px(26);
+    if (ui_text_fixed_width_px(px, name) > title.width) {
+        fit_label(name, 26, title.width - ui_text_fixed_width_px(px, "…"));
+        strcat(name, "…");
+    }
+    ui_text_box(fb, title, 26, name, EPD_DRAW_ALIGN_LEFT, false);
+
+    char size[20] = "—", stamp[28] = "时间未校准", meta[64];
+    if (entry->file.size) cloud_bytes(size, sizeof(size), entry->file.size);
+    const time_t utc = entry->utc;
+    struct tm local;
+    if (entry->utc && localtime_r(&utc, &local)) strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M", &local);
+    snprintf(meta, sizeof(meta), "%s · %s", stamp, size);
+    ui_text_box(fb, (EpdRect){122, y + 57, 368, 37}, 18, meta, EPD_DRAW_ALIGN_LEFT, false);
+
+    const cz_row_state_t state = entry->file.state;
+    if (state == CZ_ROW_FAILED) {
+        ui_text_box(fb, (EpdRect){500, y + 57, 22, 37}, 19, "!", EPD_DRAW_ALIGN_CENTER, false);
+    } else {
+        const ui_icon_t icon = state == CZ_ROW_SAVED ? UI_ICON_CHECK :
+            state == CZ_ROW_PENDING ? UI_ICON_CLOCK : UI_ICON_ELLIPSIS;
+        ui_draw_icon(fb, 511, y + 75, 22, icon, 0x40);
+    }
+    ui_text_box(fb, (EpdRect){534, y + 57, 114, 37}, 18,
+                cloud_row_label(state), EPD_DRAW_ALIGN_LEFT, false);
+}
+
+static void draw_cloud_history_pager(uint8_t *fb, bool next) {
+    const EpdRect rect = cloud_pager(true, next);
+    ui_draw_round_rect(fb, rect, 12, 0xc0);
+    ui_draw_icon(fb, rect.x + (next ? rect.width - 24 : 24), rect.y + rect.height / 2, 24,
+                 next ? UI_ICON_CHEVRON_RIGHT : UI_ICON_CHEVRON_LEFT, 0x30);
+    ui_text_box(fb, (EpdRect){rect.x + (next ? 8 : 45), rect.y + 5, rect.width - 53, rect.height - 10}, 20,
+                next ? "下一页" : "上一页", EPD_DRAW_ALIGN_CENTER, false);
+}
+
+static EpdRect cloud_history_clear_button(void) { return (EpdRect){520, 279, 128, 47}; }
+
+static EpdRect cloud_history_confirm_button(bool confirm) {
+    return (EpdRect){confirm ? 355 : 56, 690, 273, 72};
+}
+
+static bool cloud_history_can_clear(void) {
+    return s_cloud_history.count && !s_cloud_history.busy && !s_cloud_history.error;
+}
+
+static void draw_cloud_history_confirmation(uint8_t *fb) {
+    ui_fill_round_rect_raw(fb, (EpdRect){36, 412, 612, 380}, 16, 0xe0);
+    ui_text_box(fb, (EpdRect){56, 444, 572, 78}, 32, "清除全部记录？", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, 540, 572, 54}, 22, "仅清除当前 TF 卡的接收记录", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, 602, 572, 54}, 22, "不会删除文件或影响云端推送", EPD_DRAW_ALIGN_CENTER, false);
+    for (int confirm = 0; confirm <= 1; ++confirm) {
+        const EpdRect rect = cloud_history_confirm_button(confirm);
+        ui_fill_round_rect_raw(fb, rect, 12, confirm ? 0x20 : 0xf0);
+        ui_text_box(fb, rect, 24, confirm ? "确认清除" : "取消", EPD_DRAW_ALIGN_CENTER, confirm);
+    }
+}
+
+static void draw_cloud_history(uint8_t *fb) {
+    const unsigned count = s_cloud_history.count;
+    const bool busy = s_cloud_history.busy;
+    const cz_error_t error = s_cloud_history.error;
+    ui_text_box(fb, (EpdRect){36, 217, 400, 65}, 39, "接收记录", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 279, 464, 47}, 19,
+                s_cloud_history_clear_failed ? "清除失败，可重试" : "当前 TF 卡 · 最新在前",
+                EPD_DRAW_ALIGN_LEFT, false);
+    if (s_cloud_history_confirm) {
+        draw_cloud_history_confirmation(fb);
+        return;
+    }
+    if (!count || busy || error) {
+        const ui_icon_t icon = busy ? UI_ICON_CLOCK : error ? UI_ICON_FOLDER_OPEN : UI_ICON_LIST;
+        const char *title = busy ? (s_cloud_history_clearing ? "正在清除记录" : "正在读取记录") :
+            error ? "无法读取记录" : "还没有接收记录";
+        const char *detail = busy ? "" : error == CZ_STORAGE ? "请检查 TF 卡，再重新打开历史记录" :
+            error ? cloud_error(error) : "接收文件后，结果会显示在这里";
+        ui_fill_round_rect_raw(fb, (EpdRect){292, 472, 100, 100}, 16, 0xe0);
+        ui_draw_icon(fb, 342, 522, 56, icon, UI_GRAY_BLACK);
+        ui_text_box(fb, (EpdRect){36, 602, 612, 57}, 31, title, EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_box(fb, (EpdRect){36, 666, 612, 42}, 20, detail, EPD_DRAW_ALIGN_CENTER, false);
+        return;
+    }
+
+    char text[24];
+    snprintf(text, sizeof(text), "%u 条", count);
+    ui_text_box(fb, (EpdRect){472, 217, 176, 62}, 32, text, EPD_DRAW_ALIGN_RIGHT, false);
+    const EpdRect clear = cloud_history_clear_button();
+    ui_draw_round_rect(fb, clear, 10, 0xc0);
+    ui_text_box(fb, clear, 20, "清除", EPD_DRAW_ALIGN_CENTER, false);
+    ui_fill_rect_fast((EpdRect){36, CLOUD_HISTORY_ROW_TOP - 2, 612, 2}, 0xd0, fb);
+    const unsigned pages = (count + CLOUD_HISTORY_PAGE_ROWS - 1) / CLOUD_HISTORY_PAGE_ROWS;
+    const unsigned page = s_cloud_history_page < pages ? s_cloud_history_page : pages - 1;
+    for (unsigned i = 0; i < CLOUD_HISTORY_PAGE_ROWS; ++i) {
+        const unsigned index = page * CLOUD_HISTORY_PAGE_ROWS + i;
+        if (index >= count) break;
+        cz_history_item_t entry;
+        if (!cloudzao_history_item(index, &entry)) break;
+        const int y = CLOUD_HISTORY_ROW_TOP + (int)i * CLOUD_HISTORY_ROW_HEIGHT;
+        draw_cloud_history_row(fb, y, &entry);
+        if (i + 1 < CLOUD_HISTORY_PAGE_ROWS && index + 1 < count)
+            ui_fill_rect_fast((EpdRect){122, y + CLOUD_HISTORY_ROW_HEIGHT - 1, 526, 1}, 0xd0, fb);
+    }
+    if (pages <= 1) return;
+    snprintf(text, sizeof(text), "%u / %u", page + 1, pages);
+    ui_text_box(fb, (EpdRect){228, CLOUD_HISTORY_PAGER_TOP, 228, 64}, 21, text, EPD_DRAW_ALIGN_CENTER, false);
+    if (page) draw_cloud_history_pager(fb, false);
+    if (page + 1 < pages) draw_cloud_history_pager(fb, true);
+}
+
+static EpdRect cloud_result_area(void) { return (EpdRect){36, 374, 612, 260}; }
+
+static void draw_cloud_result(uint8_t *fb) {
+    const bool busy = s_cloud_status.busy;
+    ui_draw_round_rect(fb, cloud_result_area(), 22, 0x90);
+    ui_text_box(fb, (EpdRect){56, 385, 572, 31}, 17, "传输状态", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){56, 416, 572, 44}, 29, cloud_result_title(), EPD_DRAW_ALIGN_LEFT, false);
+    ui_fill_rect_fast((EpdRect){56, 466, 572, 2}, 0xc0, fb);
+    if (busy && s_cloud_transfer.active) cloud_live_progress(fb);
+    else {
+        static const char *const labels[] = {"已保存", "待确认", "跳过", "失败"};
+        const unsigned counts[] = {s_cloud_status.saved, s_cloud_status.pending, s_cloud_status.skipped, s_cloud_status.failed};
+        const bool counts_known = s_cloud_requested && (s_cloud_status.total || (!busy && !s_cloud_status.error));
+        for (int i = 0; i < 4; ++i) {
+            char count[12] = "—";
+            if (counts_known) snprintf(count, sizeof(count), "%u", counts[i]);
+            const int x = 56 + i * 143;
+            if (i) ui_fill_rect_fast((EpdRect){x, 484, 1, 77}, 0xc0, fb);
+            ui_text_box(fb, (EpdRect){x + 4, 474, 135, 53}, 37, count, EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_box(fb, (EpdRect){x + 4, 527, 135, 39}, 18, labels[i], EPD_DRAW_ALIGN_CENTER, false);
+        }
+    }
+    char detail[128];
+    ui_text_box(fb, (EpdRect){56, 577, 572, 40}, 18,
+                cloud_result_detail(detail, sizeof(detail)), EPD_DRAW_ALIGN_LEFT, false);
+}
+
+static void cloud_action_button(uint8_t *fb, EpdRect rect, const char *label, bool primary, bool enabled) {
+    ui_fill_round_rect(fb, rect, 18, primary && enabled ? UI_GRAY_BLACK : UI_GRAY_WHITE);
+    if (!primary || !enabled) ui_draw_round_rect(fb, rect, 18, enabled ? 0x50 : 0xb0);
+    ui_text_box(fb, (EpdRect){rect.x + 12, rect.y + 8, rect.width - 24, rect.height - 16}, 25,
+                label, EPD_DRAW_ALIGN_CENTER, primary && enabled);
+}
+
+static void cloud_offer_icon_label(uint8_t *fb, EpdRect rect, const char *label, ui_icon_t icon,
+                                   bool trailing, bool inverted, uint8_t icon_gray) {
+    const int px = trailing ? 23 : 25;
+    const int reserve = 42;
+    const int width = ui_text_fixed_width_px(ui_text_effective_px(px), label) + 2;
+    const int cap = rect.width - reserve - (trailing ? 0 : 32);
+    const int text_width = width < cap ? width : cap;
+    const int left = trailing ? rect.x + rect.width - text_width - reserve :
+        rect.x + (rect.width - text_width - reserve) / 2;
+    ui_draw_icon(fb, left + 15, rect.y + rect.height / 2, 28, icon, icon_gray);
+    ui_text_box(fb, (EpdRect){left + reserve, rect.y + 8, text_width, rect.height - 16}, px,
+                label, trailing ? EPD_DRAW_ALIGN_RIGHT : EPD_DRAW_ALIGN_LEFT, inverted);
+}
+
+#define CLOUD_OFFER_PAGE_ROWS 6u
+#define CLOUD_OFFER_TABLE_TOP 316
+#define CLOUD_OFFER_Y 372
+#define CLOUD_OFFER_H 91
+#define CLOUD_OFFER_PAGER_Y (CLOUD_OFFER_Y + CLOUD_OFFER_PAGE_ROWS * CLOUD_OFFER_H + 12)
+#define CLOUD_OFFER_PAGER_H 54
+#define CLOUD_OFFER_SELECTION_Y 1016
+#define CLOUD_OFFER_END 1095
+
+static unsigned cloud_offer_count(void) {
+    if (!s_cloud_requested || s_cloud_status.error || s_cloud_status.busy) return 0;
+    return s_cloud_status.total > CLOUDZAO_LIST_ROWS ? CLOUDZAO_LIST_ROWS : s_cloud_status.total;
+}
+
+static EpdRect cloud_offer_submit(void) { return (EpdRect){362, 1021, 286, 72}; }
+static EpdRect cloud_offer_fetch(void) {
+    if (cloud_offer_count()) return (EpdRect){471, 232, 177, 64};
+    EpdRect rect = cloud_offer_submit();
+    rect.width = 320;
+    rect.x = UI_MARGIN + (ui_content_width() - rect.width) / 2;
+    return rect;
+}
+static EpdRect cloud_offer_all(void) { return (EpdRect){470, CLOUD_OFFER_TABLE_TOP, 178, CLOUD_OFFER_Y - CLOUD_OFFER_TABLE_TOP - 2}; }
+static EpdRect cloud_offer_pager(bool next) {
+    return (EpdRect){next ? 478 : 36, CLOUD_OFFER_PAGER_Y, 170, CLOUD_OFFER_PAGER_H};
+}
+static EpdRect cloud_offer_notice(void) {
+    const int top = CLOUD_OFFER_PAGER_Y + CLOUD_OFFER_PAGER_H + 2;
+    return (EpdRect){36, top, 612, CLOUD_OFFER_SELECTION_Y - top - 2};
+}
+static EpdRect cloud_offer_rect(unsigned line) { return (EpdRect){36, CLOUD_OFFER_Y + (int)line * CLOUD_OFFER_H, 612, CLOUD_OFFER_H}; }
+
+static const char *cloud_offer_format(cz_kind_t kind) {
+    switch (kind) {
+        case CZ_KIND_EPUB: return "EPUB";
+        case CZ_KIND_TXT: return "TXT";
+        case CZ_KIND_TTF: return "TTF";
+        case CZ_KIND_PNG: return "PNG";
+        default: return "—";
+    }
+}
+
+static const char *cloud_offer_kind(cz_kind_t kind) {
+    switch (kind) {
+        case CZ_KIND_EPUB: case CZ_KIND_TXT: return "书籍";
+        case CZ_KIND_TTF: return "字体";
+        case CZ_KIND_PNG: return "图片";
+        default: return "不可下载";
+    }
+}
+
+static void draw_cloud_offer_mark(uint8_t *fb, int cy, bool checked) {
+    const EpdRect box = {610, cy - 17, 34, 34};
+    if (checked) {
+        ui_fill_round_rect(fb, box, 7, UI_GRAY_BLACK);
+        ui_draw_icon(fb, 627, cy, 22, UI_ICON_CHECK, UI_GRAY_WHITE);
+    } else ui_draw_round_rect(fb, box, 7, 0x50);
+}
+
+static void draw_cloud_offer_list(uint8_t *fb, unsigned count) {
+    const bool binding = s_cloud_bind_status.busy;
+    const EpdRect rect = cloud_offer_all();
+    ui_text_box(fb, (EpdRect){36, rect.y, 276, rect.height}, 20, "文件", EPD_DRAW_ALIGN_LEFT, false);
+    if (s_cloud_selectable && !binding) {
+        const bool all = s_cloud_checked == s_cloud_selectable;
+        ui_text_box(fb, (EpdRect){rect.x, rect.y, 124, rect.height}, 21,
+                    all ? "取消全选" : "全选", EPD_DRAW_ALIGN_RIGHT, false);
+        draw_cloud_offer_mark(fb, rect.y + rect.height / 2, all);
+    }
+    ui_fill_rect_fast((EpdRect){36, CLOUD_OFFER_Y - 2, 612, 2}, 0xb0, fb);
+
+    char text[96];
+    const unsigned pages = (count + CLOUD_OFFER_PAGE_ROWS - 1) / CLOUD_OFFER_PAGE_ROWS;
+    for (unsigned i = 0; i < CLOUD_OFFER_PAGE_ROWS; ++i) {
+        const unsigned index = s_cloud_offer_page * CLOUD_OFFER_PAGE_ROWS + i;
+        if (index >= count) break;
+        cz_row_t file;
+        cz_kind_t kind;
+        if (!cloudzao_offer(index, &file, &kind)) break;
+        const EpdRect rect = cloud_offer_rect(i);
+        const int center = rect.y + rect.height / 2;
+        const EpdRect tag = {36, center - 22, 68, 44};
+        ui_fill_round_rect_raw(fb, tag, 6, kind != CZ_KIND_NONE ? 0xe0 : 0xf0);
+        ui_text_box(fb, (EpdRect){tag.x + 5, tag.y + 3, tag.width - 10, tag.height - 6}, 17,
+                    cloud_offer_format(kind), EPD_DRAW_ALIGN_CENTER, false);
+        char name[CLOUDZAO_NAME_MAX + 1], size[20];
+        cloud_name_label(name, &file, 464);
+        ui_text_box(fb, (EpdRect){124, rect.y + 8, 464, 40}, 26, name, EPD_DRAW_ALIGN_LEFT, false);
+        if (file.size && kind != CZ_KIND_NONE) {
+            cloud_bytes(size, sizeof(size), file.size);
+            snprintf(text, sizeof(text), "%s · %s", cloud_offer_kind(kind), size);
+        } else snprintf(text, sizeof(text), "%s", cloud_offer_kind(kind));
+        ui_text_box(fb, (EpdRect){124, rect.y + 48, 464, 34}, 18, text, EPD_DRAW_ALIGN_LEFT, false);
+        if (kind != CZ_KIND_NONE) draw_cloud_offer_mark(fb, center, s_cloud_selection.checked[index]);
+        ui_fill_rect_fast((EpdRect){36, rect.y + rect.height - 2, 612, 2}, 0xc0, fb);
+    }
+
+    const EpdRect pager = cloud_offer_pager(false);
+    if (s_cloud_offer_page) {
+        ui_draw_icon(fb, 48, pager.y + pager.height / 2, 22, UI_ICON_CHEVRON_LEFT, UI_GRAY_BLACK);
+        ui_text_box(fb, (EpdRect){66, pager.y, pager.width - 30, pager.height}, 20, "上一页", EPD_DRAW_ALIGN_LEFT, false);
+    }
+    if (s_cloud_offer_page + 1 < pages) {
+        const EpdRect next = cloud_offer_pager(true);
+        ui_draw_icon(fb, 636, next.y + next.height / 2, 22, UI_ICON_CHEVRON_RIGHT, UI_GRAY_BLACK);
+        ui_text_box(fb, (EpdRect){next.x, next.y, next.width - 30, next.height}, 20, "下一页", EPD_DRAW_ALIGN_RIGHT, false);
+    }
+    if (pages > 1) {
+        snprintf(text, sizeof(text), "%u / %u", s_cloud_offer_page + 1, pages);
+        ui_text_box(fb, (EpdRect){218, pager.y, 248, pager.height}, 20, text, EPD_DRAW_ALIGN_CENTER, false);
+    }
+    if (s_cloud_action_error || s_cloud_status.total > count) {
+        snprintf(text, sizeof(text), "仅显示前 %u 项，其余推送保留在云端", count);
+        ui_text_box(fb, cloud_offer_notice(), 20,
+                    s_cloud_action_error ? cloud_error(s_cloud_action_error) : text, EPD_DRAW_ALIGN_LEFT, false);
+    }
+}
+
+static void draw_cloud_offer_empty(uint8_t *fb) {
+    const bool busy = s_cloud_status.busy;
+    const char *title = busy ? (s_cloud_cancelling ? "正在取消" : "正在获取推送列表") :
+        s_cloud_status.error == CZ_CANCELLED ? "已取消" : s_cloud_status.error ? "获取列表失败" :
+        s_cloud_requested ? "暂无待下载推送" : "先查看推送";
+    const char *detail = s_cloud_status.error == CZ_CANCELLED ? "可以重新获取列表" :
+        s_cloud_status.error ? cloud_error(s_cloud_status.error) : busy ? "" :
+        s_cloud_requested ? "在云造推送文件后，再获取列表" : "查看云造端推送的书籍、字体和图片";
+    ui_fill_round_rect_raw(fb, (EpdRect){281, 465, 122, 122}, 16, 0xe0);
+    ui_draw_icon(fb, 342, 526, 72, UI_ICON_FOLDER_INPUT, UI_GRAY_BLACK);
+    ui_text_box(fb, (EpdRect){36, 613, 612, 56}, 32, title, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){36, 673, 612, 51}, 22, detail, EPD_DRAW_ALIGN_CENTER, false);
+}
+
+static void draw_cloud_offer_footer(uint8_t *fb, unsigned count) {
+    const bool busy = s_cloud_status.busy, binding = s_cloud_bind_status.busy;
+    if (!count) {
+        cloud_action_button(fb, cloud_offer_fetch(), busy ? (s_cloud_cancelling ? "正在取消…" : "取消获取") :
+                            "获取推送列表", !busy, !binding && !s_cloud_cancelling);
+        return;
+    }
+    const EpdRect rect = cloud_offer_submit();
+    char text[28];
+    snprintf(text, sizeof(text), "%u 项", s_cloud_checked);
+    ui_text_box(fb, (EpdRect){36, CLOUD_OFFER_SELECTION_Y, 306, 29}, 17, "已选文件", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 1044, 306, 51}, 39, text, EPD_DRAW_ALIGN_LEFT, false);
+    const bool enabled = s_cloud_checked && !binding;
+    ui_fill_round_rect_raw(fb, rect, 18, enabled ? UI_GRAY_BLACK : 0xe0);
+    cloud_offer_icon_label(fb, rect, "下载所选", UI_ICON_DOWNLOAD, false, enabled, enabled ? UI_GRAY_WHITE : 0x90);
+}
+
+static void draw_cloud_inbox(uint8_t *fb) {
+    const unsigned count = cloud_offer_count();
+    ui_text_box(fb, (EpdRect){36, 217, 412, 56}, 39, "推送清单", EPD_DRAW_ALIGN_LEFT, false);
+    if (count) {
+        char sub[32];
+        snprintf(sub, sizeof(sub), "%u 项可下载", s_cloud_selectable);
+        ui_text_box(fb, (EpdRect){36, 273, 412, 36}, 23, sub, EPD_DRAW_ALIGN_LEFT, false);
+        if (!s_cloud_bind_status.busy) {
+            cloud_offer_icon_label(fb, cloud_offer_fetch(), "刷新列表", UI_ICON_REFRESH_CW, true, false, UI_GRAY_BLACK);
+        }
+        draw_cloud_offer_list(fb, count);
+    } else draw_cloud_offer_empty(fb);
+    draw_cloud_offer_footer(fb, count);
+}
+
+static void draw_cloud_receiver(uint8_t *fb) {
+    if (!s_cloud_batch) { draw_cloud_inbox(fb); return; }
+    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "下载推送", EPD_DRAW_ALIGN_LEFT, false);
+    const bool busy = s_cloud_status.busy, binding = s_cloud_bind_status.busy;
+    cloud_action_button(fb, cloud_button(CLOUD_RECEIVE), busy ? (s_cloud_cancelling ? "正在取消…" : "取消下载") :
+                        "重新获取推送列表", !busy, !binding && !s_cloud_cancelling);
+    draw_cloud_result(fb);
+    draw_cloud_batch(fb);
+}
+
+static const char *cloud_bind_title(void) {
+    const cz_status_t *status = &s_cloud_bind_status;
+    if (!s_cloud_bind_visible) return "尚未检查绑定";
+    if (status->busy) return s_cloud_cancelling ? "正在取消" : "正在检查绑定";
+    if (status->error == CZ_CANCELLED) return "已取消";
+    if (status->error) return status->binding_probed ? "无法确认绑定状态" : "绑定请求失败";
+    if (status->code[0]) return "绑定码";
+    return status->binding_probed ? "已绑定" : "无法确认绑定状态";
+}
+
+static const char *cloud_bind_detail(void) {
+    const cz_status_t *status = &s_cloud_bind_status;
+    if (!s_cloud_bind_visible) return "首次绑定时，请在云造端输入六位绑定码";
+    if (status->busy) return s_cloud_cancelling ? "正在结束本次操作，请稍候" : "正在向云造检查绑定";
+    if (status->error == CZ_CANCELLED) return "可以重新检查绑定";
+    if (status->error == CZ_SERVER && status->binding_probed) return "请在云造端核对设备绑定，或稍后重试";
+#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
+    if (status->error == CZ_AUTH) return "设备验证失败，请联系维护者";
+#endif
+    if (status->error) return cloud_error(status->error);
+    if (status->code[0]) return "请在云造端输入此验证码";
+    return status->binding_probed ? "可直接接收推送，无需重新绑定" : "请在云造端核对设备绑定";
+}
+
+static bool cloud_bind_action_enabled(void) {
+    return !s_cloud_status.busy && !(s_cloud_bind_status.busy && s_cloud_cancelling);
+}
+
+static void draw_cloud_settings(uint8_t *fb) {
+    const cz_status_t *bind = &s_cloud_bind_status;
+    const bool receiving = s_cloud_status.busy;
+    const bool show_code = s_cloud_bind_visible && bind->code[0];
+    const EpdRect card = {36, 282, 612, 290};
+    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "设备绑定", EPD_DRAW_ALIGN_LEFT, false);
+    ui_draw_round_rect(fb, card, 22, 0x90);
+    ui_text_box(fb, (EpdRect){56, show_code ? 297 : 329, 572, 47}, 28,
+                cloud_bind_title(), EPD_DRAW_ALIGN_CENTER, false);
+    if (show_code) ui_text_box(fb, (EpdRect){56, 344, 572, 78}, 58, bind->code, EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, show_code ? 422 : 383, 572, 44}, 21,
+                cloud_bind_detail(), EPD_DRAW_ALIGN_CENTER, false);
+
+    const EpdRect action = cloud_button(CLOUD_BIND);
+    const bool enabled = cloud_bind_action_enabled(), primary = enabled && !bind->busy;
+    const char *label = receiving ? "接收结束后可检查" : bind->busy ?
+        (s_cloud_cancelling ? "正在取消…" : "取消") :
+        s_cloud_bind_visible ? "重新检查绑定" : "检查绑定 / 获取绑定码";
+    ui_fill_round_rect(fb, action, 18, primary ? UI_GRAY_BLACK : UI_GRAY_WHITE);
+    if (!primary) ui_draw_round_rect(fb, action, 18, 0x50);
+    ui_text_box(fb, (EpdRect){action.x + 18, action.y + 8, action.width - 36, action.height - 16}, 25,
+                label, EPD_DRAW_ALIGN_CENTER, primary);
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+    draw_cloud_test_key(fb, receiving || bind->busy ? "当前操作结束后可设置" :
+                        s_cloud_key[0] ? "已设置 · 仅本次会话有效" : "未设置 · 仅本次会话有效", !receiving && !bind->busy);
+#endif
+}
+
+static void draw_cloud_header(uint8_t *fb) {
+    const char *title = "CloudZao";
+    const int title_px = 34, center_y = 107, gap = 12;
+    const int title_width = ui_text_fixed_width_px(ui_text_effective_px(title_px), title);
+    const int left = (UI_LOCK_WIDTH - CLOUDZAO_MARK_WIDTH - gap - title_width) / 2;
+    const int top = center_y - CLOUDZAO_MARK_HEIGHT / 2;
+    ui_nav_status(fb);
+    ui_nav_back(fb, 36, 79);
+    for (int y = 0; y < CLOUDZAO_MARK_HEIGHT; ++y) {
+        for (int x = 0; x < CLOUDZAO_MARK_WIDTH; ++x) {
+            const uint8_t pair = cloudzao_mark_gray4[(y * CLOUDZAO_MARK_WIDTH + x) / 2];
+            const uint8_t gray = (x & 1) ? pair & 0x0f : pair >> 4;
+            if (gray != 15) epd_draw_pixel(left + x, top + y, (uint8_t)(gray << 4), fb);
+        }
+    }
+    ui_text_vc(fb, left + CLOUDZAO_MARK_WIDTH + gap, center_y, title_px, title, EPD_DRAW_ALIGN_LEFT, false);
+}
+
+static void draw_cloud(uint8_t *fb) {
+    ui_clear_page(fb);
+    draw_cloud_header(fb);
+    if (s_view != TRANSFER_CLOUDZAO_KEY) {
+        cloud_tabs(fb);
+        if (s_cloud_panel == CLOUD_PANEL_TRANSFER) draw_cloud_receiver(fb);
+        else if (s_cloud_panel == CLOUD_PANEL_HISTORY) draw_cloud_history(fb);
+        else draw_cloud_settings(fb);
+        return;
+    }
+    ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, "联调密钥（仅本次会话）", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_input_draw(fb, &s_cloud_editor, password_control_rect(47), UI_PX_BODY, true, NULL);
+    if (s_cloud_invalid_key)
+        ui_text(fb, UI_MARGIN, 400, 22, "请输入不含空格的联调密钥", EPD_DRAW_ALIGN_LEFT, false);
+    provisioning_button(fb, password_control_rect(44), "取消", 44);
+    provisioning_button(fb, password_control_rect(46), "保存", 46);
+    ui_keyboard_draw(fb, 560);
+}
+
+static app_redraw_t cloud_key_paint(app_ctx_t *ctx, bool field) {
+    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, password_control_rect(47),
+        UI_PX_BODY, true, NULL, field);
+    s_area = update.area;
+    s_settle = update.layout || update.settle;
+    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
+}
+
+static app_redraw_t cloud_save_key(void) {
+    if (!cloudzao_key_valid(s_cloud_draft)) { s_cloud_invalid_key = true; return APP_REDRAW_PAGE; }
+    mbedtls_platform_zeroize(s_cloud_key, sizeof(s_cloud_key));
+    memcpy(s_cloud_key, s_cloud_draft, strlen(s_cloud_draft) + 1);
+    cloud_end_editor();
+    s_cloud_bind_status = (cz_status_t){0};
+    s_cloud_bind_visible = false;
+    cloudzao_discard_queue();
+    if (!s_cloud_batch) {
+        cloud_reset_selection();
+        s_cloud_requested = false;
+        s_cloud_status = (cz_status_t){0};
+    }
+    s_view = TRANSFER_CLOUDZAO;
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t cloud_switch_panel(cloud_panel_t panel) {
+    if (s_cloud_panel == panel) return APP_REDRAW_NONE;
+    if (panel == CLOUD_PANEL_HISTORY) {
+        if (s_cloud_status.busy || s_cloud_bind_status.busy) return APP_REDRAW_NONE;
+        const cz_error_t error = cloudzao_start_history();
+        s_cloud_history = (cz_history_status_t){.busy = error == CZ_OK, .error = error};
+        s_cloud_history_page = 0;
+    } else if (s_cloud_panel == CLOUD_PANEL_HISTORY && s_cloud_history.busy) {
+        cloudzao_cancel();
+    }
+    cloud_reset_history_actions();
+    s_cloud_panel = panel;
+    return APP_REDRAW_PAGE;
+}
+
+static bool cloud_tapped(const ui_gesture_event_t *ev, EpdRect rect) {
+    return ui_rect_hit(rect, ev->x0, ev->y0) && ui_rect_hit(rect, ev->x, ev->y);
+}
+
+static app_redraw_t cloud_fetch_offers(void) {
+    cloudzao_discard_queue();
+    cloud_reset_selection();
+    s_cloud_batch = false;
+    const cz_error_t error = cloudzao_start(CZ_JOB_PREVIEW, s_cloud_key, NULL);
+    s_cloud_requested = error == CZ_OK;
+    s_cloud_status = (cz_status_t){.busy = s_cloud_requested, .error = error};
+    s_cloud_cancelling = false;
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t cloud_select_paint(app_ctx_t *ctx) {
+    const unsigned count = cloud_offer_count();
+    s_area = (EpdRect){36, CLOUD_OFFER_TABLE_TOP, 612, CLOUD_OFFER_END - CLOUD_OFFER_TABLE_TOP};
+    ui_fill_rect_fast(s_area, UI_GRAY_WHITE, ctx->fb);
+    draw_cloud_offer_list(ctx->fb, count);
+    draw_cloud_offer_footer(ctx->fb, count);
+    s_cloud_sample_paint = false;
+    return APP_REDRAW_AREA;
+}
+
+static app_redraw_t cloud_cancel_action(void) {
+    if (s_cloud_cancelling) return APP_REDRAW_NONE;
+    cloudzao_cancel();
+    s_cloud_cancelling = true;
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t cloud_inbox_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (s_cloud_bind_status.busy) return APP_REDRAW_NONE;
+    if (cloud_tapped(ev, cloud_offer_fetch()))
+        return s_cloud_status.busy ? cloud_cancel_action() : cloud_fetch_offers();
+    if (s_cloud_status.busy) return APP_REDRAW_NONE;
+    const unsigned count = cloud_offer_count();
+    if (!count) return APP_REDRAW_NONE;
+    if (cloud_tapped(ev, cloud_offer_submit())) {
+        if (!s_cloud_checked) return APP_REDRAW_NONE;
+        const cz_error_t error = cloudzao_start(CZ_JOB_DOWNLOAD, s_cloud_key, &s_cloud_selection);
+        if (error != CZ_OK) { s_cloud_action_error = error; return cloud_select_paint(ctx); }
+        s_cloud_batch = true;
+        s_cloud_batch_page = 0;
+        s_cloud_status = (cz_status_t){.busy = true};
+        s_cloud_transfer = (cz_transfer_t){0};
+        s_cloud_next_sample_ms = s_cloud_next_layout_ms = 0;
+        s_cloud_cancelling = false;
+        cloud_reset_selection();
+        return APP_REDRAW_PAGE;
+    }
+    if (s_cloud_selectable && cloud_tapped(ev, cloud_offer_all())) {
+        const bool select = s_cloud_checked < s_cloud_selectable;
+        s_cloud_checked = 0;
+        for (unsigned i = 0; i < count; ++i) {
+            cz_kind_t kind;
+            s_cloud_selection.checked[i] = select && cloudzao_offer(i, NULL, &kind) && kind != CZ_KIND_NONE;
+            if (s_cloud_selection.checked[i]) ++s_cloud_checked;
+        }
+        s_cloud_action_error = CZ_OK;
+        return cloud_select_paint(ctx);
+    }
+    if (s_cloud_offer_page && cloud_tapped(ev, cloud_offer_pager(false))) { --s_cloud_offer_page; return APP_REDRAW_PAGE; }
+    if ((s_cloud_offer_page + 1) * CLOUD_OFFER_PAGE_ROWS < count && cloud_tapped(ev, cloud_offer_pager(true))) {
+        ++s_cloud_offer_page;
+        return APP_REDRAW_PAGE;
+    }
+    for (unsigned i = 0; i < CLOUD_OFFER_PAGE_ROWS; ++i) {
+        const unsigned index = s_cloud_offer_page * CLOUD_OFFER_PAGE_ROWS + i;
+        if (index >= count || !cloud_tapped(ev, cloud_offer_rect(i))) continue;
+        cz_kind_t kind;
+        if (!cloudzao_offer(index, NULL, &kind) || kind == CZ_KIND_NONE) break;
+        if (s_cloud_selection.checked[index]) --s_cloud_checked;
+        else ++s_cloud_checked;
+        s_cloud_selection.checked[index] = !s_cloud_selection.checked[index];
+        s_cloud_action_error = CZ_OK;
+        return cloud_select_paint(ctx);
+    }
+    return APP_REDRAW_NONE;
+}
+
+static app_redraw_t cloud_history_clear_gesture(const ui_gesture_event_t *ev) {
+    if (!s_cloud_history_confirm) {
+        if (!cloud_history_can_clear() || !cloud_tapped(ev, cloud_history_clear_button())) return APP_REDRAW_NONE;
+        s_cloud_history_confirm = true;
+        s_cloud_history_clear_failed = false;
+        return APP_REDRAW_PAGE;
+    }
+    const bool confirm = cloud_tapped(ev, cloud_history_confirm_button(true));
+    if (!confirm && !cloud_tapped(ev, cloud_history_confirm_button(false))) return APP_REDRAW_NONE;
+    s_cloud_history_confirm = false;
+    if (confirm && cloud_history_can_clear()) {
+        const cz_error_t error = cloudzao_start_history_clear();
+        s_cloud_history.busy = s_cloud_history_clearing = error == CZ_OK;
+        s_cloud_history_clear_failed = error != CZ_OK;
+    }
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t cloud_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    bool editing = s_view == TRANSFER_CLOUDZAO_KEY;
+    int x = ev->x0, y = ev->y0;
+    if (editing && ev->type == UI_GESTURE_PRESS)
+        return ui_keyboard_press(x, y, 560, ctx->now_ms) ? cloud_key_paint(ctx, false) : APP_REDRAW_NONE;
+    bool feedback = editing && ui_keyboard_release();
+    if (!editing && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
+        if (y < cloud_tab(CLOUD_PANEL_TRANSFER).y || y >= UI_NAV_TOP) return APP_REDRAW_NONE;
+        const int panel = (int)s_cloud_panel + (ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
+        if (panel < CLOUD_PANEL_TRANSFER || panel > CLOUD_PANEL_SETTINGS) return APP_REDRAW_NONE;
+        return cloud_switch_panel((cloud_panel_t)panel);
+    }
+    if (ev->type != UI_GESTURE_TAP) return feedback ? cloud_key_paint(ctx, false) : APP_REDRAW_NONE;
+    if (cloud_tapped(ev, (EpdRect){22, 65, 90, 83})) {
+        if (editing) { cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE; }
+        if (s_cloud_history_confirm) { s_cloud_history_confirm = false; return APP_REDRAW_PAGE; }
+        cloud_leave();
+        ctx->request_return = true;
+        return APP_REDRAW_NONE;
+    }
+    if (editing) {
+        if (ui_rect_hit(password_control_rect(44), x, y)) {
+            cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE;
+        }
+        if (ui_rect_hit(password_control_rect(46), x, y)) return cloud_save_key();
+        if (ui_text_input_tap(&s_cloud_editor, password_control_rect(47), UI_PX_BODY, true, NULL, x, y))
+            return cloud_key_paint(ctx, true);
+        if (ui_keyboard_tap(x, y, 560, ctx->now_ms) == UI_KEYBOARD_DONE) return cloud_save_key();
+        return cloud_key_paint(ctx, false);
+    }
+    for (int panel = CLOUD_PANEL_TRANSFER; panel <= CLOUD_PANEL_SETTINGS; ++panel)
+        if (cloud_tapped(ev, cloud_tab(panel))) return cloud_switch_panel((cloud_panel_t)panel);
+    if (s_cloud_panel == CLOUD_PANEL_SETTINGS) {
+        if (s_cloud_status.busy) return APP_REDRAW_NONE;
+        if (cloud_tapped(ev, cloud_button(CLOUD_BIND))) {
+            if (!cloud_bind_action_enabled()) return APP_REDRAW_NONE;
+            if (s_cloud_bind_status.busy) {
+                cloudzao_cancel();
+                s_cloud_cancelling = true;
+            } else {
+                const cz_error_t result = cloudzao_start(CZ_JOB_BIND, s_cloud_key, NULL);
+                s_cloud_bind_status = (cz_status_t){.busy = result == CZ_OK, .error = result};
+                s_cloud_bind_visible = true;
+                s_cloud_cancelling = false;
+            }
+            return APP_REDRAW_PAGE;
+        }
+#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
+        if (!s_cloud_bind_status.busy && cloud_tapped(ev, cloud_button(CLOUD_KEY))) {
+            ui_text_edit_init(&s_cloud_editor, s_cloud_draft, sizeof(s_cloud_draft));
+            ui_keyboard_begin(&s_cloud_editor, true);
+            s_view = TRANSFER_CLOUDZAO_KEY;
+            return APP_REDRAW_PAGE;
+        }
+#endif
+        return APP_REDRAW_NONE;
+    }
+    const bool history = s_cloud_panel == CLOUD_PANEL_HISTORY;
+    if (history && (s_cloud_history_confirm || cloud_tapped(ev, cloud_history_clear_button())))
+        return cloud_history_clear_gesture(ev);
+    if (!history && !s_cloud_batch) return cloud_inbox_gesture(ctx, ev);
+    unsigned *page = history ? &s_cloud_history_page : &s_cloud_batch_page;
+    const unsigned per_page = history ? CLOUD_HISTORY_PAGE_ROWS : CLOUD_BATCH_PAGE_ROWS;
+    const unsigned count = history ? s_cloud_history.count : s_cloud_transfer.rows;
+    if (history && (s_cloud_history.busy || s_cloud_history.error || count <= per_page)) return APP_REDRAW_NONE;
+    if (*page && cloud_tapped(ev, cloud_pager(history, false))) { --*page; return APP_REDRAW_PAGE; }
+    if ((*page + 1) * per_page < count && cloud_tapped(ev, cloud_pager(history, true))) {
+        ++*page;
+        return APP_REDRAW_PAGE;
+    }
+    if (history || s_cloud_bind_status.busy || !cloud_tapped(ev, cloud_button(CLOUD_RECEIVE))) return APP_REDRAW_NONE;
+    return s_cloud_status.busy ? cloud_cancel_action() : cloud_fetch_offers();
+}
+
+static void cloud_before_lock(app_ctx_t *ctx) {
+    (void)ctx;
+    if (s_view != TRANSFER_CLOUDZAO && s_view != TRANSFER_CLOUDZAO_KEY) return;
+    cloud_leave();
+    s_view = TRANSFER_CLOUDZAO;
+}
+#endif
 
 static void queue_network_start(wifi_transfer_mode_t mode) {
     s_mode = mode;
@@ -911,6 +1861,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
                    EPD_DRAW_ALIGN_CENTER, true);
         return;
     }
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) { draw_cloud(fb); return; }
+#endif
     if (s_view == TRANSFER_METHODS) { draw_methods(fb); return; }
     if (s_view == TRANSFER_NETWORKS) { draw_networks(fb); return; }
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
@@ -997,9 +1950,20 @@ static void on_enter(app_ctx_t* ctx) {
     s_pressed = -1;
     s_settle = s_any_changed = false;
     s_status.mode = s_mode;
-    wifi_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
     s_poll_ms = 0;
     s_free = 0;
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_cloud_entry_requested) {
+        s_cloud_entry_requested = false;
+        s_direct_entry = true;
+#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
+        memcpy(s_cloud_key, CZ_RELAY_DEVICE_TOKEN, sizeof(CZ_RELAY_DEVICE_TOKEN));
+#endif
+        s_view = TRANSFER_CLOUDZAO;
+        return;
+    }
+#endif
+    wifi_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
     if (s_usb_requested) {
         board_sd_info_t usb_sd = {0};
         if (board_sd_get_info(&usb_sd) == ESP_OK) s_usb_capacity_bytes = usb_sd.capacity_bytes;
@@ -1072,6 +2036,15 @@ static bool stop_wifi_for_provisioning(void) {
 // Join HTTP before clearing the old root; in-flight requests never move to another storage.
 static void transfer_on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) {
+        if (s_cloud_panel == CLOUD_PANEL_HISTORY) {
+            cloud_reset_history_actions();
+            s_cloud_history = (cz_history_status_t){.error = CZ_MEDIA};
+        }
+        return;
+    }
+#endif
     if (s_owned_session ? !s_owned_session_uses_sd : s_root.is_flash) return;
     const bool stopped = network_service_stop_owned_wifi(s_owned_session, true);
     if (!stopped) network_service_drop_owned_wifi(s_owned_session, true);
@@ -1088,6 +2061,9 @@ static void transfer_on_media_lost(app_ctx_t* ctx) {
 
 static void transfer_on_exit(app_ctx_t* ctx) {
     (void)ctx;
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    cloud_leave();
+#endif
     s_usb_start_pending = false;
     if (usb_storage_active()) {
         esp_err_t err = usb_storage_stop();
@@ -1115,6 +2091,100 @@ static void transfer_on_exit(app_ctx_t* ctx) {
 }
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO_KEY) return APP_REDRAW_NONE;
+    if (s_view == TRANSFER_CLOUDZAO) {
+        if (s_cloud_panel == CLOUD_PANEL_HISTORY) {
+            if (!s_cloud_history.busy) return APP_REDRAW_NONE;
+            const cz_history_status_t history = cloudzao_history_status();
+            if (history.busy) return APP_REDRAW_NONE;
+            s_cloud_history = history;
+            if (s_cloud_history_clearing) {
+                s_cloud_history_clearing = false;
+                s_cloud_history_clear_failed = history.error != CZ_OK && history.error != CZ_MEDIA;
+                if (s_cloud_history_clear_failed) s_cloud_history.error = CZ_OK;
+                else s_cloud_history_page = 0;
+            }
+            return APP_REDRAW_PAGE;
+        }
+        if (s_cloud_bind_status.busy) {
+            const cz_status_t status = cloudzao_status();
+            if (status.busy) return APP_REDRAW_NONE;
+            s_cloud_bind_status = status;
+            s_cloud_cancelling = false;
+            return APP_REDRAW_PAGE;
+        }
+        if (!s_cloud_status.busy) return APP_REDRAW_NONE;
+        const cz_status_t status = cloudzao_status();
+        if (!s_cloud_batch) {
+            if (status.busy) return APP_REDRAW_NONE;
+            s_cloud_status = status;
+            s_cloud_cancelling = false;
+            const unsigned count = cloud_offer_count();
+            for (unsigned i = 0; i < count; ++i) {
+                cz_kind_t kind;
+                if (cloudzao_offer(i, NULL, &kind) && kind != CZ_KIND_NONE) ++s_cloud_selectable;
+            }
+            return APP_REDRAW_PAGE;
+        }
+        cz_transfer_t transfer = cloudzao_transfer_status();
+        if (!status.busy || s_cloud_panel != CLOUD_PANEL_TRANSFER) {
+            s_cloud_status = status;
+            s_cloud_transfer = transfer;
+            if (!status.busy) s_cloud_cancelling = false;
+            return status.busy ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
+        }
+
+        const bool total_changed = status.total != s_cloud_status.total;
+        const bool repaint_card = total_changed || status.processed != s_cloud_status.processed ||
+            transfer.active != s_cloud_transfer.active ||
+            (transfer.active && (transfer.current != s_cloud_transfer.current ||
+                                 transfer.file.state != s_cloud_transfer.file.state)) ||
+            (!transfer.active && (status.saved != s_cloud_status.saved || status.pending != s_cloud_status.pending ||
+                                  status.skipped != s_cloud_status.skipped || status.failed != s_cloud_status.failed));
+        const bool repaint_batch = total_changed || transfer.revision != s_cloud_transfer.revision;
+        if (repaint_card || repaint_batch) {
+            if (ctx->now_ms < s_cloud_next_layout_ms) return APP_REDRAW_NONE;
+            s_cloud_status = status;
+            // 批次单独更新时，保留卡片已经推屏的采样值。/ Keep the card's displayed sample on batch-only updates.
+            if (!repaint_card) {
+                transfer.received = s_cloud_transfer.received;
+                transfer.rate = s_cloud_transfer.rate;
+            }
+            s_cloud_transfer = transfer;
+            if (repaint_card) {
+                s_area = cloud_result_area();
+                ui_fill_rect_fast(s_area, UI_GRAY_WHITE, ctx->fb);
+                draw_cloud_result(ctx->fb);
+                s_cloud_next_sample_ms = ctx->now_ms + CLOUD_SAMPLE_PAINT_MS;
+            }
+            if (repaint_batch) {
+                const EpdRect batch = cloud_batch_area();
+                ui_fill_rect_fast(batch, UI_GRAY_WHITE, ctx->fb);
+                draw_cloud_batch(ctx->fb);
+                s_area = repaint_card ? ui_rect_union(s_area, batch) : batch;
+            }
+            s_cloud_next_layout_ms = ctx->now_ms + CLOUD_LAYOUT_PAINT_MS;
+            s_cloud_sample_paint = false;
+            return APP_REDRAW_AREA;
+        }
+        if (!transfer.active || transfer.file.state != CZ_ROW_DOWNLOAD || ctx->now_ms < s_cloud_next_sample_ms ||
+            (transfer.received == s_cloud_transfer.received && transfer.rate == s_cloud_transfer.rate))
+            return APP_REDRAW_NONE;
+
+        const cloud_sample_t before = cloud_sample(&s_cloud_transfer), next = cloud_sample(&transfer);
+        s_cloud_status = status;
+        s_cloud_transfer = transfer;
+        s_cloud_next_sample_ms = ctx->now_ms + CLOUD_SAMPLE_PAINT_MS;
+        if (before.fill_width == next.fill_width && !strcmp(before.detail, next.detail) && !strcmp(before.rate, next.rate))
+            return APP_REDRAW_NONE;
+        s_area = cloud_sample_area();
+        ui_fill_rect_fast(s_area, UI_GRAY_WHITE, ctx->fb);
+        draw_cloud_sample(ctx->fb, &next);
+        s_cloud_sample_paint = true;
+        return APP_REDRAW_AREA;
+    }
+#endif
     if (s_view == TRANSFER_PASSWORD) {
         if (ctx->consumed) return APP_REDRAW_NONE;
         bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
@@ -1219,7 +2289,7 @@ static int hit_control(uint16_t x, uint16_t y) {
 }
 
 static int hit_method(uint16_t x, uint16_t y) {
-    for (int i = 0; i < 2; ++i) if (ui_rect_hit(method_control_rect(i), x, y)) return i;
+    for (int i = 0; i < TRANSFER_METHOD_COUNT; ++i) if (ui_rect_hit(method_control_rect(i), x, y)) return i;
     return -1;
 }
 
@@ -1269,6 +2339,9 @@ static app_redraw_t method_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev)
 }
 
 static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) return cloud_gesture(ctx, ev);
+#endif
     if (s_status.state == WIFI_TRANSFER_UPLOADING) return APP_REDRAW_NONE;
     if (ev->type == UI_GESTURE_TAP && s_view != TRANSFER_PASSWORD && !usb_storage_active()) {
         int tab = ui_nav_hit(ev->x0, ev->y0);
@@ -1336,6 +2409,21 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 }
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO_KEY && key != UI_KEY_2) {
+        cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE;
+    }
+    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) {
+        if (s_cloud_history_confirm && key != UI_KEY_2) {
+            s_cloud_history_confirm = false;
+            return APP_REDRAW_PAGE;
+        }
+        cloud_leave();
+        if (key == UI_KEY_2) ui_nav_request(ctx, 0);
+        else ctx->request_return = true;
+        return APP_REDRAW_NONE;
+    }
+#endif
     if (s_usb_entry || usb_storage_active()) return stop_usb_for_navigation(ctx, key == UI_KEY_2);
     if (s_view == TRANSFER_HOME && !stop_upload_if_idle()) return APP_REDRAW_NONE;
     if (key == UI_KEY_2) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
@@ -1356,6 +2444,13 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw != APP_REDRAW_AREA) return false;
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    if (s_view == TRANSFER_CLOUDZAO) {
+        guard_draw_result(ctx->hl, display_refresh_area(ctx->hl,
+            s_cloud_sample_paint ? DISPLAY_REFRESH_FEEDBACK : DISPLAY_REFRESH_DETAIL, s_area, DISPLAY_REFRESH_DEFAULT));
+        return true;
+    }
+#endif
     if (s_view == TRANSFER_PASSWORD) {
         if (s_input_settle) {
             guard_draw_result(ctx->hl, display_refresh_area(ctx->hl, DISPLAY_REFRESH_SETTLE, s_area, DISPLAY_REFRESH_DEFAULT));
@@ -1376,6 +2471,9 @@ static bool transfer_menu_handle_enabled(app_ctx_t* ctx) {
 }
 
 const app_desc_t app_transfer = {
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    .on_before_lock = cloud_before_lock,
+#endif
     .on_media_lost = transfer_on_media_lost,
     .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传", .enter_full = false,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
