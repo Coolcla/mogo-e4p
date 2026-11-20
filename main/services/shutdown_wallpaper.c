@@ -9,6 +9,7 @@
 #include "shutdown_wallpaper.h"
 #include "settings.h"
 #include "image_decode.h"
+#include "ui_image_dither.h"
 #include "memory_manager.h"
 #include "board_sd.h"
 #include "esp_log.h"
@@ -27,8 +28,12 @@
 #define SHUTDOWN_ART_ROOT "/sdcard/.readpico"
 #endif
 #define ART_CACHE_DIR SHUTDOWN_ART_ROOT "/shutdown"
-#define ART_MAGIC UINT32_C(0x4f464631)
-#define THUMB_BYTES (160u * 284u / 2u)
+#define ART_MAGIC_LEGACY UINT32_C(0x4f464631)
+#define ART_MAGIC_BASE_TONE UINT32_C(0x4f464632)
+#define ART_MAGIC UINT32_C(0x4f464633)
+#define THUMB_WIDTH 160u
+#define THUMB_HEIGHT 284u
+#define THUMB_BYTES (THUMB_WIDTH * THUMB_HEIGHT / 2u)
 typedef struct {
     uint32_t magic, width, height, fit, image_id, checksum;
 } off_header_t;
@@ -64,6 +69,32 @@ static bool art_cancelled(void *context) {
 static void art_path(char path[128], unsigned slot) {
     snprintf(path, 128, ART_CACHE_DIR "/%u.bin", slot);
 }
+// 旧缓存可能是唯一副本；校验后只调整内存画布，不重写活动槽。
+// A legacy cache may be the only copy; tone the validated canvas in memory without rewriting the active slot.
+static void art_tone_legacy(uint8_t *pixels, bool base_toned) {
+    uint8_t tones[16];
+    unsigned source = 0;
+    for (unsigned i = 0; i < 16; ++i) {
+        unsigned level = i * 17u;
+        if (base_toned) {
+            // 用单调的初版曲线估计原亮度，只补偿新增的浅灰调整，不重复压暗中间调。
+            // Estimate original luminance from the monotone first curve; apply only the new highlight correction.
+            while (source < UINT8_MAX && ui_image_wallpaper_base_tone(source) < level) ++source;
+            tones[i] = (uint8_t)(level - ui_image_wallpaper_highlight_delta(source));
+        } else {
+            tones[i] = ui_image_wallpaper_tone(level);
+        }
+    }
+    for (unsigned y = 0; y < SHUTDOWN_ART_HEIGHT; ++y) {
+        for (unsigned x = 0; x < SHUTDOWN_ART_WIDTH; x += 2) {
+            size_t at = ((size_t)y * SHUTDOWN_ART_WIDTH + x) / 2u;
+            unsigned pair = pixels[at];
+            unsigned lo = ui_image_dither_gray(tones[pair & 15u], x, y) / 17u;
+            unsigned hi = ui_image_dither_gray(tones[pair >> 4], x + 1, y) / 17u;
+            pixels[at] = (uint8_t)(lo | (hi << 4));
+        }
+    }
+}
 bool shutdown_wallpaper_read(const app_shutdown_wallpaper_t *value, uint8_t *pixels) {
     if (!pixels || !app_settings_shutdown_wallpaper_valid(value) || !value->image_id) return false;
     if (!art_storage_ready()) return false;
@@ -71,12 +102,14 @@ bool shutdown_wallpaper_read(const app_shutdown_wallpaper_t *value, uint8_t *pix
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     off_header_t header;
-    bool ok = fread(&header, 1, sizeof(header), file) == sizeof(header) && header.magic == ART_MAGIC &&
+    bool ok = fread(&header, 1, sizeof(header), file) == sizeof(header) &&
+        (header.magic == ART_MAGIC || header.magic == ART_MAGIC_BASE_TONE || header.magic == ART_MAGIC_LEGACY) &&
         header.width == SHUTDOWN_ART_WIDTH && header.height == SHUTDOWN_ART_HEIGHT &&
         header.fit == value->fit && header.image_id == value->image_id &&
         fread(pixels, 1, SHUTDOWN_ART_BYTES, file) == SHUTDOWN_ART_BYTES && fgetc(file) == EOF &&
         !ferror(file) && header.checksum == art_hash(2166136261u, pixels, SHUTDOWN_ART_BYTES);
     fclose(file);
+    if (ok && header.magic != ART_MAGIC) art_tone_legacy(pixels, header.magic == ART_MAGIC_BASE_TONE);
     return ok;
 }
 static bool art_write(app_shutdown_wallpaper_t *value, const uint8_t *pixels, unsigned generation, const char **error) {
@@ -150,7 +183,8 @@ static bool art_decode(app_shutdown_wallpaper_t *value, uint8_t *pixels, unsigne
         unsigned sy = crop.y + (unsigned)((uint64_t)y * crop.height / draw_h);
         for (unsigned x = 0; x < draw_w; ++x) {
             unsigned sx = crop.x + (unsigned)((uint64_t)x * crop.width / draw_w);
-            unsigned gray4 = (gray[(size_t)sy * width + sx] + 8u) / 17u;
+            uint8_t tone = ui_image_wallpaper_tone(gray[(size_t)sy * width + sx]);
+            unsigned gray4 = ui_image_dither_gray(tone, dx + x, dy + y) / 17u;
             size_t at = (size_t)(dy + y) * SHUTDOWN_ART_WIDTH + dx + x;
             unsigned shift = (at & 1u) * 4u;
             pixels[at / 2] = (uint8_t)((pixels[at / 2] & ~(15u << shift)) | (gray4 << shift));
@@ -164,13 +198,26 @@ static bool art_decode(app_shutdown_wallpaper_t *value, uint8_t *pixels, unsigne
 static uint8_t *art_thumbnail(const uint8_t *pixels) {
     uint8_t *thumb = mm_alloc(MM_OWNER_UI_CACHE, MM_POOL_PSRAM, THUMB_BYTES, 0, 0);
     if (!thumb) return NULL;
-    for (unsigned y = 0; y < 284; ++y) for (unsigned x = 0; x < 160; x += 2) {
-        unsigned pair = 0;
-        for (unsigned i = 0; i < 2; ++i) {
-            unsigned at = y * SHUTDOWN_ART_HEIGHT / 284u * SHUTDOWN_ART_WIDTH + (x + i) * SHUTDOWN_ART_WIDTH / 160u;
-            pair |= ((pixels[at / 2u] >> ((at & 1u) * 4u)) & 15u) << (i * 4u);
+    // 先平均源图覆盖范围，再抖动到缩图灰阶，避免隔点取样放大抖动条纹。
+    // Average each covered source box before thumbnail dithering to avoid aliasing the full-size dither.
+    for (unsigned y = 0; y < THUMB_HEIGHT; ++y) {
+        unsigned top = y * SHUTDOWN_ART_HEIGHT / THUMB_HEIGHT;
+        unsigned bottom = (y + 1) * SHUTDOWN_ART_HEIGHT / THUMB_HEIGHT;
+        for (unsigned x = 0; x < THUMB_WIDTH; ++x) {
+            unsigned left = x * SHUTDOWN_ART_WIDTH / THUMB_WIDTH;
+            unsigned right = (x + 1) * SHUTDOWN_ART_WIDTH / THUMB_WIDTH;
+            unsigned sum = 0, count = (right - left) * (bottom - top);
+            for (unsigned sy = top; sy < bottom; ++sy) {
+                for (unsigned sx = left; sx < right; ++sx) {
+                    unsigned at = sy * SHUTDOWN_ART_WIDTH + sx;
+                    sum += (pixels[at / 2u] >> ((at & 1u) * 4u)) & 15u;
+                }
+            }
+            unsigned gray4 = ui_image_dither_gray((sum * 17u + count / 2u) / count, x, y) / 17u;
+            size_t at = y * THUMB_WIDTH + x;
+            if (x & 1u) thumb[at / 2u] |= (uint8_t)(gray4 << 4);
+            else thumb[at / 2u] = (uint8_t)gray4;
         }
-        thumb[(y * 160 + x) / 2] = (uint8_t)pair;
     }
     return thumb;
 }

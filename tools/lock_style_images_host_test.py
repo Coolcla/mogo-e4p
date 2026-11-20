@@ -22,6 +22,7 @@ unit=r'''
 #include <utime.h>
 #include <unistd.h>
 #include <errno.h>
+#include "ui_image_dither.h"
 #define LOCK_THUMB_ROOT "cache"
 #define MALLOC_CAP_SPIRAM 1
 #define MALLOC_CAP_8BIT 2
@@ -86,6 +87,20 @@ int main(void){
  lock_image_request_t r[]={{a,false,false},{a,false,false},{b,false,false},{c,false,false}};
  lock_images_request(r,4);assert(s_count==3&&decodes==0);run();assert(decodes==3);const uint8_t *p=ready(a);uint8_t expected[LOCK_THUMB_BYTES];memcpy(expected,p,sizeof(expected));
  ask_bookmark(a);run();assert(ready_bookmark(a)&&decodes==4);
+ const uint8_t *bookmark=ready_bookmark(a);
+ for(unsigned y=0;y<LOCK_THUMB_HEIGHT;++y)for(unsigned x=0;x<LOCK_THUMB_WIDTH;++x){
+  unsigned i=y*LOCK_THUMB_WIDTH+x,shift=(i&1u)*4u;uint8_t gray=(uint8_t)i;
+  assert(((p[i/2]>>shift)&15u)==ui_image_dither_gray(ui_image_wallpaper_tone(gray),x,y)/17u);
+  assert(((bookmark[i/2]>>shift)&15u)==(gray+8u)/17u);
+ }
+ cache_header_t wall,book;char wall_file[160],book_file[160];
+ assert(identity(a,false,false,&wall,wall_file)&&identity(a,true,false,&book,book_file));
+ assert(wall.version==4&&book.version==2);
+ FILE *old=fopen(wall_file,"r+b");assert(old);uint32_t version=3;
+ assert(!fseek(old,sizeof(uint32_t),SEEK_SET)&&fwrite(&version,sizeof(uint32_t),1,old)==1&&!fclose(old));
+ assert(!cache_read(wall_file,&wall,expected));
+ wall.version=version;assert(cache_read(wall_file,&wall,expected));
+ wall.version=4;cache_write(wall_file,wall,expected);
  int before=decodes,io=reads;ask(a);assert(ready(a)==p&&reads==io&&decodes==before);run();assert(decodes==before&&reads==io);
  // 普通离页再进入立即复用像素，无需等异步扫描结束。 / Ordinary leave/reentry reuses pixels immediately, including before the async scan returns.
  unsigned epoch=lock_images_epoch();lock_images_pause();assert(ready(a)==p&&live>0&&lock_images_epoch()==epoch);
@@ -129,5 +144,5 @@ int main(void){
 '''
 with tempfile.TemporaryDirectory() as tmp:
     d=Path(tmp);env,_=toolchain(d);(d/'test.c').write_text(unit)
-    subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-g',str(d/'test.c'),'-o',str(d/'test')],env=env,check=True)
+    subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-g','-I'+str(ROOT/'main/ui'),str(d/'test.c'),str(ROOT/'main/ui/ui_image_dither.c'),'-o',str(d/'test')],env=env,check=True)
     subprocess.run([str(d/'test')],cwd=d,env=env,check=True)

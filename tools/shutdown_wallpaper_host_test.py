@@ -24,6 +24,7 @@ unit = r'''
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "ui_image_dither.h"
 #define BOOK_IMAGE_FILE_MAX (50u*1024u*1024u)
 #define MM_OWNER_FILE_JOB 0
 #define MM_OWNER_UI_CACHE 1
@@ -63,6 +64,7 @@ static FILE *open_art(const char *path,const char *mode){char out[512];assert(!l
 static size_t write_art(const void *p,size_t s,size_t n,FILE *f){assert(!locked);++writes;if(space_fail){errno=ENOSPC;return 0;}return write_fail?0:fwrite(p,s,n,f);}
 static int sync_art(int fd){return sync_fail?-1:fsync(fd);}
 static int close_art(FILE *file){int result=fclose(file);return close_fail?-1:result;}
+static bool flat_highlight;
 typedef bool (*image_cancel_fn)(void *);
 static bool book_image_file_dimensions(const char *p,bool png,unsigned *w,unsigned *h){(void)p;(void)png;*w=source_w;*h=source_h;return true;}
 static bool book_image_file_grayscale_cancel(const char *p,bool png,unsigned w,unsigned h,uint8_t *out,image_cancel_fn cancel,void *ctx){
@@ -71,7 +73,7 @@ static bool book_image_file_grayscale_cancel(const char *p,bool png,unsigned w,u
  if(remove_in_decode){card_present=false;card_mounted=false;}
  if(mutate){char out_path[512];FILE *f=fopen(mapped(p,out_path),"ab");assert(f);fputc(1,f);fclose(f);}
  if(decode_fail||cancel(ctx))return false;
- for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x)out[y*w+x]=(uint8_t)(x*255u/w);
+ for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x)out[y*w+x]=flat_highlight?248:(uint8_t)(x*255u/w);
  return true;
 }
 static void run_worker(void){assert(scheduled);void (*fn)(void *)=scheduled;scheduled=NULL;fn(NULL);assert(!locked);}
@@ -158,8 +160,41 @@ int main(void){
  assert(!shutdown_wallpaper_read(&value,pixels));
  shutdown_wallpaper_request(&value,true);run_worker();value=take(true);
  art_path(path,value.slot);f=fopen(mapped(path,disk),"ab");assert(f);fputc(1,f);fclose(f);assert(!shutdown_wallpaper_read(&value,pixels));
+ // 新图从8位亮度调色再抖动；读回不能重复调色。 / Tone new art before 4bpp dithering; do not retone it on read.
+ flat_highlight=true;value.fit=0;shutdown_wallpaper_request(&value,true);run_worker();value=take(true);
+ assert(shutdown_wallpaper_read(&value,pixels));
+ for(unsigned y=0;y<4;++y)for(unsigned x=0;x<4;++x)
+  assert(gray_at(x,y)==ui_image_dither_gray(ui_image_wallpaper_tone(248),x,y)/17u);
+ uint8_t *thumb=art_thumbnail(pixels);assert(thumb);
+ unsigned sum=0;
+ for(unsigned i=0;i<THUMB_BYTES;++i)sum+=(thumb[i]&15u)+(thumb[i]>>4);
+ assert(sum*17u>=239u*THUMB_WIDTH*THUMB_HEIGHT&&sum*17u<=244u*THUMB_WIDTH*THUMB_HEIGHT);
+ mm_free(thumb);
+ // 原图删除且TF只读时，旧双槽缓存仍可验证并只在内存中调色。
+ // Legacy dual-slot art works without its source on a read-only card and is toned only in memory.
+ assert(!remove("card/pictures/one.png"));
+ memset(original,0xee,sizeof(original));original[0]=0xf0;original[1]=0x76;
+ const uint32_t legacy_versions[]={ART_MAGIC_LEGACY,ART_MAGIC_BASE_TONE};
+ for(unsigned v=0;v<sizeof(legacy_versions)/sizeof(legacy_versions[0]);++v){
+  off_header_t legacy={.magic=legacy_versions[v],.width=SHUTDOWN_ART_WIDTH,.height=SHUTDOWN_ART_HEIGHT,
+   .fit=value.fit,.image_id=value.image_id,.checksum=art_hash(2166136261u,original,sizeof(original))};
+  art_path(path,value.slot);f=fopen(mapped(path,disk),"wb");assert(f);
+  assert(fwrite(&legacy,1,sizeof(legacy),f)==sizeof(legacy)&&fwrite(original,1,sizeof(original),f)==sizeof(original)&&!fclose(f));
+  readonly=true;unsigned written=writes;before_decode=decodes;
+  assert(shutdown_wallpaper_read(&value,pixels)&&writes==written&&decodes==before_decode);
+  assert(gray_at(0,0)==0&&gray_at(1,0)==15);
+  if(v==1)assert(pixels[1]==0x76);
+  unsigned toned=0;
+  for(unsigned y=4;y<8;++y)for(unsigned x=0;x<4;++x)toned+=gray_at(x,y);
+  assert(toned<14u*16u&&toned>=12u*16u);
+  assert(shutdown_wallpaper_read(&value,pixels)&&writes==written&&decodes==before_decode);
+  f=fopen(mapped(path,disk),"rb");assert(f&&fread(&legacy,1,sizeof(legacy),f)==sizeof(legacy));
+  assert(legacy.magic==legacy_versions[v]&&fread(pixels,1,sizeof(pixels),f)==sizeof(pixels)&&!fclose(f));
+  assert(!memcmp(pixels,original,sizeof(pixels)));
+  readonly=false;
+ }
  shutdown_wallpaper_cancel();assert(!live&&!locked);
- puts("PASS: independent shutdown cache, portrait crop/fit, inactive-slot failures, reboot/card readiness retries, full/read-only SD, card removal during decode, source-free cached reads, corrupt/trailing caches, cancellation, OOM and task failures");
+ puts("PASS: highlight tone/dither and source-free legacy tone compatibility; independent shutdown cache, portrait crop/fit, inactive-slot failures, reboot/card readiness retries, full/read-only SD, card removal during decode, source-free cached reads, corrupt/trailing caches, cancellation, OOM and task failures");
 }
 '''
 with tempfile.TemporaryDirectory(prefix="shutdown-art-") as directory:
@@ -169,6 +204,7 @@ with tempfile.TemporaryDirectory(prefix="shutdown-art-") as directory:
     source_path.write_text(unit)
     binary = folder / "test"
     subprocess.run(["cc", "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-misleading-indentation",
-                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer", str(source_path), "-o", str(binary)],
+                    "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-I" + str(ROOT / "main/ui"), str(source_path),
+                    str(ROOT / "main/ui/ui_image_dither.c"), "-o", str(binary)],
                    env=env, check=True)
     subprocess.run([str(binary)], cwd=folder, env=env, check=True)

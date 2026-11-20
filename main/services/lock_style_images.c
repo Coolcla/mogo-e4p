@@ -5,6 +5,7 @@
  */
 #include "lock_style_images.h"
 #include "image_decode.h"
+#include "ui_image_dither.h"
 #include "book_lock_bookmark.h"
 #include <dirent.h>
 #include <errno.h>
@@ -25,7 +26,8 @@
 #define CACHE_DIR LOCK_THUMB_ROOT "/thumbnails"
 #define RAM_SLOTS 12
 #define DISK_SLOTS 128
-#define CACHE_VERSION 2
+#define BOOKMARK_CACHE_VERSION 2
+#define WALLPAPER_CACHE_VERSION 4
 #define CACHE_MAGIC UINT32_C(0x4c544831)
 #define LOCK_SCAN_INITIAL_CAPACITY 64u
 typedef struct {
@@ -78,7 +80,7 @@ static bool identity(const char *path, bool bookmark, bool large, cache_header_t
         (strcasecmp(ext,".png") && strcasecmp(ext,".jpg") && strcasecmp(ext,".jpeg")) ||
         stat(path,&st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uint64_t)st.st_size > BOOK_IMAGE_FILE_MAX) return false;
     uint64_t key=source_key(path,&st);
-    *h=(cache_header_t){.magic=CACHE_MAGIC,.version=CACHE_VERSION,.width=large?342:160,
+    *h=(cache_header_t){.magic=CACHE_MAGIC,.version=bookmark?BOOKMARK_CACHE_VERSION:WALLPAPER_CACHE_VERSION,.width=large?342:160,
         .height=large?608:284,.bookmark=bookmark,.key=key};
     h->bytes=h->width*h->height/2;
     // 128个直接映射槽位限制磁盘增长；完整身份校验使碰撞只导致重建，不会串图。
@@ -123,8 +125,19 @@ static uint8_t *load_image(const char *path,bool bookmark,bool large,unsigned ge
     bool ok=gray&&!cancelled(&generation) && (bookmark
         ? book_lock_bookmark_thumbnail(path,h.width,h.height,gray,cancelled,&generation)
         : book_image_file_grayscale_cancel(path,!strcasecmp(ext,".png"),h.width,h.height,gray,cancelled,&generation));
-    if(ok) for(unsigned i=0;i<h.width*h.height;i+=2)
-        pixels[i/2]=(uint8_t)(((gray[i]+8u)/17u)|(((gray[i+1]+8u)/17u)<<4));
+    if (ok && bookmark) {
+        for (unsigned i = 0; i < h.width * h.height; i += 2)
+            pixels[i / 2] = (uint8_t)(((gray[i] + 8u) / 17u) | (((gray[i + 1] + 8u) / 17u) << 4));
+    } else if (ok) {
+        for (unsigned y = 0; y < h.height; ++y) {
+            for (unsigned x = 0; x < h.width; x += 2) {
+                size_t i = (size_t)y * h.width + x;
+                unsigned lo = ui_image_dither_gray(ui_image_wallpaper_tone(gray[i]), x, y) / 17u;
+                unsigned hi = ui_image_dither_gray(ui_image_wallpaper_tone(gray[i + 1]), x + 1, y) / 17u;
+                pixels[i / 2] = (uint8_t)(lo | (hi << 4));
+            }
+        }
+    }
     free(gray);
     // 不发布解码中被替换的文件，也不让取消/半写结果成为缓存。
     // Reject sources replaced during decoding and never cache cancelled/partial output.

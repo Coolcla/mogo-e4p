@@ -55,6 +55,8 @@ static uint64_t wallpaper_key(void){
     if (app_settings_lock_style() == 1) {
         uint8_t mode = (uint8_t)app_settings_wallpaper_mode();
         key = (key ^ mode) * UINT64_C(1099511628211);
+        // 壁纸色调升级后不复用旧密码背景。/ Do not reuse pre-tone wallpaper PIN backgrounds.
+        key = (key ^ UINT64_C(0x57414c4c544f4e32)) * UINT64_C(1099511628211);
     }
     return key;
 }

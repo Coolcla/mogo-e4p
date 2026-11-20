@@ -5,6 +5,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+- 改善待机和关机壁纸偏白的问题，让浅灰细节更易分辨，保留纯黑、纯白和白边。/ Reduce washout in standby and shutdown wallpapers to make light-gray details easier to distinguish while preserving pure black, pure white and white margins.
 - 为内建界面字体补齐「工具栏」「边框索引」「中央章徽」等文案中的 29 个字的轮廓，改善不同字号下的清晰度。/ Add 29 outline glyphs to the built-in UI font, including those used in the reader toolbar and title-style labels, for sharper text across sizes.
 - 「按键控制」标明「上键（AI键）」；返回主页、手动全刷和前光开关的绑定可在普通页面使用，未绑定全局动作的手势保留原操作。/ Identify the AI key in key controls and allow mapped Home, full refresh and frontlight on ordinary pages without replacing other page gestures.
 - 「设置 → 电源管理 → 充电档位」新增「日常充电」（1 A，默认）与「快速充电」（1.5 A），显示当前档位，即时应用并由本机记住。/ Add Everyday (1 A, default) and Fast (1.5 A) charging, with the active profile shown. Changes apply immediately and persist locally.

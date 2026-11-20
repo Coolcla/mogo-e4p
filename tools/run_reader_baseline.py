@@ -23,6 +23,7 @@ SUITES = {
     "calendar_settings_ui": [sys.executable, "tools/calendar_settings_ui_host_test.py"],
     "lock_collage": [sys.executable, "tools/lock_collage_host_test.py"],
     "lock_style_images": [sys.executable, "tools/lock_style_images_host_test.py"],
+    "wallpaper_cache": [sys.executable, "tools/wallpaper_cache_host_test.py"],
     "shutdown_wallpaper": [sys.executable, "tools/shutdown_wallpaper_host_test.py"],
     "lock_style_ui": [sys.executable, "tools/lock_style_ui_host_test.py"],
     "image_resample": [sys.executable, "tools/book_cover_resample_host_test.py"],

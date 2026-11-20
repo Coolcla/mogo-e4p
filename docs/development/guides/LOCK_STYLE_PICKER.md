@@ -4,6 +4,10 @@
 
 浏览壁纸或透明书封时，标题右侧可选择「裁剪填满」或「完整显示」。裁剪填满按屏幕比例铺满并裁掉超出边缘的部分；完整显示保持图片原比例，缩放到屏幕内并在四周留下当前页面，适合高分辨率或尺寸较大的图片。两种显示方式分别保存，切换图片或重启后仍保留；壁纸旧设置默认使用裁剪填满，透明书封默认完整显示以保持既有行为。
 
+自定义待机和关机壁纸在生成 16 级灰阶前会压深中间调，重点拉开高亮和浅灰之间的层次，并用有序抖动保留相邻灰阶之间的细节；纯黑、纯白和完整显示的白边不变。待机壁纸、缩图和密码背景的旧成品缓存会自动重建。已保存的旧关机壁纸仍能显示，不需要原图；旧缓存只在显示前调色，不改写 TF 卡；对已经过初版调色的成品只补偿浅灰，不重复压深中间调。原图还在时，重新选图可在量化前调色，保留更多浅灰细节。已经是纯白的原图区域无法恢复细节。
+
+Custom standby and shutdown wallpaper deepens midtones and widens the separation of near-white tones before ordered 16-level dithering, keeping pure black, pure white and white fit margins unchanged. Old standby, thumbnail and PIN backdrop caches rebuild automatically. Existing shutdown art still works without its source; validated legacy pixels are toned in memory without rewriting the card. Art rendered with the first curve receives only the added highlight correction, not a second midtone adjustment. Reselect the source, if available, to apply the adjustment before quantization and retain more near-white detail. Detail already clipped to white in the source cannot be recovered.
+
 壁纸与书封每页三张图，点左右箭头或在图片区滑动翻页。点尚未加载的图片会显示「加载后应用」，切页、切分类、再选别图、离页或锁屏取消旧选择。长按图片可放大查看，返回保留分页，不自动启用。坏图、无卡和保存失败保留原选择。系统字号100–200%参与排版，卡片文字受区域大小限制，长文件名截短。
 
 目录沿用 `/sdcard/pictures`、`/sdcard/images`、`/sdcard`，扫描全部 JPG/JPEG/PNG，不设64张固定上限并按文件名排序；目录数组按可用PSRAM动态扩展，内存不足时返回已经成功扫描的项目。透明书封列出 PNG/JPG/JPEG。PNG保留原alpha；JPG/JPEG和不透明PNG按画布四角的主灰度估计纯色背景，再只从四角沿四邻接移除连通区域，因此黑色、灰色和彩色纯底也能透明，封闭的同色主体和只贴边不贴角的白色主体会保留。含真实alpha的PNG跳过颜色键控。由于设备最终显示灰阶，彩色背景按解码后的亮度处理；渐变或复杂纹理不承诺自动抠图。跳过隐藏文件、AppleDouble、目录、空文件、超过50 MiB的文件。透明书封可选择保留完整画布或按屏幕比例居中裁切；缩图棋盘代表透明区域，实际锁屏仍叠加当前页面。显示方式写入NVS，图层缓存按图片、旋转、画布尺寸、显示方式和键控算法版本区分，算法更新后自动重建旧缓存。阅读票根预览使用真实最近阅读数据，优先读取完整封面缓存，缺失时读取列表封面缓存并居中，不在锁屏入口解码EPUB；无记录显示占位。拼贴预览为上次生成且校验有效的整帧快照，不为浏览设置扫描或解码整个书库；首次锁屏前可无预览。日历与时钟预览使用打开时的当前日期/时间，实际锁屏仍按各自现有规则生成。
@@ -48,7 +52,7 @@ Saved custom art reloads from the same card after reboot and uses its prepared f
 ## 验证
 
 ```sh
-python3 tools/run_reader_baseline.py shutdown_wallpaper lock_style_images lock_style_ui image_stream settings_backup lifecycle storage media lock_style sleep_power loop lock lock_clock font_policy
+python3 tools/run_reader_baseline.py wallpaper_cache shutdown_wallpaper lock_style_images lock_style_ui image_stream settings_backup lifecycle storage media lock_style sleep_power loop lock lock_clock font_policy
 python3 tools/lock_style_ui_host_test.py --output build/lock-style-ui
 idf.py --preview build
 ```
