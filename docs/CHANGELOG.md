@@ -6,6 +6,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 ## 未发布 / Unreleased
 
 - 「按键控制」标明「上键（AI键）」；返回主页、手动全刷和前光开关的绑定可在普通页面使用，未绑定全局动作的手势保留原操作。/ Identify the AI key in key controls and allow mapped Home, full refresh and frontlight on ordinary pages without replacing other page gestures.
+- 「设置 → 电源管理 → 充电档位」新增「日常充电」（1 A，默认）与「快速充电」（1.5 A），显示当前档位，即时应用并由本机记住。/ Add Everyday (1 A, default) and Fast (1.5 A) charging, with the active profile shown. Changes apply immediately and persist locally.
 - 联调构建在文件管理的「传输文件」区并排显示 CloudZao、WiFi、热点和 USB；CloudZao 支持通过已连接的 WiFi 获取推送列表，勾选或全选后下载书籍、PNG 和 TTF，未选的文件留在云端。页面显示本批文件、下载进度与速率及 TF 卡历史。默认构建不显示入口。 下载时只局刷进度条与数值，本批文件不随速率刷新。 中转版设置仅保留设备绑定，区分已绑定、需输入绑定码和验证失败；三个页签可左右滑动切换，也可一键返回文件管理，标题旁显示无底色的黑色 CloudZao 标志。 历史记录改用更易扫读的列表，区分文件格式、接收时间和结果。 支持二次确认后清除当前 TF 卡的全部 CloudZao 接收记录，不删除已下载文件。 修复 TF 卡后台巡检偶发误判为拔卡，导致接收中断的问题。
 
 ## v1.1.6 · 2026-11-19

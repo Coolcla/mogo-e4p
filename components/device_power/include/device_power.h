@@ -171,6 +171,16 @@ esp_err_t device_power_refresh(void);
 /// 轮询电量、充电状态与待处理电源键，供页面 tick 使用。
 /// / Poll battery, charging state and pending power keys for page ticks.
 esp_err_t device_power_poll(void);
+typedef enum {
+    DEVICE_POWER_CHARGE_1A = 1000,
+    DEVICE_POWER_CHARGE_1_5A = 1500,
+} device_power_charge_current_t;
+
+/// 返回当前已应用的标称档位，0 表示充电芯片未配置。/ Return the applied nominal profile, or 0 if the charger is unconfigured.
+unsigned device_power_charge_current(void);
+/// 主循环应用并保存充电档位。/ Apply and persist the charger profile from the main loop.
+esp_err_t device_power_set_charge_current(device_power_charge_current_t current);
+
 /// 只读 UTC RTC；不校准系统时间、不改快照或寄存器。/ Read UTC RTC without changing system time, snapshots or registers.
 esp_err_t device_power_read_rtc(uint32_t *utc_seconds);
 

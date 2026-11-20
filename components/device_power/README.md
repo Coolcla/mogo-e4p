@@ -123,8 +123,8 @@ With only a USB cable, first capture short-term connected behavior, then disconn
 
 ## 充电与 RTC / Charging and RTC
 
-CX25601N 请求 1 A，经原厂 80 mA 档位量化为 960 mA，输入限流跟随量化值；VREG 为 4.4 V。轮询按有效电压切换终止，输入存在且空闲/近零电流时补充充电，无输入且有效电压 ≤3.1 V 时按原厂关 BATFET。配置不完整时报告失败，并尽力恢复硬件终止与停充。
-CX25601N quantizes the 1 A request to 960 mA using vendor 80 mA steps; the input limit follows that value and VREG is 4.4 V. Polling controls termination from valid voltage, kicks recharge on input-present idle/near-zero-current status and shuts BATFET on valid no-input voltage at or below 3.1 V. Incomplete configuration reports failure and attempts to restore hardware termination and disable charging.
+「设置 → 电源管理 → 充电档位」提供标称 1 A（默认）与 1.5 A。CX25601N 按原厂 80 mA 步进向下量化为 960/1440 mA，输入限流同步；这不是实测电池电流。档位在主循环即时写入，成功后保存在本机 NVS `charger/current_ma`，开机加载，仅接受两档，无有效记录回落 1 A。失败尝试恢复原档，恢复失败则报告充电芯片不可用并尽力停充、恢复硬件终止。VREG 保持 4.4 V；轮询按有效电压切换终止，输入存在且空闲/近零电流时补充充电，无输入且有效电压 ≤3.1 V 时按原厂关 BATFET。
+The Charge profile setting offers nominal 1 A (default) and 1.5 A. CX25601N rounds down in vendor 80 mA steps to 960/1440 mA and follows with the input limit; this is not measured battery current. The loop applies the setting immediately and persists it under local NVS `charger/current_ma`; boot accepts only the two profiles and defaults to 1 A without a valid record. On failure, attempt rollback; if rollback fails, report the charger unavailable and attempt to disable charging and restore hardware termination. VREG stays at 4.4 V. Polling still controls termination from valid voltage, kicks recharge on input-present idle/near-zero-current status and shuts BATFET on valid no-input voltage at or below 3.1 V.
 
 维护使用现有轮询上的非阻塞状态机，恢复充电最早在 200 ms 后的下一次轮询执行，失败继续重试；不更改电量曲线、补偿与滤波。PCF8563 启动清 STOP 和 AF/TF，寄存器存 UTC，非法 BCD、日期和电压失效标志不用于系统校时。
 Maintenance uses a nonblocking state machine on existing polling, resuming recharge on the next poll at least 200 ms later and retrying failed restoration. Battery curves, compensation and filtering remain unchanged. PCF8563 startup clears STOP and AF/TF, stores UTC and rejects invalid BCD/calendar dates or voltage-loss flags for system clock updates.

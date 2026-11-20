@@ -125,7 +125,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_NETWORK, SETTINGS_TIME,
                SETTINGS_READING_BG, SETTINGS_READING_BG_PREVIEW,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT,
                SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_HAPTIC,
-               SETTINGS_POWER_LOG, SETTINGS_BATT_CALIBRATION,
+               SETTINGS_POWER_LOG, SETTINGS_BATT_CALIBRATION, SETTINGS_CHARGE_CURRENT,
                SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH,
                SETTINGS_MEMORY,
@@ -437,8 +437,8 @@ static int settings_wireless_rows(void) {
 #define SETTINGS_DISPLAY_Y (SETTINGS_WIRELESS_Y + settings_wireless_rows() * SETTINGS_ROW_H + 78)
 #define SETTINGS_PERSONAL_Y (SETTINGS_DISPLAY_Y + SETTINGS_DISPLAY_ROWS * SETTINGS_ROW_H + 78)
 #define SETTINGS_MAINTENANCE_Y (SETTINGS_PERSONAL_Y + SETTINGS_PERSONAL_ROWS * SETTINGS_ROW_H + 78)
-// 电源管理集中本机电量学习及独立日志开关。/ Power management groups local battery learning and the independent logging switch.
-#define SETTINGS_POWER_ROWS 2
+// 电源管理集中充电档位、本机电量学习及日志。/ Power management groups charge profiles, local battery learning and logging.
+#define SETTINGS_POWER_ROWS 3
 #define SETTINGS_POWER_Y (SETTINGS_MAINTENANCE_Y + SETTINGS_MAINTENANCE_ROWS * SETTINGS_ROW_H + 78)
 // 设置行图标：32 像素盒，在行高 68 里垂直居中；墨色统一，避免一行一个灰度。
 // Setting row icons: a 32 px box centred in the 68 px row with one shared ink level.
@@ -1204,6 +1204,75 @@ static app_redraw_t screen_offset_gesture(app_ctx_t *ctx, const ui_gesture_event
     return screen_offset_feedback(ctx, previous);
 }
 
+static const struct {
+    device_power_charge_current_t current;
+    const char *name;
+    const char *rating;
+} s_charge_choices[] = {
+    {DEVICE_POWER_CHARGE_1A, "日常充电", "1 A · 默认"},
+    {DEVICE_POWER_CHARGE_1_5A, "快速充电", "1.5 A"},
+};
+
+static EpdRect charge_choice_rect(unsigned index) {
+    return (EpdRect){36, 394 + (int)index * 158, 612, 136};
+}
+
+static const char *charge_current_label(unsigned current) {
+    for (unsigned i = 0; i < sizeof(s_charge_choices) / sizeof(s_charge_choices[0]); ++i) {
+        if (current == s_charge_choices[i].current) return s_charge_choices[i].name;
+    }
+    return "暂不可用";
+}
+
+static void charge_current_render(uint8_t *fb) {
+    back_header(fb, "充电档位");
+    const unsigned current = device_power_charge_current();
+
+    // 状态区只标档位，不模拟电量或充电进度。/ The status block shows the profile, not charge progress.
+    ui_fill_round_rect(fb, (EpdRect){36, 212, 612, 154}, 20, UI_GRAY_BLACK);
+    ui_text_box(fb, (EpdRect){64, 231, 440, 38}, 23, "当前档位", EPD_DRAW_ALIGN_LEFT, true);
+    ui_text_box(fb, (EpdRect){64, 268, 440, 83}, 48, charge_current_label(current), EPD_DRAW_ALIGN_LEFT, true);
+    epd_draw_circle(574, 289, 38, UI_GRAY_WHITE, fb);
+    ui_draw_icon(fb, 574, 289, 43, UI_ICON_ZAP, UI_GRAY_WHITE);
+
+    for (unsigned i = 0; i < sizeof(s_charge_choices) / sizeof(s_charge_choices[0]); ++i) {
+        const EpdRect box = charge_choice_rect(i);
+        const bool active = current == s_charge_choices[i].current;
+        settings_card(fb, box, 20, UI_GRAY_WHITE, UI_GRAY_BLACK);
+        ui_text_box(fb, (EpdRect){64, box.y + 16, 475, 52}, 34, s_charge_choices[i].name,
+                    EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){64, box.y + 76, 552, 42}, 22, s_charge_choices[i].rating,
+                    EPD_DRAW_ALIGN_LEFT, false);
+        if (active) {
+            epd_fill_circle(600, box.y + 43, 19, UI_GRAY_BLACK, fb);
+            ui_draw_icon(fb, 600, box.y + 43, 24, UI_ICON_CHECK, UI_GRAY_WHITE);
+        } else {
+            epd_draw_circle(600, box.y + 43, 18, current ? UI_GRAY_BLACK : UI_GRAY_LIGHT, fb);
+        }
+    }
+
+    settings_divider(fb, 737, 36, 612);
+    const char *notice = !current ? "重启设备后再试" :
+        s_notice[0] ? s_notice : "点按卡片切换，重启后保留";
+    ui_text_box(fb, (EpdRect){36, 759, 612, 53}, 27, notice, EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 829, 612, 49}, 23, "实际速度受充电器、线材和电量影响。",
+                EPD_DRAW_ALIGN_LEFT, false);
+    ui_nav_draw(fb, 3);
+}
+
+static app_redraw_t charge_current_touch(int x, int y) {
+    const unsigned current = device_power_charge_current();
+    if (!current) return APP_REDRAW_NONE;
+    for (unsigned i = 0; i < sizeof(s_charge_choices) / sizeof(s_charge_choices[0]); ++i) {
+        if (!ui_rect_hit(charge_choice_rect(i), x, y)) continue;
+        if (current == s_charge_choices[i].current) return APP_REDRAW_NONE;
+        const esp_err_t err = device_power_set_charge_current(s_charge_choices[i].current);
+        snprintf(s_notice, sizeof(s_notice), "%s", err == ESP_OK ? "" : "未能切换，请重试");
+        return APP_REDRAW_PAGE;
+    }
+    return APP_REDRAW_NONE;
+}
+
 static void batt_calibration_render(uint8_t *fb) {
     device_power_batt_calibration_status_t status;
     device_power_get_batt_calibration(&status);
@@ -1645,6 +1714,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         return;
     }
     if (s_page == SETTINGS_BATT_CALIBRATION) { batt_calibration_render(fb); return; }
+    if (s_page == SETTINGS_CHARGE_CURRENT) { charge_current_render(fb); return; }
     if (s_page == SETTINGS_POWER_LOG) {
         back_header(fb, "日志调试");
         section(fb, 228, "电量校准日志");
@@ -1835,9 +1905,10 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     snprintf(batt_log_value,sizeof(batt_log_value),"%s",app_settings_batt_log()?"开启":"关闭");
     device_power_batt_calibration_status_t calibration;
     device_power_get_batt_calibration(&calibration);
-    const char *power_labels[]={"自动电量校准(beta)", "日志调试"};
-    const char *power_values[]={calibration.enabled ? "学习中" : calibration.applied ? "已保留校准" : "关闭", batt_log_value};
-    const int power_icons[]={20,20};
+    const char *power_labels[]={"自动电量校准(beta)", "日志调试", "充电档位"};
+    const char *power_values[]={calibration.enabled ? "学习中" : calibration.applied ? "已保留校准" : "关闭", batt_log_value,
+        charge_current_label(device_power_charge_current())};
+    const int power_icons[]={20,20,20};
     setting_group(fb,SETTINGS_POWER_Y-49,"电源管理",SETTINGS_POWER_Y,
                   power_icons,power_labels,power_values,SETTINGS_POWER_ROWS);
     const int version_half = (ui_text_effective_px(20) + 1) / 2;
@@ -2568,6 +2639,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         return APP_REDRAW_NONE;
     }
     if (s_page == SETTINGS_BATT_CALIBRATION) return batt_calibration_touch(ev->x0, y);
+    if (s_page == SETTINGS_CHARGE_CURRENT) return charge_current_touch(ev->x0, y);
     if (s_page == SETTINGS_POWER_LOG) {
         if (ui_rect_hit((EpdRect){36, 272, 612, 126}, ev->x0, y)) {
             app_settings_set_batt_log(!app_settings_batt_log());
@@ -2795,6 +2867,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             s_batt_calibration_next_ms=ctx->now_ms+1000;
         }
         else if(row==1) s_page=SETTINGS_POWER_LOG;
+        else if(row==2) { s_page=SETTINGS_CHARGE_CURRENT; s_notice[0]=0; }
         return APP_REDRAW_PAGE;
     }
     return APP_REDRAW_NONE;

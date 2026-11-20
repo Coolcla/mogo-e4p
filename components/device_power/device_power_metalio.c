@@ -77,12 +77,9 @@
 #define CX_CHG_STAT_CC 1
 #define CX_CHG_STAT_CV 2
 #define CX_CHG_STAT_TOPOFF 3
-// 原厂板级默认快速充电 1000 mA（MetalioPower_Init 的 kDefaultIchgMa），输入限流同值，
-// 充电截止 4.4 V。不写这些寄存器时芯片停在上次遗留值，换电池/掉电后可能回落到默认档。
-// Vendor board default fast charge is 1000 mA (MetalioPower_Init's kDefaultIchgMa), the
-// input limit follows it and VREG is 4.4 V. Without these writes the chip keeps whatever
-// an earlier firmware left behind and can fall back to its power-on defaults.
-#define CX_CHG_ICHG_MA 1000
+#define CX_CHG_DEFAULT_CURRENT DEVICE_POWER_CHARGE_1A
+#define CX_CHG_NVS_NAMESPACE "charger"
+#define CX_CHG_NVS_CURRENT "current_ma"
 #define CX_CHG_VREG_MV 4400
 
 #define PCF_REG_SECONDS 0x02
@@ -231,11 +228,11 @@ static esp_err_t cx_unlock_private(void) {
 }
 
 // 照搬原厂 hw_init_defaults()：关 DPDM 探测和看门狗，预充/终止用原厂码值，VREG 4.4 V，
-// 充电与输入限流 1 A，充电期间由轮询服务按原厂 VBAT/VREG 策略控制终止，最后开 EN_CHG。
+// 充电与输入限流使用所选档位，充电期间由轮询服务按原厂 VBAT/VREG 策略控制终止，最后开 EN_CHG。
 // Mirrors the vendor hw_init_defaults(): DPDM probing and the watchdog stay off, precharge and
-// termination keep the vendor codes, VREG is 4.4 V, charge and input limit are 1 A, termination
+// termination keep the vendor codes, VREG is 4.4 V, charge and input limits use the selected profile, termination
 // follows the vendor VBAT/VREG policy through polling, then EN_CHG is set.
-static esp_err_t cx_charger_setup(void) {
+static esp_err_t cx_charger_setup(device_power_charge_current_t current) {
     if (s_cx == NULL) return ESP_ERR_INVALID_STATE;
     uint8_t part = 0;
     esp_err_t err = dev_read(s_cx, CX_REG_PART_INFO, &part, 1);
@@ -252,7 +249,7 @@ static esp_err_t cx_charger_setup(void) {
     if (err == ESP_OK) err = cx_update_bits(CX_REG_ITERM_LO, 0x1F, 3, 0x06);
     if (err == ESP_OK) err = cx_update_bits(CX_REG_ITERM_HI, 0x01, 0, 0x00);
     if (err == ESP_OK) err = cx_set_vreg_mv(CX_CHG_VREG_MV);
-    if (err == ESP_OK) err = cx_set_ichg_ma(CX_CHG_ICHG_MA);
+    if (err == ESP_OK) err = cx_set_ichg_ma(current);
     if (err != ESP_OK) goto failed;
 
     // 私有区三个值只由原厂驱动写入，含义未公开，照抄。
@@ -305,6 +302,50 @@ failed:
 static bool s_charger_configured, s_charger_uv_shutdown;
 static int64_t s_charger_next_us, s_charger_resume_us;
 static void batt_log_undervoltage(int64_t now, uint16_t mv, bool have_i, int16_t ma, uint8_t status);
+
+static device_power_charge_current_t s_charge_current;
+
+static bool charge_current_valid(unsigned current) {
+    return current == DEVICE_POWER_CHARGE_1A || current == DEVICE_POWER_CHARGE_1_5A;
+}
+
+static device_power_charge_current_t charge_current_load(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(CX_CHG_NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return CX_CHG_DEFAULT_CURRENT;
+    uint16_t current = 0;
+    const esp_err_t err = nvs_get_u16(nvs, CX_CHG_NVS_CURRENT, &current);
+    nvs_close(nvs);
+    return err == ESP_OK && charge_current_valid(current) ? current : CX_CHG_DEFAULT_CURRENT;
+}
+
+unsigned device_power_charge_current(void) {
+    return s_charger_configured ? s_charge_current : 0;
+}
+
+esp_err_t device_power_set_charge_current(device_power_charge_current_t current) {
+    if (!charge_current_valid(current)) return ESP_ERR_INVALID_ARG;
+    if (!s_charger_configured) return ESP_ERR_INVALID_STATE;
+    if (current == s_charge_current) return ESP_OK;
+
+    nvs_handle_t nvs;
+    esp_err_t err = nvs_open(CX_CHG_NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) return err;
+    err = cx_set_ichg_ma(current);
+    if (err == ESP_OK) err = nvs_set_u16(nvs, CX_CHG_NVS_CURRENT, current);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    if (err == ESP_OK) {
+        s_charge_current = current;
+    } else if (cx_set_ichg_ma(s_charge_current) != ESP_OK) {
+        // 档位可能只写了一半；恢复失败时尽力停充，不再报告已应用。
+        // A partial register update is possible; if rollback fails, attempt to stop charging and report no profile.
+        (void)cx_update_bits(CX_REG_CHG_CTRL0, 0x01, 2, 1);
+        (void)cx_update_bits(CX_REG_CHG_CTRL1, 0x01, 5, 0);
+        s_charger_configured = false;
+        s_snap.config_ok = false;
+    }
+    return err;
+}
 
 // 主机停止维护前恢复硬件终止，不能把补充充电的暂时停充阶段留给断电后的芯片。
 // Restore hardware termination before host maintenance stops; never leave a recharge disable pending after power-off.
@@ -1376,12 +1417,13 @@ esp_err_t device_power_init(i2c_master_bus_handle_t bus_handle,
     (void)add_dev(CX25601N_ADDR, &s_cx);
     (void)add_dev(PCF8563_ADDR, &s_rtc);
 
-    // 充电芯片按原厂配置写一次（1 A 请求、4.4 V 截止）；失败不阻塞 PMU，并尽力停充。
-    // Configure the charger once with vendor defaults (1 A requested, 4.4 V regulation);
+    // 充电芯片按原厂配置写一次（恢复本机电流档位，4.4 V 截止）；失败不阻塞 PMU，并尽力停充。
+    // Configure the charger once using the saved profile and vendor 4.4 V regulation;
     // a failure never blocks the PMU and attempts to disable incomplete charging.
     s_charger_next_us = s_charger_resume_us = 0;
     s_charger_uv_shutdown = false;
-    s_charger_configured = s_cx != NULL && cx_charger_setup() == ESP_OK;
+    s_charge_current = charge_current_load();
+    s_charger_configured = s_cx != NULL && cx_charger_setup(s_charge_current) == ESP_OK;
     const bool rtc_ready = s_rtc != NULL && rtc_init() == ESP_OK;
     if (s_cx != NULL && !s_charger_configured) {
         ESP_LOGW(TAG, "CX25601N setup incomplete; charge disable attempted");

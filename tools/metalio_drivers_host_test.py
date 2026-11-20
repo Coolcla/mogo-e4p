@@ -414,6 +414,31 @@ def power_source():
     code += r"""
 static bool s_ready=true;
 static pmu_snapshot_t s_snap;
+static device_power_charge_current_t s_charge_current;
+typedef int nvs_handle_t;
+enum { NVS_READONLY, NVS_READWRITE };
+static uint16_t nvs_current, nvs_pending;
+static bool nvs_present, nvs_open_fail, nvs_set_fail, nvs_commit_fail;
+static esp_err_t nvs_open(const char *ns,int mode,nvs_handle_t *h) {
+    assert(!strcmp(ns,"charger"));
+    if (nvs_open_fail || (mode == NVS_READONLY && !nvs_present)) return ESP_FAIL;
+    *h=mode;return ESP_OK;
+}
+static esp_err_t nvs_get_u16(nvs_handle_t h,const char *key,uint16_t *value) {
+    assert(h==NVS_READONLY && !strcmp(key,"current_ma"));*value=nvs_current;return ESP_OK;
+}
+static esp_err_t nvs_set_u16(nvs_handle_t h,const char *key,uint16_t value) {
+    assert(h==NVS_READWRITE && !strcmp(key,"current_ma"));
+    if (nvs_set_fail) return ESP_FAIL;
+    nvs_pending=value;return ESP_OK;
+}
+static esp_err_t nvs_commit(nvs_handle_t h) {
+    assert(h==NVS_READWRITE);
+    if (nvs_commit_fail) return ESP_FAIL;
+    nvs_current=nvs_pending;nvs_present=true;return ESP_OK;
+}
+static void nvs_close(nvs_handle_t h) {(void)h;}
+
 static unsigned clock_sets, uv_log_events;
 static void batt_log_undervoltage(int64_t now,uint16_t mv,bool have_i,int16_t ma,uint8_t status) {
     (void)now;(void)ma;assert(mv<=3100 && have_i && !(status&7));++uv_log_events;
@@ -423,15 +448,56 @@ static int test_settimeofday(const struct timeval *tv,const void *tz){assert(!tz
 #define settimeofday test_settimeofday
 """
     for name in ['bcd_to_dec','dec_to_bcd','dev_read','dev_write','cx_update_bits','cx_set_vreg_mv',
-                 'cx_set_ichg_ma','cx_unlock_private','cx_charger_setup','cx_charger_park','cx_charger_poll','rtc_init','rtc_read','rtc_write','rtc_unix_utc','device_power_read_rtc','device_power_cmd']:
+                 'cx_set_ichg_ma','cx_unlock_private','cx_charger_setup','charge_current_valid','charge_current_load',
+                 'device_power_charge_current','device_power_set_charge_current','cx_charger_park','cx_charger_poll','rtc_init','rtc_read','rtc_write','rtc_unix_utc','device_power_read_rtc','device_power_cmd']:
         code += function(name, path) + '\n'
     return code
 
 POWER_TEST = r'''
 static void reset_power(void){model_reset();s_cx=&devices[0x6b];s_rtc=&devices[0x51];s_charger_configured=true;s_charger_uv_shutdown=false;s_charger_resume_us=s_charger_next_us=0;}
+static void assert_profile(unsigned expected){
+    const uint8_t *r=s_cx->regs;
+    assert((((r[2]>>6)&3)|((r[3]&15)<<2))*80u==expected);
+    assert((((r[6]>>4)&15)|((r[7]&15)<<4))*20u==expected);
+}
+static void charge_profiles(void){
+    reset_power();
+    assert(charge_current_load()==DEVICE_POWER_CHARGE_1A);
+    nvs_present=true;nvs_current=500;
+    assert(charge_current_load()==DEVICE_POWER_CHARGE_1A);
+    s_charge_current=charge_current_load();
+    assert(cx_charger_setup(s_charge_current)==ESP_OK);
+    assert_profile(960);
+    assert(device_power_set_charge_current(500)==ESP_ERR_INVALID_ARG);
+    assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1_5A)==ESP_OK);
+    assert(device_power_charge_current()==1500 && charge_current_load()==1500);
+    assert_profile(1440);
+    const unsigned writes=tx_count;
+    assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1_5A)==ESP_OK && tx_count==writes);
+    reset_power();
+    s_charge_current=charge_current_load();
+    assert(cx_charger_setup(s_charge_current)==ESP_OK);
+    assert_profile(1440);
+    for (unsigned fault=0;fault<4;++fault){
+        nvs_open_fail=fault==0;nvs_set_fail=fault==1;nvs_commit_fail=fault==2;
+        if(fault==3){fail_reg=0x03;fail_writes=1;fail_after_write=true;}
+        assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1A)!=ESP_OK);
+        assert(device_power_charge_current()==1500 && nvs_current==1500);
+        assert_profile(1440);
+    }
+    assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1A)==ESP_OK);
+    assert(device_power_charge_current()==1000 && charge_current_load()==1000);
+    assert_profile(960);
+    fail_reg=0x03;fail_writes=2;fail_after_write=true;
+    assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1_5A)!=ESP_OK);
+    assert(device_power_charge_current()==0 && (s_cx->regs[0x14]&4) && !(s_cx->regs[0x16]&0x20));
+    assert(device_power_set_charge_current(DEVICE_POWER_CHARGE_1A)==ESP_ERR_INVALID_STATE);
+    puts("PASS: charge profiles, restart restore, quantization, error rollback and fail-safe disable");
+}
 static void charge(int64_t now,int mv,int ma,bool status_ok,int status){cx_charger_poll(now,true,mv,true,ma,status_ok,status);}
 int main(void){
-    reset_power();assert(cx_charger_setup()==ESP_OK);
+    charge_profiles();
+    reset_power();assert(cx_charger_setup(DEVICE_POWER_CHARGE_1A)==ESP_OK);
     uint8_t *r=devices[0x6b].regs;
     assert(((((r[2]>>6)&3)|((r[3]&15)<<2))*80)==960);
     assert(((((r[6]>>4)&15)|((r[7]&15)<<4))*20)==960);
@@ -448,11 +514,11 @@ int main(void){
     reset_power();charge(0,3000,0,true,1);assert(!s_charger_uv_shutdown);
     reset_power();charge(0,3000,0,false,0);assert(!s_charger_uv_shutdown && !s_charger_resume_us);
     reset_power();cx_charger_poll(0,false,0,true,0,true,0);assert(!tx_count && !s_charger_uv_shutdown);
-    reset_power();fail_reg=0x86;fail_writes=1;assert(cx_charger_setup()==ESP_FAIL && !(devices[0x6b].regs[0x16]&0x20));
+    reset_power();fail_reg=0x86;fail_writes=1;assert(cx_charger_setup(DEVICE_POWER_CHARGE_1A)==ESP_FAIL && !(devices[0x6b].regs[0x16]&0x20));
     const uint8_t failed_regs[]={0x02,0x03,0x04,0x05,0x06,0x07,0x14,0x15,0x16,0x18,0x1a,0x23,0x24,0x70,0x86,0x3a,0x46};
     for(unsigned i=0;i<sizeof(failed_regs);++i){reset_power();r=devices[0x6b].regs;r[0x16]=0x20;
         fail_reg=failed_regs[i];fail_writes=1;fail_after_write=true;
-        assert(cx_charger_setup()!=ESP_OK && !(r[0x16]&0x20) && (r[0x14]&4));}
+        assert(cx_charger_setup(DEVICE_POWER_CHARGE_1A)!=ESP_OK && !(r[0x16]&0x20) && (r[0x14]&4));}
     reset_power();r=devices[0x6b].regs;s_charger_resume_us=200000;
     assert(cx_charger_park()==ESP_OK && !s_charger_resume_us && (r[0x16]&0x20) && (r[0x14]&4));
     reset_power();s_charger_resume_us=200000;fail_reg=0x16;fail_writes=1;
