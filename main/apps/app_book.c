@@ -370,6 +370,7 @@ static book_shelf_categories_t s_shelf_categories;
 static book_shelf_categories_t s_legacy_categories;
 static book_collection_t s_collection;
 static uint32_t s_collection_bound_generation;
+static uint32_t s_collection_backup_revision;
 static char s_collection_library[40];
 static bool s_collection_rescan;
 static book_shelf_covers_t s_category_covers;
@@ -4859,14 +4860,19 @@ static bool shelf_collection_load(bool retry) {
     if (book_store_prepare_data() != ESP_OK) return false;
     char prefix[BOOK_STORE_PATH_MAX];
     snprintf(prefix,sizeof(prefix),"/flash/.mogo-shelf-%s",sd.mounted?sd.identity:"builtin");
-    if (!strcmp(s_collection.prefix,prefix) && !retry) return s_collection.ready;
+    uint32_t restored = book_collection_backup_revision();
+    if (!strcmp(s_collection.prefix,prefix) && !retry && s_collection_backup_revision == restored)
+        return s_collection.ready;
     if (strcmp(s_collection.prefix,prefix)) {
         book_shelf_categories_dispose(&s_shelf_categories);
         book_shelf_categories_init(&s_shelf_categories,app_settings_books_dir());
     }
     s_collection_bound_generation=0;
     esp_err_t err=book_collection_open(&s_collection,prefix);
-    if (err==ESP_OK) copy_text(s_collection_library,sizeof(s_collection_library),sd.mounted?sd.identity:"builtin");
+    if (err==ESP_OK) {
+        s_collection_backup_revision = restored;
+        copy_text(s_collection_library,sizeof(s_collection_library),sd.mounted?sd.identity:"builtin");
+    }
     return err==ESP_OK;
 }
 static bool shelf_collection_sync(bool complete) {

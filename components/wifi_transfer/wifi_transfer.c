@@ -761,6 +761,60 @@ esp_err_t wifi_transfer_import_wifi_backup(const wifi_transfer_wifi_backup_t *ba
     return err;
 }
 
+esp_err_t wifi_transfer_export_profiles_backup(wifi_transfer_profiles_backup_t *out) {
+    if (!out) return ESP_ERR_INVALID_ARG;
+    memset(out, 0, sizeof(*out));
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_profiles_t profiles;
+    esp_err_t err = load_profiles(&profiles);
+    if (err == ESP_OK) {
+        out->count = profiles.count;
+        for (size_t i = 0; i < profiles.count; ++i) {
+            out->items[i].configured = 1;
+            memcpy(out->items[i].ssid, profiles.items[i].ssid, sizeof(out->items[i].ssid));
+            memcpy(out->items[i].password, profiles.items[i].password, sizeof(out->items[i].password));
+        }
+    }
+    clear_secret(&profiles, sizeof(profiles));
+    release_config();
+    return err;
+}
+
+bool wifi_transfer_profiles_backup_valid(const wifi_transfer_profiles_backup_t *backup) {
+    if (!backup || backup->count > WIFI_TRANSFER_SAVED_MAX) return false;
+    for (size_t i = 0; i < WIFI_TRANSFER_SAVED_MAX; ++i) {
+        const wifi_transfer_wifi_backup_t *item = &backup->items[i];
+        if (item->configured != (i < backup->count) || !wifi_transfer_wifi_backup_valid(item)) return false;
+        for (size_t j = 0; j < i && i < backup->count; ++j)
+            if (!strcmp(item->ssid, backup->items[j].ssid)) return false;
+    }
+    return true;
+}
+
+esp_err_t wifi_transfer_merge_profiles_backup(const wifi_transfer_profiles_backup_t *backup, bool apply) {
+    if (!wifi_transfer_profiles_backup_valid(backup)) return ESP_ERR_INVALID_ARG;
+    if (!backup->count) return ESP_OK;
+    if (!claim_config()) return ESP_ERR_INVALID_STATE;
+    transfer_profiles_t local, next = {.version = 2, .count = backup->count};
+    esp_err_t err = load_profiles(&local);
+    if (err == ESP_OK) {
+        for (size_t i = 0; i < backup->count; ++i) {
+            next.items[i].version = 1;
+            memcpy(next.items[i].ssid, backup->items[i].ssid, sizeof(next.items[i].ssid));
+            memcpy(next.items[i].password, backup->items[i].password, sizeof(next.items[i].password));
+        }
+        if (!merge_backup_profiles(&next, &local)) err = ESP_ERR_INVALID_SIZE;
+        else if (apply) {
+            err = store_profiles(&next);
+            if (err == ESP_OK && !s_wifi) publish_credentials(&next.items[0]);
+        }
+    }
+    clear_secret(&local, sizeof(local));
+    clear_secret(&next, sizeof(next));
+    release_config();
+    return err;
+}
+
 esp_err_t wifi_transfer_save_wifi(const char *ssid, const char *password) {
     if (!cancel_time_sync(true)) return ESP_ERR_INVALID_STATE;
     wifi_transfer_status_t status;

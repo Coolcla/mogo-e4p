@@ -47,6 +47,9 @@
 #include "board_sd.h"
 #include "wifi_transfer.h"
 #include "book/book_history_backup.h"
+#include "book/book_collection.h"
+#include "book/book_store.h"
+#include "reading_journal.h"
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
@@ -2195,7 +2198,8 @@ static unsigned backup_version(const settings_backup_v1_t *backup) {
     // j appends v45 quick-bar ordering. A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
     // k追加v46关机配置；l扩展v47票根/日历，复用取景字节的位，图片像素不备份。
     // k adds v46 shutdown config; l extends v47 ticket/calendar options in the framing byte, excluding pixels.
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : 0;
+    // m追加可迁移的偏好、天气和全量WiFi块。/ m appends portable preferences, weather and all saved WiFi profiles.
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : c == 'm' ? 48 : 0;
 }
 
 typedef struct { char encoded[OFF_CONFIG_BYTES]; uint8_t checksum[4]; } settings_backup_off_art_t;
@@ -2297,13 +2301,73 @@ static void backup_seal(settings_backup_v1_t *backup) {
     for (int i = 0; i < 4; ++i) backup->checksum[i] = (uint8_t)(value >> (i * 8));
 }
 
-static bool backup_card_ready(void) {
-    board_sd_info_t info = {0};
-    return board_sd_get_info(&info) == ESP_OK && info.mounted;
+static bool backup_card_ready(board_sd_info_t *info) {
+    memset(info, 0, sizeof(*info));
+    return board_sd_get_info(info) == ESP_OK && info->mounted;
 }
 
-esp_err_t app_settings_backup_save(void) {
-    if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
+typedef struct {
+    weather_location_t city;
+    wifi_transfer_profiles_backup_t wifi;
+    uint8_t bookmark_mode, auto_time, auto_ota, shelf_titles;
+    uint8_t frontlight_on, frontlight_brightness, frontlight_cct;
+    uint8_t weather_has_city, weather_auto_refresh;
+    char card_identity[40];
+    uint8_t last_category[2][4];
+    uint8_t checksum[4];
+} settings_backup_portable_t;
+// 尾部对齐不属于文件；约束v48的原生城市和WiFi布局。/ Tail alignment is not on disk; pin the v48 city and WiFi layout.
+#define BACKUP_PORTABLE_BYTES (offsetof(settings_backup_portable_t, checksum) + 4u)
+_Static_assert(sizeof(weather_location_t) == 408 && BACKUP_PORTABLE_BYTES == 1262, "v48 portable layout");
+
+static uint32_t backup_portable_checksum(const settings_backup_portable_t *value) {
+    const uint8_t *bytes = (const uint8_t *)value;
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < offsetof(settings_backup_portable_t, checksum); ++i)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+
+static bool backup_portable_valid(const settings_backup_portable_t *value) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)value->checksum[i] << (8u * i);
+    return stored == backup_portable_checksum(value) &&
+        value->bookmark_mode <= APP_BOOKMARK_MODE_FIT && value->auto_time <= 1 && value->auto_ota <= 1 &&
+        value->shelf_titles <= 3 && value->frontlight_on <= 1 && value->frontlight_brightness >= 1 &&
+        value->frontlight_brightness <= 100 && value->frontlight_cct <= 100 &&
+        value->weather_has_city <= 1 && value->weather_auto_refresh <= 1 &&
+        memchr(value->card_identity, 0, sizeof(value->card_identity)) &&
+        (!value->weather_has_city || weather_location_valid(&value->city)) &&
+        wifi_transfer_profiles_backup_valid(&value->wifi);
+}
+
+static esp_err_t backup_portable_capture(settings_backup_portable_t *value, const char *card_id) {
+    memset(value, 0, sizeof(*value));
+    value->bookmark_mode = s_bookmark_mode;
+    value->auto_time = s_auto_time_sync;
+    value->auto_ota = s_auto_ota;
+    value->shelf_titles = s_shelf_titles;
+    value->frontlight_on = s_frontlight_on;
+    value->frontlight_brightness = s_frontlight_brightness;
+    value->frontlight_cct = s_frontlight_cct;
+    const app_weather_view_t *weather = app_weather_view();
+    value->weather_has_city = weather->has_city;
+    value->weather_auto_refresh = weather->auto_refresh;
+    if (weather->has_city) value->city = weather->city;
+    strlcpy(value->card_identity, card_id, sizeof(value->card_identity));
+    uint32_t category[] = {app_settings_shelf_category("builtin"), app_settings_shelf_category(card_id)};
+    for (unsigned library = 0; library < 2; ++library)
+        for (unsigned i = 0; i < 4; ++i) value->last_category[library][i] = (uint8_t)(category[library] >> (8u * i));
+    esp_err_t err = wifi_transfer_export_profiles_backup(&value->wifi);
+    if (err != ESP_OK) return err;
+    uint32_t checksum = backup_portable_checksum(value);
+    for (unsigned i = 0; i < 4; ++i) value->checksum[i] = (uint8_t)(checksum >> (8u * i));
+    return backup_portable_valid(value) ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
+static esp_err_t settings_backup_save_file(bool portable_format) {
+    board_sd_info_t card;
+    if (!backup_card_ready(&card)) return ESP_ERR_INVALID_STATE;
     app_weather_init();
     app_home_components_init(app_weather_view()->enabled);
     settings_backup_v1_t backup = {0};
@@ -2326,7 +2390,7 @@ esp_err_t app_settings_backup_save(void) {
     // v40：主样式增加时钟5，沿用v39尾块布局。/ V40 accepts clock style 5 with the v39 tail layout.
     // v42：追加移动网络开关及业务路由；v43 追加页眉页脚独立显隐。
     // V42 appends cellular and business-route settings; V43 appends independent chrome visibility.
-    memcpy(backup.magic, "PICOSETl", sizeof(backup.magic));
+    memcpy(backup.magic, portable_format ? "PICOSETm" : "PICOSETl", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -2438,7 +2502,7 @@ esp_err_t app_settings_backup_save(void) {
     uint32_t chrome_hash = backup_chrome_checksum(&chrome);
     for (unsigned i = 0; i < 4; ++i) chrome.checksum[i] = (uint8_t)(chrome_hash >> (8 * i));
     settings_backup_wifi_t wifi = {0};
-    esp_err_t wifi_err = wifi_transfer_export_wifi_backup(&wifi.credentials);
+    esp_err_t wifi_err = portable_format ? ESP_OK : wifi_transfer_export_wifi_backup(&wifi.credentials);
     if (wifi_err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return wifi_err; }
     backup_wifi_seal(&wifi);
     settings_backup_background_t background = {0};
@@ -2539,6 +2603,15 @@ esp_err_t app_settings_backup_save(void) {
     for (unsigned i = 0; i < 4; ++i) off_art.checksum[i] = (uint8_t)(off_hash >> (8u * i));
     if (ok) ok = fwrite(&off_art, 1, sizeof(off_art), file) == sizeof(off_art);
     backup_erase_secret(&wifi, sizeof(wifi));
+    if (ok && portable_format) {
+        settings_backup_portable_t portable;
+        ok = backup_portable_capture(&portable, card.identity) == ESP_OK &&
+            fwrite(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES;
+        backup_erase_secret(&portable, sizeof(portable));
+    }
+    if (ok && portable_format) ok = book_store_prepare_data() == ESP_OK &&
+        app_reading_journal_backup_write(file) == ESP_OK &&
+        book_collection_backup_write(file, card.identity) == ESP_OK;
     if (ok) ok = book_history_backup_write(file) == ESP_OK;
     if (ok) ok = fflush(file) == 0;
     if (ok) ok = fsync(fileno(file)) == 0;
@@ -2552,6 +2625,10 @@ esp_err_t app_settings_backup_save(void) {
     if (ok && rotated) (void)remove(BACKUP_PREVIOUS);
     if (!ok) { (void)remove(BACKUP_TEMP); return ESP_FAIL; }
     return ESP_OK;
+}
+
+esp_err_t app_settings_backup_save(void) {
+    return settings_backup_save_file(true);
 }
 
 static bool backup_path_valid(const char *path, size_t capacity) {
@@ -2609,7 +2686,8 @@ static bool backup_file_exists(const char *path, bool directory) {
 }
 
 esp_err_t app_settings_backup_restore(void) {
-    if (!backup_card_ready()) return ESP_ERR_INVALID_STATE;
+    board_sd_info_t card;
+    if (!backup_card_ready(&card)) return ESP_ERR_INVALID_STATE;
     const char *source = BACKUP_FILE;
     FILE *file = fopen(source, "rb");
     if (!file) { source = BACKUP_PREVIOUS; file = fopen(source, "rb"); }
@@ -2662,6 +2740,7 @@ esp_err_t app_settings_backup_restore(void) {
     settings_backup_keys_t keys = {.actions = {APP_READER_KEY_PREV, APP_READER_KEY_TOOLS, APP_READER_KEY_NEXT}};
     settings_backup_wifi_t wifi = {0};
     bool has_wifi = false;
+    settings_backup_portable_t portable = {0};
     settings_backup_background_t background = {0}, bookmark = {0};
     settings_backup_home_t home = {.component=APP_HOME_FOLDER, .minutes=30};
     app_main_refresh_mode_t main_refresh = APP_MAIN_REFRESH_WATER;
@@ -2769,6 +2848,14 @@ esp_err_t app_settings_backup_restore(void) {
         backup_off_art_valid(&off_art, &restored_off_art) &&
         (version >= 47 || (off_art.encoded[0] >= '0' && off_art.encoded[0] <= '2' &&
                            off_art.encoded[1] >= '0' && off_art.encoded[1] <= '1'));
+    if (ok && version >= 48) ok = fread(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES &&
+        backup_portable_valid(&portable);
+    long user_data_position = -1;
+    if (ok && version >= 48) {
+        user_data_position = ftell(file);
+        ok = user_data_position >= 0 && app_reading_journal_backup_read(file, false) == ESP_OK &&
+            book_collection_backup_read(file, card.identity, false) == ESP_OK;
+    }
     if (version < 39) tap.mode = (profile.home_full_refresh & 32) ? APP_READER_TAP_VERTICAL : APP_READER_TAP_HORIZONTAL;
     // 旧备份没有本块：chrome 保持默认值并照常写回，与其他设置的恢复语义一致。
     // Older backups lack the block: chrome keeps its defaults and is written back like every other setting.
@@ -2779,8 +2866,24 @@ esp_err_t app_settings_backup_restore(void) {
     } else if (ok) ok = fgetc(file) == EOF && !ferror(file);
     if (fclose(file) != 0) ok = false;
     if (!ok || !backup_valid(&backup)) {
-        backup_erase_secret(&wifi, sizeof(wifi));
+        backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable));
         return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    if (version >= 48 && book_store_prepare_data() != ESP_OK) {
+        backup_erase_secret(&wifi, sizeof(wifi));
+        backup_erase_secret(&portable, sizeof(portable));
+        return ESP_FAIL;
+    }
+    if (version < 48 && has_wifi && wifi.credentials.configured) {
+        portable.wifi.count = 1;
+        portable.wifi.items[0] = wifi.credentials;
+    }
+    backup_erase_secret(&wifi, sizeof(wifi));
+    esp_err_t wifi_preflight = wifi_transfer_merge_profiles_backup(&portable.wifi, false);
+    if (wifi_preflight != ESP_OK) {
+        backup_erase_secret(&portable, sizeof(portable));
+        return wifi_preflight;
     }
 
     // 所有校验完成后才折算旧全屏与动作，v44 直接使用独立显隐。
@@ -2843,7 +2946,7 @@ esp_err_t app_settings_backup_restore(void) {
 
     nvs_handle_t h;
     esp_err_t err = settings_write_open(&h);
-    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return err; }
+    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable)); return err; }
     bool touch_disabled = touch_lock.on && reader_touch_binding(keys.actions, hold.action,
         double_action.action, up_action.action);
     err = nvs_set_u8(h, NVS_KEY_TOUCH_DISABLED, touch_disabled ? 1 : 0);
@@ -2955,10 +3058,28 @@ esp_err_t app_settings_backup_restore(void) {
     BACKUP_SET_STR(NVS_KEY_FONTS_DIR, backup.fonts_dir);
 #undef BACKUP_SET_U8
 #undef BACKUP_SET_STR
+    if (version >= 48) {
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOKMARK_MODE, portable.bookmark_mode);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_TIME, portable.auto_time);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_OTA, portable.auto_ota);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_TITLES, portable.shelf_titles);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_FRONTLIGHT_ON, portable.frontlight_on);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_FRONTLIGHT_BRI, portable.frontlight_brightness);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_FRONTLIGHT_CCT, portable.frontlight_cct);
+    }
     if (err == ESP_OK) err = nvs_commit(h);
     settings_write_close(h);
-    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return err; }
+    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable)); return err; }
 
+    if (version >= 48) {
+        s_bookmark_mode = (app_bookmark_mode_t)portable.bookmark_mode;
+        s_auto_time_sync = portable.auto_time;
+        s_auto_ota = portable.auto_ota;
+        s_shelf_titles = portable.shelf_titles;
+        s_frontlight_on = portable.frontlight_on;
+        s_frontlight_brightness = portable.frontlight_brightness;
+        s_frontlight_cct = portable.frontlight_cct;
+    }
     if (version >= 33) app_home_components_apply(regions.value);
     memcpy(s_reader_keys, keys.actions, sizeof(s_reader_keys));
     s_reader_hold_action = hold.action;
@@ -3039,18 +3160,36 @@ esp_err_t app_settings_backup_restore(void) {
     strlcpy(s_system_font, backup.system_font, sizeof(s_system_font));
     strlcpy(s_wallpaper, backup.wallpaper, sizeof(s_wallpaper));
     strlcpy(s_bookmark,bookmark.path,sizeof(s_bookmark));
+    esp_err_t result = ESP_OK;
     if (has_history) {
         file = fopen(source, "rb");
-        if (!file) { backup_erase_secret(&wifi, sizeof(wifi)); return ESP_FAIL; }
-        esp_err_t history_err = fseek(file, history_position, SEEK_SET) == 0
-            ? book_history_backup_restore(file) : ESP_FAIL;
-        if (fclose(file) != 0 && history_err == ESP_OK) history_err = ESP_FAIL;
-        if (history_err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); return history_err; }
+        if (!file) result = ESP_FAIL;
+        else {
+            if (version >= 48) {
+                result = fseek(file, user_data_position, SEEK_SET) == 0
+                    ? app_reading_journal_backup_read(file, true) : ESP_FAIL;
+                if (result == ESP_OK) result = book_collection_backup_read(file, card.identity, true);
+            }
+            if (result == ESP_OK) result = fseek(file, history_position, SEEK_SET) == 0
+                ? book_history_backup_restore(file) : ESP_FAIL;
+            if (fclose(file) != 0 && result == ESP_OK) result = ESP_FAIL;
+        }
     }
-    if (has_wifi) {
-        esp_err_t wifi_err = wifi_transfer_import_wifi_backup(&wifi.credentials);
-        backup_erase_secret(&wifi, sizeof(wifi));
-        if (wifi_err != ESP_OK) return wifi_err;
+    if (result == ESP_OK && version >= 48) {
+        for (unsigned library = 0; library < 2; ++library) {
+            if (library && (!card.identity[0] || strcmp(portable.card_identity, card.identity))) continue;
+            uint32_t selected = 0;
+            for (unsigned i = 0; i < 4; ++i) selected |= (uint32_t)portable.last_category[library][i] << (8u * i);
+            if (!app_settings_set_shelf_category(library ? card.identity : "builtin", selected)) {
+                result = ESP_FAIL;
+                break;
+            }
+        }
     }
-    return ESP_OK;
+    if (result == ESP_OK) result = wifi_transfer_merge_profiles_backup(&portable.wifi, true);
+    if (result == ESP_OK && version >= 48 &&
+        !app_weather_restore_preferences(portable.weather_auto_refresh, portable.weather_has_city, &portable.city))
+        result = ESP_FAIL;
+    backup_erase_secret(&portable, sizeof(portable));
+    return result;
 }

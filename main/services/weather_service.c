@@ -510,6 +510,21 @@ bool app_weather_select(const weather_location_t *city) {
     (void)write_blob("cache", NULL, 0);
     s_next_attempt = 0; ++s_view.revision; return true;
 }
+bool app_weather_restore_preferences(bool auto_refresh, bool has_city, const weather_location_t *city) {
+    if (has_city && !weather_location_valid(city)) return false;
+    app_weather_init();
+    app_weather_cancel();
+    if (!save_preferences(s_view.enabled, auto_refresh, has_city, city)) return false;
+    s_view.auto_refresh = auto_refresh;
+    s_view.has_city = has_city;
+    s_view.city = has_city ? *city : (weather_location_t){0};
+    s_view.has_forecast = false;
+    s_display_valid = false;
+    s_view.state = APP_WEATHER_IDLE;
+    app_weather_clear_search();
+    s_next_attempt = 0;
+    return true;
+}
 void app_weather_clear_search(void) {
     ++s_search_generation;
     search_free_batches(&s_search_batches);

@@ -105,7 +105,7 @@ void app_settings_set_auto_lock_minutes(uint8_t minutes);
 /// the interval, and only while the host runs; deep sleep cannot reach the network at all.
 bool app_settings_auto_time_sync(void);
 void app_settings_set_auto_time_sync(bool on);
-/// 自动 OTA 检查默认开启；设备本地保存，不随配置备份迁移。/ Automatic OTA checks default on; device-local, excluded from config backups.
+/// 自动 OTA 检查默认开启；v48 起随配置备份。/ Automatic OTA checks default on and are included from backup v48.
 bool app_settings_auto_ota(void);
 void app_settings_set_auto_ota(bool on);
 /// 4G 模组开关；统一固件按运行时能力决定是否生效，并与 Wi-Fi 互斥。
@@ -407,8 +407,8 @@ void app_settings_set_reader_vertical_turn(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);
-/// 按只读书库身份保存稳定分类ID；未保存时返回UINT32_MAX（全部），不随设置备份迁移。
-/// Persist a stable category ID per read-only library identity; missing values return UINT32_MAX (all), outside settings backups.
+/// 按只读书库身份保存稳定分类ID；未保存时返回UINT32_MAX（全部），v48 起按身份恢复。
+/// Persist a stable category ID per read-only library identity; missing values return UINT32_MAX (all); v48 restores by identity.
 uint32_t app_settings_shelf_category(const char *library);
 bool app_settings_set_shelf_category(const char *library, uint32_t category);
 /// 蓝牙翻页器：启用 BLE HID 主机，好让蓝牙翻页器连上并翻页；默认关闭。
@@ -418,9 +418,9 @@ bool app_settings_set_shelf_category(const char *library, uint32_t category);
 bool app_settings_ble_turner(void);
 void app_settings_set_ble_turner(bool on);
 /// 前光：开关、亮度 1..100%、色温 0..100%（0 全暖，50 冷暖同开，100 全冷）。
-/// 设备本地硬件状态，不随设置备份迁移。
+/// v48 起作为用户偏好备份；只有支持前光的设备会应用。
 /// Frontlight: on/off, brightness 1..100%, colour temperature 0..100% (0 warm only,
-/// 50 both, 100 cool only). Device-local hardware state, excluded from settings backups.
+/// 50 both, 100 cool only). Backed up from v48; applied only on supported devices.
 bool app_settings_frontlight_on(void);
 void app_settings_set_frontlight_on(bool on);
 uint8_t app_settings_frontlight_brightness(void);

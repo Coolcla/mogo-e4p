@@ -88,13 +88,13 @@ The weather reference stays in RAM for the current boot. After reboot, persisten
 
 Cache retains original server timestamps, with at most six hours of validity and no extension on reads/failures. Only valid cache may survive failures, with labels; expired values disappear. Midnight selection matches actual dates: old tomorrow may become today, but missing new tomorrow stays missing. Explicit server disable clears visible values and attempts persistent cache deletion.
 
-天气开关、城市与预报保存在独立 NVS 命名空间 `kiiko_weather`，仅 UI 任务写入并受 `epd_flash_begin/end` 保护。选择写入失败不伪装保存成功；缓存写入失败不影响当前 RAM 显示。该命名空间**不包含在设置/书籍备份恢复中**。不复用或清除旧组件兼容字段。换城丢弃旧预报；搜索结果在改查询或离页后失效。
+天气开关、城市与预报保存在独立 NVS 命名空间 `kiiko_weather`，仅 UI 任务写入并受 `epd_flash_begin/end` 保护。选择写入失败不伪装保存成功；缓存写入失败不影响当前 RAM 显示。v48 设置备份只导出城市和自动刷新，不复制整个命名空间。不复用或清除旧组件兼容字段。换城丢弃旧预报；搜索结果在改查询或离页后失效。
 
-Weather preferences/city/forecast use `kiiko_weather` NVS with UI-only EPD-flash-protected writes. Failed preference writes never pretend success; failed cache writes retain current RAM display. **Settings/book backup/restore excludes this namespace.** Retired compatibility fields remain untouched. City changes invalidate forecasts; query changes/exit invalidate transient search results.
+Weather preferences/city/forecast use `kiiko_weather` NVS with UI-only EPD-flash-protected writes. Failed preference writes never pretend success; failed cache writes retain current RAM display. Settings backup v48 exports the city and automatic-refresh preference, not the entire namespace. Retired compatibility fields remain untouched. City changes invalidate forecasts; query changes/exit invalidate transient search results.
 
-首页布局单独保存在 `read_pico/home_regions`，两个区域一次提交，失败时都保持原值。首次没有新设置时，上方为最近阅读，下方继承旧天气显示开关；读取兼容不立即写入。v33 设置备份包含上下组件布局，恢复前校验版本、唯一性和校验值，提交成功才更新当前布局；v1–v32 备份不含布局，恢复时保留当前选择。天气城市、自动刷新偏好和预报缓存仍不随备份迁移。
+首页布局单独保存在 `read_pico/home_regions`，两个区域一次提交，失败时都保持原值。首次没有新设置时，上方为最近阅读，下方继承旧天气显示开关；读取兼容不立即写入。v33 设置备份包含上下组件布局，恢复前校验版本、唯一性和校验值，提交成功才更新当前布局；v1–v32 备份不含布局，恢复时保留当前选择。v48 起恢复城市与自动刷新；旧备份保留现值；预报和搜索结果不会从备份导入。
 
-Home layout uses `read_pico/home_regions`, committing both choices together and retaining both on failure. Without a new setting, reading starts above and the old weather visibility determines the lower region, without a migration write. Version 33 settings backups include the layout, validating schema, uniqueness and checksum before writes and updating live choices only after commit. Versions 1–32 preserve the current layout on restore. Weather city, automatic refresh preference and forecast cache remain outside the backup.
+Home layout uses `read_pico/home_regions`, committing both choices together and retaining both on failure. Without a new setting, reading starts above and the old weather visibility determines the lower region, without a migration write. Version 33 settings backups include the layout, validating schema, uniqueness and checksum before writes and updating live choices only after commit. Versions 1–32 preserve the current layout on restore. Version 48 restores city and automatic refresh; older backups preserve current values. Forecasts and search results are not imported.
 
 天气偏好schema 3保存地点 ID、行政区信息及自动刷新开关，缓存schema 2保存对应预报。该功能仍处本地开发，不迁移旧开发格式；首次使用新格式需要重新选城。仅在用户修改偏好或保存城市时写入，不在每次轮询落盘。
 

@@ -70,6 +70,7 @@
 #include "boot_state.h"
 #include "ble_page_turner.h"
 #include "device_power.h"
+#include "frontlight.h"
 #include "pmu_protocol.h"
 #include "wifi_transfer.h"
 #include "esp_log.h"
@@ -1811,9 +1812,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
                        s_config_confirm ? "再次点按，确认恢复配置" : "从 TF 卡恢复配置", false);
         if (s_notice[0]) ui_text(fb, 48, 819, 21, s_notice, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 899, 19, "包含阅读记录、设备资料和已存 WiFi。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 899, 19, "包含阅读记录、用户偏好和全部已存 WiFi。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 939, 19, "书籍、字体和图片仍需留在 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 979, 19, "备份含 WiFi 密码，请妥善保管 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 979, 19, "备份含明文 WiFi 密码，请妥善保管。", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -2761,7 +2762,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (y >= 681 && y < 764) {
             if (!s_config_confirm) {
                 s_config_confirm = true;
-                snprintf(s_notice, sizeof(s_notice), "恢复将覆盖当前设置，请再点按一次确认");
+                snprintf(s_notice, sizeof(s_notice), "恢复将覆盖设置、合并 WiFi，请再次确认");
                 return APP_REDRAW_PAGE;
             }
             s_config_confirm = false;
@@ -2770,6 +2771,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 ttf_font_scan();
                 app_font_activate_system();
                 ui_text_set_system_scale(true);
+                if (frontlight_ready())
+                    (void)frontlight_apply(app_settings_frontlight_on(), app_settings_frontlight_brightness(),
+                                           app_settings_frontlight_cct());
                 // 阅读记录恢复后令首页和书架重新取进度、时长与排序。
                 // Rebuild home and shelf caches after restoring reading records.
                 book_store_notify_changed();
@@ -2784,6 +2788,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                      err == ESP_ERR_INVALID_STATE ? "未识别到 TF 卡，请插卡后重试" :
                      err == ESP_ERR_NOT_FOUND ? "未找到配置备份文件" :
                      err == ESP_ERR_INVALID_RESPONSE ? "配置文件损坏或版本不兼容" :
+                     err == ESP_ERR_INVALID_SIZE ? "WiFi 合并超过 8 组，请先遗忘部分网络" :
                      "恢复未完成，请重试");
             return APP_REDRAW_PAGE;
         }

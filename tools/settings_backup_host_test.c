@@ -56,6 +56,14 @@ static app_weather_view_t weather_view;
 void app_weather_init(void) {}
 const app_weather_view_t *app_weather_view(void) { return &weather_view; }
 
+bool weather_location_valid(const weather_location_t *city) { return city && city->id[0]; }
+bool app_weather_restore_preferences(bool auto_refresh, bool has_city, const weather_location_t *city) {
+    weather_view.has_city = has_city;
+    weather_view.city = has_city ? *city : (weather_location_t){0};
+    weather_view.auto_refresh = auto_refresh;
+    return true;
+}
+
 static wifi_transfer_wifi_backup_t saved_wifi = {
     .configured = 1, .ssid = "Home_2.4G", .password = "password123"
 };
@@ -78,10 +86,56 @@ esp_err_t wifi_transfer_import_wifi_backup(const wifi_transfer_wifi_backup_t *ba
     return ESP_OK;
 }
 
+static wifi_transfer_profiles_backup_t saved_profiles;
+static bool wifi_capacity_full;
+esp_err_t wifi_transfer_export_profiles_backup(wifi_transfer_profiles_backup_t *out) {
+    *out = saved_profiles;
+    return ESP_OK;
+}
+bool wifi_transfer_profiles_backup_valid(const wifi_transfer_profiles_backup_t *backup) {
+    if (backup->count > WIFI_TRANSFER_SAVED_MAX) return false;
+    for (size_t i = 0; i < WIFI_TRANSFER_SAVED_MAX; ++i) {
+        if (backup->items[i].configured != (i < backup->count) ||
+            !wifi_transfer_wifi_backup_valid(&backup->items[i])) return false;
+        for (size_t j = 0; j < i && i < backup->count; ++j)
+            if (!strcmp(backup->items[i].ssid, backup->items[j].ssid)) return false;
+    }
+    return true;
+}
+esp_err_t wifi_transfer_merge_profiles_backup(const wifi_transfer_profiles_backup_t *backup, bool apply) {
+    if (!wifi_transfer_profiles_backup_valid(backup)) return ESP_ERR_INVALID_ARG;
+    if (!backup->count) return ESP_OK;
+    if (wifi_capacity_full) return ESP_ERR_INVALID_SIZE;
+    if (apply) {
+        saved_profiles = *backup;
+        return wifi_transfer_import_wifi_backup(&backup->items[0]);
+    }
+    return ESP_OK;
+}
+
+// 旧版布局的回归使用固定 v47 夹具；v48 单独走公开保存入口。
+// Fixed v47 fixtures retain legacy layout regressions; v48 exercises the public save entry separately.
+#define app_settings_backup_save() settings_backup_save_file(false)
+
 // 设置层只把开关/强度同步给驱动；宿主不链接马达实现。
 // / The settings layer only syncs switch/intensity to the driver; the host does not link the motor.
 void haptics_set_enabled(bool on) { (void)on; }
 void haptics_set_intensity(uint8_t intensity) { (void)intensity; }
+
+esp_err_t book_store_prepare_data(void) { return ESP_OK; }
+esp_err_t app_reading_journal_backup_write(FILE *file) { return fputc('J', file) == 'J' ? ESP_OK : ESP_FAIL; }
+esp_err_t app_reading_journal_backup_read(FILE *file, bool apply) {
+    (void)apply;
+    return fgetc(file) == 'J' ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
+esp_err_t book_collection_backup_write(FILE *file, const char *card_id) {
+    (void)card_id;
+    return fputc('C', file) == 'C' ? ESP_OK : ESP_FAIL;
+}
+esp_err_t book_collection_backup_read(FILE *file, const char *card_id, bool apply) {
+    (void)card_id; (void)apply;
+    return fgetc(file) == 'C' ? ESP_OK : ESP_ERR_INVALID_RESPONSE;
+}
 
 static unsigned history_saves, history_restores;
 esp_err_t book_history_backup_write(FILE *file) {
@@ -127,6 +181,11 @@ static int loaded_shelf_titles=-1;
 static bool shelf_title_write_fails;
 static int loaded_wallpaper_mode=-1;
 static int loaded_bookmark_mode=-1;
+static const char *const portable_test_keys[] = {
+    NVS_KEY_AUTO_TIME, NVS_KEY_AUTO_OTA, NVS_KEY_FRONTLIGHT_ON,
+    NVS_KEY_FRONTLIGHT_BRI, NVS_KEY_FRONTLIGHT_CCT,
+};
+static int loaded_portable[5] = {-1, -1, -1, -1, -1};
 static bool loaded_shelf_v22;
 static int loaded_vertical=-1;
 static uint8_t loaded_idle;static bool has_idle;
@@ -141,12 +200,24 @@ esp_err_t nvs_open(const char *ns, int mode, nvs_handle_t *h) { (void)ns; if (mo
 void nvs_close(nvs_handle_t h) { (void)h; }
 static bool has_tracking,has_para;static uint8_t loaded_tracking,loaded_para;
 esp_err_t nvs_get_u8(nvs_handle_t h, const char *key, uint8_t *value) {
+    for (size_t i = 0; i < sizeof(loaded_portable) / sizeof(loaded_portable[0]); ++i) {
+        if (!strcmp(key, portable_test_keys[i]) && loaded_portable[i] >= 0) {
+            *value = (uint8_t)loaded_portable[i];
+            return ESP_OK;
+        }
+    }
     if (!strcmp(key, NVS_KEY_SHELF_TITLES) && loaded_shelf_titles >= 0) {
         *value = (uint8_t)loaded_shelf_titles;
         return ESP_OK;
     }
     if(!strcmp(key,NVS_KEY_VERTICAL_TURN)&&loaded_vertical>=0){*value=(uint8_t)loaded_vertical;return ESP_OK;} for(unsigned i=0;i<2;++i)if(!strcmp(key,i?NVS_KEY_CHROME_FOOTER_H:NVS_KEY_CHROME_HEADER_H)&&loaded_chrome_heights[i]>=0){*value=loaded_chrome_heights[i];return ESP_OK;} for(unsigned i=0;i<2;++i)if(!strcmp(key,i?NVS_KEY_CHROME_FOOTER_VISIBLE:NVS_KEY_CHROME_HEADER_VISIBLE)&&loaded_chrome_visible[i]>=0){*value=(uint8_t)loaded_chrome_visible[i];return ESP_OK;} (void)h; if(!strcmp(key,NVS_KEY_SHUTDOWN_MODE)&&has_shutdown){*value=loaded_shutdown;return ESP_OK;} if(!strcmp(key,NVS_KEY_AUTO_LOCK)&&has_idle){*value=loaded_idle;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_PARA)&&has_para){*value=loaded_para;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_TRACK)&&has_tracking){*value=loaded_tracking;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_WEIGHT_FINE)&&has_fine){*value=loaded_fine;return ESP_OK;} if(!strcmp(key,NVS_KEY_OPEN_FULL)&&has_open_full){*value=loaded_open_full;return ESP_OK;} if(!strcmp(key,NVS_KEY_HOME_COMPONENT)&&loaded_home>=0){*value=(uint8_t)loaded_home;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_AA)&&has_aa){*value=loaded_aa;return ESP_OK;} if(!strcmp(key,NVS_KEY_READER_KEYS_V2)&&keys_v2){*value=1;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_WEIGHT)&&has_weight){*value=loaded_weight;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_INDENT_ADJUST)&&has_adjust){*value=loaded_adjust;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_STYLE)&&loaded_shelf>=0){*value=(uint8_t)loaded_shelf;return ESP_OK;} if(!strcmp(key,NVS_KEY_SHELF_V22)&&loaded_shelf_v22){*value=1;return ESP_OK;} if(!strcmp(key,NVS_KEY_LOCK_STYLE)&&loaded_lock>=0){*value=(uint8_t)loaded_lock;return ESP_OK;} if(!strcmp(key,NVS_KEY_HOLD_ACTION)&&has_hold){*value=loaded_hold;return ESP_OK;} if(!strcmp(key,NVS_KEY_DOUBLE_ACTION)&&has_double){*value=loaded_double;return ESP_OK;} for(unsigned i=0;i<3;++i) if(!strcmp(key,s_reader_key_names[i])&&has_keys[i]){*value=loaded_keys[i];return ESP_OK;} if (!strcmp(key, NVS_KEY_MAIN_REFRESH) && has_main_mode) { *value=loaded_main_mode;return ESP_OK; } if (!strcmp(key, NVS_KEY_WALLPAPER_MODE) && loaded_wallpaper_mode >= 0) { *value=(uint8_t)loaded_wallpaper_mode; return ESP_OK; } if (!strcmp(key, NVS_KEY_BOOKMARK_MODE) && loaded_bookmark_mode >= 0) { *value=(uint8_t)loaded_bookmark_mode; return ESP_OK; } if (!strcmp(key, "ui_fast")) { *value = test_loaded_fast; return ESP_OK; } if (!strcmp(key, NVS_KEY_SYS_SIZE) && test_loaded_system_size) { *value = test_loaded_system_size; return ESP_OK; } if(!strcmp(key,NVS_KEY_BOOK_MARGIN)&&loaded_margin>=0){*value=(uint8_t)loaded_margin;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_MARGIN_L)&&loaded_margin_l>=0){*value=(uint8_t)loaded_margin_l;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_MARGIN_R)&&loaded_margin_r>=0){*value=(uint8_t)loaded_margin_r;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_MARGIN_T)&&loaded_margin_t>=0){*value=(uint8_t)loaded_margin_t;return ESP_OK;} if(!strcmp(key,NVS_KEY_BOOK_MARGIN_B)&&loaded_margin_b>=0){*value=(uint8_t)loaded_margin_b;return ESP_OK;} return ESP_FAIL; }
 esp_err_t nvs_set_u8(nvs_handle_t h, const char *key, uint8_t value) {
+    for (size_t i = 0; i < sizeof(loaded_portable) / sizeof(loaded_portable[0]); ++i) {
+        if (!strcmp(key, portable_test_keys[i])) {
+            loaded_portable[i] = value;
+            return ESP_OK;
+        }
+    }
     if (!strcmp(key, NVS_KEY_SHELF_TITLES)) {
         if (shelf_title_write_fails) return ESP_FAIL;
         loaded_shelf_titles = value;
@@ -1742,6 +1813,62 @@ static void test_shelf_titles(void) {
     puts("PASS: independent grid shelf title switches, boot, invalid values and failed writes");
 }
 
+static void test_portable_backup(void) {
+    app_settings_init();
+    app_settings_set_auto_time_sync(false);
+    app_settings_set_auto_ota(false);
+    app_settings_set_frontlight_on(true);
+    app_settings_set_frontlight_brightness(67);
+    app_settings_set_frontlight_cct(31);
+    assert(app_settings_set_bookmark_mode(APP_BOOKMARK_MODE_CROP));
+    assert(app_settings_set_shelf_show_titles(1, true));
+    assert(app_settings_set_shelf_show_titles(2, true));
+    weather_view.city = (weather_location_t){.id = "CITY123", .name = "Shanghai"};
+    weather_view.has_city = true;
+    weather_view.auto_refresh = false;
+    saved_profiles = (wifi_transfer_profiles_backup_t){.count = 2, .items = {
+        {.configured = 1, .ssid = "One", .password = "password1"},
+        {.configured = 1, .ssid = "Two", .password = "password2"},
+    }};
+    assert((app_settings_backup_save)() == ESP_OK);
+    app_settings_set_auto_time_sync(true);
+    app_settings_set_auto_ota(true);
+    app_settings_set_frontlight_on(false);
+    app_settings_set_frontlight_brightness(18);
+    app_settings_set_frontlight_cct(80);
+    assert(app_settings_set_bookmark_mode(APP_BOOKMARK_MODE_FIT));
+    assert(app_settings_set_shelf_show_titles(1, false));
+    assert(app_settings_set_shelf_show_titles(2, false));
+    weather_view.has_city = false;
+    weather_view.auto_refresh = true;
+    saved_profiles = (wifi_transfer_profiles_backup_t){0};
+    int commits = commit_count;
+    unsigned records = history_restores;
+    wifi_capacity_full = true;
+    assert(app_settings_backup_restore() == ESP_ERR_INVALID_SIZE);
+    assert(commits == commit_count && records == history_restores);
+    wifi_capacity_full = false;
+    assert(app_settings_backup_restore() == ESP_OK);
+    assert(weather_view.has_city && !weather_view.auto_refresh && !strcmp(weather_view.city.id, "CITY123"));
+    assert(saved_profiles.count == 2 && !strcmp(saved_profiles.items[1].ssid, "Two"));
+    app_settings_init();
+    assert(!app_settings_auto_time_sync() && !app_settings_auto_ota());
+    assert(app_settings_frontlight_on() && app_settings_frontlight_brightness() == 67 &&
+        app_settings_frontlight_cct() == 31 && app_settings_bookmark_mode() == APP_BOOKMARK_MODE_CROP);
+    assert(app_settings_shelf_show_titles(1) && app_settings_shelf_show_titles(2));
+    FILE *file = fopen(BACKUP_FILE, "r+b");
+    assert(file && fseek(file, -(long)(10 + BACKUP_PORTABLE_BYTES), SEEK_END) == 0);
+    assert(fputc('X', file) == 'X' && fclose(file) == 0);
+    commits = commit_count;
+    assert(app_settings_backup_restore() == ESP_ERR_INVALID_RESPONSE && commits == commit_count);
+    assert(app_settings_backup_save() == ESP_OK);
+    app_settings_set_auto_time_sync(true);
+    assert(app_settings_set_shelf_show_titles(1, false));
+    assert(app_settings_backup_restore() == ESP_OK);
+    assert(app_settings_auto_time_sync() && !app_settings_shelf_show_titles(1));
+    puts("PASS: v48 portable preference and multi-network round trip, preflight, corruption and v47 preservation");
+}
+
 int main(void) {
     // 重新读取持久记录模拟重启；同名ID在不同书库间隔离，失败不覆盖原选择。
     // Re-read durable records as after a reboot; isolate equal IDs across libraries and retain choices after failures.
@@ -2530,7 +2657,7 @@ int main(void) {
     saved_wifi.configured = 1;
     strlcpy(saved_wifi.ssid, "Temporary", sizeof(saved_wifi.ssid));
     strlcpy(saved_wifi.password, "temporary123", sizeof(saved_wifi.password));
-    assert(app_settings_backup_restore() == ESP_OK && !saved_wifi.configured);
+    assert(app_settings_backup_restore() == ESP_OK && saved_wifi.configured && !strcmp(saved_wifi.ssid, "Temporary"));
 
     file = fopen(BACKUP_FILE, "r+b");
     assert(file);
@@ -2874,5 +3001,6 @@ int main(void) {
     test_shutdown_wallpaper();
     puts("settings backup host test passed (legacy formats, Home regions, 200% sizes, retired shelf migration)");
     test_shelf_titles();
+    test_portable_backup();
     return 0;
 }

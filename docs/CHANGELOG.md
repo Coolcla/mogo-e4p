@@ -5,6 +5,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+- TF 配置备份扩展到 v48：补齐书封取景、书架书名、前光、自动对时和自动升级、天气、阅读手账和书库分类；保存全部已存 WiFi，恢复时合并，超过八组会在写入前提示。/ TF backup v48 adds cover framing, shelf captions, frontlight, automatic time/update checks, weather, journal and shelf categories. It saves all WiFi profiles and rejects over-capacity merges before writing.
 - 改善待机和关机壁纸偏白的问题，让浅灰细节更易分辨，保留纯黑、纯白和白边。/ Reduce washout in standby and shutdown wallpapers to make light-gray details easier to distinguish while preserving pure black, pure white and white margins.
 - 为内建界面字体补齐「工具栏」「边框索引」「中央章徽」等文案中的 29 个字的轮廓，改善不同字号下的清晰度。/ Add 29 outline glyphs to the built-in UI font, including those used in the reader toolbar and title-style labels, for sharper text across sizes.
 - 「按键控制」标明「上键（AI键）」；返回主页、手动全刷和前光开关的绑定可在普通页面使用，未绑定全局动作的手势保留原操作。/ Identify the AI key in key controls and allow mapped Home, full refresh and frontlight on ordinary pages without replacing other page gestures.

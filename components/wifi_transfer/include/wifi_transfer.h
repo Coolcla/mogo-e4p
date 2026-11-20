@@ -129,6 +129,16 @@ bool wifi_transfer_wifi_backup_valid(const wifi_transfer_wifi_backup_t *backup);
 /// 兼容旧备份的单网络恢复；保留其他网络，空记录清除全部；正在运行的会话不变。
 /// Restore a legacy single-network backup, retaining others; an empty record clears all; active sessions stay unchanged.
 esp_err_t wifi_transfer_import_wifi_backup(const wifi_transfer_wifi_backup_t *backup);
+typedef struct {
+    uint8_t count; ///< 已存网络数量，首项为默认 / Saved network count, preferred first
+    wifi_transfer_wifi_backup_t items[WIFI_TRANSFER_SAVED_MAX]; ///< 明文，使用后清零 / Clear plaintext after use
+} wifi_transfer_profiles_backup_t;
+/// 备份全部已存网络，保留顺序。/ Back up all saved networks in order.
+esp_err_t wifi_transfer_export_profiles_backup(wifi_transfer_profiles_backup_t *out);
+/// 校验整组和互异 SSID；不访问设备。/ Validate all entries and distinct SSIDs without accessing the device.
+bool wifi_transfer_profiles_backup_valid(const wifi_transfer_profiles_backup_t *backup);
+/// 备份网络优先，保留未覆盖的本机网络；容量不足不写入。/ Backup entries take precedence; keep unmatched local networks and reject over-capacity without writing.
+esp_err_t wifi_transfer_merge_profiles_backup(const wifi_transfer_profiles_backup_t *backup, bool apply);
 /// 遗忘默认网络并保留其他网络；仅热点或 STA 已释放时可用，上传中拒绝。
 /// Forget the preferred network only, while AP or after releasing STA resources; reject during upload.
 esp_err_t wifi_transfer_forget_wifi(void);
