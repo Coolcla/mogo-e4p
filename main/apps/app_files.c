@@ -30,6 +30,7 @@
 #include "sdkconfig.h"
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
 #include "assets/cloudzao_badge.h"
+#include "cloudzao_service.h"
 #endif
 #include "app_content_open.h"
 #include "app_transfer_mode.h"
@@ -180,7 +181,7 @@ static bool file_pager_event(app_ctx_t *ctx,const ui_gesture_event_t *ev,app_red
 }
 static int home_transfer_count(void) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    return CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID[0] ? 4 : 3;
+    return cloudzao_available() ? 4 : 3;
 #else
     return 3;
 #endif

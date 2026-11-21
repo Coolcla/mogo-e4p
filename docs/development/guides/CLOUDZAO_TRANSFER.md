@@ -3,28 +3,13 @@
 CloudZao 是「文件管理」的直连接收功能，不是 OTA 来源，不替代 WiFi／热点浏览器传书或 USB。仅在绑定界面轮询授权，不后台收件，不走 4G，不替用户开关无线。未配置接入 ID 时隐藏入口。
 CloudZao is a direct receive feature in Files, not an OTA source or a replacement for WiFi, hotspot or USB transfer. It polls only while pairing, never receives in the background, does not use cellular and does not change radio settings. Without an integration ID, its entry is hidden.
 
-## 本机配置 / Local configuration
+## 发版接入 / Release configuration
 
-从[云造开发者文档](https://burner.cloudzao.com/zh/ota-docs)进入「我的固件」，复制固件卡片的接入 ID。不使用旧开发者密钥、官网中转或 `firmwareId`。仅在 Git 忽略的 `sdkconfig.cloudzao.local` 写入下面一行，将占位符换成自己的 ID；不要提交该文件或真实值。设备令牌不能填在这里。
-From the [CloudZao developer documentation](https://burner.cloudzao.com/zh/ota-docs), open My Firmware and copy the integration ID from the firmware card. Do not use the legacy key, relay, or `firmwareId`. Put the following line only in the Git-ignored `sdkconfig.cloudzao.local` and replace the placeholder with your ID. Do not commit that file or the real value. Do not put device tokens here.
+从[云造开发者文档](https://burner.cloudzao.com/zh/ota-docs)进入「我的固件」，复制固件卡片的接入 ID，按[正式发布契约](RELEASE.md)配置 GitHub Actions Secret `MOGO_CLOUDZAO_INTEGRATION_ID`。不使用旧开发者密钥、官网中转或 `firmwareId`，也不填设备令牌。不在源码、sdkconfig 或本机编译命令填写真实 ID。
+From the [CloudZao developer documentation](https://burner.cloudzao.com/zh/ota-docs), open My Firmware, copy the integration ID from the firmware card, and configure the GitHub Actions secret `MOGO_CLOUDZAO_INTEGRATION_ID` per the release contract. Do not use the legacy key, relay, `firmwareId` or device tokens. Do not put the real ID in source, sdkconfig or local build commands.
 
-```ini
-CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID="YOUR_INTEGRATION_ID"
-```
-
-按[本机环境规则](../../ONBOARDING.md#本机环境硬约束--local-environment-hard-rules)激活指定环境，再用同一套正式代码构建。`build/cloudzao-local/sdkconfig` 是生成配置，会覆盖 defaults；换 ID 时应使用新的本机目录或明确更新该生成配置。
-Activate the required environment in onboarding and build the same production code. `build/cloudzao-local/sdkconfig` is generated and overrides defaults; use a new local directory or explicitly update the generated configuration when changing IDs.
-
-```sh
-chmod 600 sdkconfig.cloudzao.local
-mkdir -p build/cloudzao-local
-IDF_TARGET=esp32s31 idf.py --preview -B build/cloudzao-local \
-  -D SDKCONFIG="$PWD/build/cloudzao-local/sdkconfig" \
-  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;$PWD/sdkconfig.cloudzao.local" build
-```
-
-接入 ID 会编入镜像，使用本机配置构建的 BIN、ELF、生成配置和衍生产物不得公开。按[正式发布契约](RELEASE.md)构建公开制品时不加载本机配置且接入 ID 必须留空，因此公开制品不显示 CloudZao 入口。
-The ID is embedded in the image. Do not publish binaries, ELF, generated configuration or derived artifacts from the local build. The public build specified by the release contract does not load the local overlay and requires an empty ID, so public images do not show the CloudZao entry.
+普通开发和 CI 构建不读取真实 ID，入口隐藏；正式标签构建将 ID 编入应用镜像，用户通过 OTA、TF 或 USB 升级后可使用 CloudZao。缺少 ID 时整个发布构建失败。用户仍需在设备上完成自己的绑定与授权。
+Normal development and CI builds do not read the real ID and hide the entry. The tagged release build embeds the ID in the application image so CloudZao is available after an OTA, TF or USB update. A missing ID fails the release build. Users still pair and authorize their own devices.
 
 ## 设备操作 / On-device use
 
@@ -83,5 +68,5 @@ The OSS download connection uses the [official GlobalSign R3 root](https://secur
 已挂载 TF 卡的后台巡检不会中断接收；介质确认失效后才停止。离页、锁屏、关机、重启和拔卡触发取消；已提交的文件不会撤回，尚未发出的确认停止。TF 卡交接等待句柄归还；超时先保留当前状态。应用侧按 8 秒无进展预算和 5 分钟会话预算检查网络 I/O；SDK 同步 DNS 和卡驱动调用返回前不能强制抢占。接收只清理自身的 `.readpico/cloudzao/incoming.part`，不删除用户文件。
 Routine health checks of a mounted card do not interrupt reception; confirmed media loss still stops it. Leaving, locking, powering off, restarting and removing the card cancel the job. Already committed files are retained and unsent acknowledgements stop. Card handoff waits for handles; timeout leaves the current state intact. The app checks an 8-second no-progress budget and a five-minute session budget for network I/O; synchronous SDK DNS and card driver calls cannot be forcibly preempted. The receiver cleans only its own `.readpico/cloudzao/incoming.part`, not user files.
 
-离线回归：`python3 tools/run_reader_baseline.py cloudzao wifi_profiles network_route`。真机分别检查新绑定、重启后授权和已有小程序绑定的重新授权，先测试 TXT、EPUB、TTF，确认获取列表没有写卡／确认，先部分下载验证未选项仍在云端，再全选下载剩余资源并实际打开；独立 App 和小程序各自记录结果，不用其中一项替代另一项。此操作指南不授权刷机或公开分发本机镜像。
-Offline regression: `python3 tools/run_reader_baseline.py cloudzao wifi_profiles network_route`. On hardware, verify first pairing, authorization after reboot and reauthorization for an already-bound device; start with TXT, EPUB and TTF pushes. Confirm list fetching does not write or acknowledge; first download a subset and verify the rest remain on the server, then select all remaining items, download and open them. Record standalone app and mini-program results separately. This guide does not authorize flashing or public distribution of local images.
+离线回归：`python3 tools/run_reader_baseline.py cloudzao wifi_profiles network_route`。真机分别检查新绑定、重启后授权和已有小程序绑定的重新授权，先测试 TXT、EPUB、TTF，确认获取列表没有写卡／确认，先部分下载验证未选项仍在云端，再全选下载剩余资源并实际打开；独立 App 和小程序各自记录结果，不用其中一项替代另一项。此操作指南不授权刷机或公开分发本机测试镜像。
+Offline regression: `python3 tools/run_reader_baseline.py cloudzao wifi_profiles network_route`. On hardware, verify first pairing, authorization after reboot and reauthorization for an already-bound device; start with TXT, EPUB and TTF pushes. Confirm list fetching does not write or acknowledge; first download a subset and verify the rest remain on the server, then select all remaining items, download and open them. Record standalone app and mini-program results separately. This guide does not authorize flashing or public distribution of local test images.

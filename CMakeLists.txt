@@ -13,16 +13,9 @@ if(DEFINED ENV{PICO_PROJECT_VER} AND NOT "$ENV{PICO_PROJECT_VER}" STREQUAL "")
 else()
     set(PROJECT_VER "1.1.6")
 endif()
-project(Read_Pico)
-
-# 公开构建不得内嵌本机 CloudZao 接入 ID。/ Public builds must not embed a local CloudZao integration ID.
+# 仅正式发布构建允许注入 CloudZao 接入 ID。/ Only release builds may inject the CloudZao integration ID.
 option(MOGO_PUBLIC_RELEASE "Build firmware for public distribution" OFF)
-if(MOGO_PUBLIC_RELEASE)
-    idf_build_get_config(cloudzao_integration_id CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID)
-    if(NOT "${cloudzao_integration_id}" STREQUAL "")
-        message(FATAL_ERROR "Public releases require an empty CloudZao integration ID")
-    endif()
-endif()
+project(Read_Pico)
 
 # 中文：检查最终链接位置，防止升级 SDK 或改动链接布局后重现缓存关闭时取指崩溃。
 # English: Check final placement to catch cache-off instruction fetch regressions after SDK/layout changes.

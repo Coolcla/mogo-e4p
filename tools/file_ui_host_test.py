@@ -21,13 +21,13 @@ FILES = ROOT / "main/apps/app_files.c"
 NAV = ROOT / "main/ui/ui_nav.c"
 
 
-def unit(integration_id=""):
+def unit(cloudzao_configured=False):
     code = journal.unit().split(journal.source("main/services/reading_journal_model.c"))[0]
     code = code.replace("static unsigned app_settings_system_font_size(void){return 120;}",
                         "static unsigned font_percent=120;\nstatic unsigned app_settings_system_font_size(void){return font_percent;}")
     code += "\n#undef ui_text_fixed_vc\n"
     code += ('#define CONFIG_MOGO_CLOUDZAO_TRANSFER 1\n'
-             f'#define CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID "{integration_id}"\n'
+             f'#define CLOUDZAO_FIXTURE_CONFIGURED {int(cloudzao_configured)}\n'
              '#include "assets/cloudzao_badge.h"\n')
     for name in ("ui_draw_control_frame",
                  "ui_text_effective_px", "ui_text", "ui_text_vc", "ui_rect_hit"):
@@ -80,6 +80,7 @@ static void ui_draw_button(uint8_t *fb,EpdRect r,const char *s,bool on){
     (void)on;ui_draw_control_frame(fb,r,8,0);ui_text_box(fb,r,24,s,EPD_DRAW_ALIGN_CENTER,false);
 }
 '''
+    code += "static bool cloudzao_available(void){return CLOUDZAO_FIXTURE_CONFIGURED;}\n"
     code += host.function("draw_cloudzao_logo", FILES) + "\n"
     for name in ("copy_utf8", "folder_root", "visible_rows", "root_rows", "file_row_rect", "file_row_index",
                  "file_pager_pages", "draw_file_pager", "file_pager_paint", "file_pager_event",
@@ -118,7 +119,7 @@ static const char *esp_err_to_name(esp_err_t err){(void)err;return "ERROR";}
     return code
 
 
-def run(output, source=None, integration_id=""):
+def run(output, source=None, cloudzao_configured=False):
     output.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="files-raster-") as directory:
         work = Path(directory)
@@ -144,7 +145,7 @@ static inline tinfl_status tinfl_decompress(tinfl_decompressor *s,const unsigned
         with (work / "assets.c").open("a") as assets:
             assets.write('const uint8_t hanzi[] asm("_binary_ui_hanzi_bin_start")={' + ','.join(map(str, payload)) + '};\n')
             assets.write(f'asm(".globl _binary_ui_hanzi_bin_end\\n.set _binary_ui_hanzi_bin_end, _binary_ui_hanzi_bin_start + {len(payload)}");\n')
-        (work / "test.c").write_text(unit(integration_id) if source is None else source)
+        (work / "test.c").write_text(unit(cloudzao_configured) if source is None else source)
         env, compiler = toolchain(work)
         flags = compiler + ["-std=gnu11", "-Wall", "-Wextra", "-Werror", "-Wno-unused-variable",
                             "-Wno-unused-function", "-Wno-deprecated-declarations", "-fsanitize=address,undefined", "-g"]
@@ -169,8 +170,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.output:
         run(args.output.resolve())
-        run(args.output.resolve() / "cloudzao", integration_id="fixture-integration")
+        run(args.output.resolve() / "cloudzao", cloudzao_configured=True)
     else:
         with tempfile.TemporaryDirectory(prefix="files-ui-") as directory:
             run(Path(directory))
-            run(Path(directory) / "cloudzao", integration_id="fixture-integration")
+            run(Path(directory) / "cloudzao", cloudzao_configured=True)

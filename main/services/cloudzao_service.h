@@ -1,6 +1,6 @@
 /*
- * 中文：CloudZao 本机联调会话与卸载前的文件交还。
- * English: Local CloudZao test sessions and file handoff before unmount.
+ * 中文：CloudZao 接收会话与卸载前的文件交还。
+ * English: CloudZao receive sessions and file handoff before unmount.
  */
 #pragma once
 #include <stdbool.h>
@@ -10,6 +10,8 @@
 
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
 #include "cloudzao_receive.h"
+/// 发布构建已配置接入 ID 时显示入口。/ Show the entry when the release build has an integration ID.
+bool cloudzao_available(void);
 /// 读取这版注意事项的本机确认状态，缺失或读失败视为未确认。/ Read this notice revision's local acknowledgement; missing or unreadable means unconfirmed.
 bool cloudzao_notice_acknowledged(void);
 /// 仅由确认按钮调用；提交成功才返回 true。/ Call only from the acknowledgement button; true on successful commit.

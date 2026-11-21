@@ -62,6 +62,10 @@ if(CONFIG_MOGO_CLOUDZAO_TRANSFER)
         "services/cloudzao_history.c" "services/cloudzao_partner.c")
 endif()
 
+if(MOGO_PUBLIC_RELEASE AND NOT CONFIG_MOGO_CLOUDZAO_TRANSFER)
+    message(FATAL_ERROR "Public releases require CloudZao file reception")
+endif()
+
 # 原始位图保留在源码中，只把可复现的压缩资源嵌入 app。/ Retain source bitmaps and embed only reproducible compressed resources in the app.
 idf_build_get_property(image_python PYTHON)
 set(builtin_image_dir "${CMAKE_CURRENT_BINARY_DIR}/builtin_images")
@@ -260,6 +264,23 @@ idf_component_register(
 
 if(CONFIG_MOGO_CLOUDZAO_TRANSFER)
     target_add_binary_data(${COMPONENT_LIB} "services/cloudzao_oss_root_r3.pem" TEXT)
+
+    # 不写入 Kconfig、CMake 缓存或编译命令；此生成目录也不在发布产物白名单内。
+    # Keep the ID out of Kconfig, CMake cache and command lines; this directory is not a release artifact.
+    set(cloudzao_integration_id "")
+    if(MOGO_PUBLIC_RELEASE)
+        set(cloudzao_integration_id "$ENV{MOGO_CLOUDZAO_INTEGRATION_ID}")
+        string(LENGTH "${cloudzao_integration_id}" cloudzao_id_length)
+        if(cloudzao_id_length GREATER 256 OR NOT cloudzao_integration_id MATCHES "^[A-Za-z0-9._~+/=-]+$")
+            message(FATAL_ERROR "Public releases require a valid MOGO_CLOUDZAO_INTEGRATION_ID")
+        endif()
+    endif()
+    set(cloudzao_private_dir "${CMAKE_CURRENT_BINARY_DIR}/cloudzao_private")
+    file(CONFIGURE OUTPUT "${cloudzao_private_dir}/cloudzao_integration.h"
+        CONTENT "#define MOGO_CLOUDZAO_BUILD_ID \"@cloudzao_integration_id@\"\n" @ONLY)
+    file(CHMOD "${cloudzao_private_dir}/cloudzao_integration.h" PERMISSIONS OWNER_READ OWNER_WRITE)
+    target_include_directories(${COMPONENT_LIB} PRIVATE "${cloudzao_private_dir}")
+    unset(cloudzao_integration_id)
 endif()
 
 # 连接失败后 IDF 会关闭 socket；按需保留解析地址和连接阶段，正式默认关闭。

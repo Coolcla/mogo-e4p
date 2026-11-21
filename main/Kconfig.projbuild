@@ -194,11 +194,3 @@ config MOGO_CLOUDZAO_TRANSFER
     help
         通过已连接的 WiFi 直连 CloudZao；未配置接入 ID 时隐藏传输入口。
         Receive files directly over WiFi; hide the transfer entry without an integration ID.
-
-config MOGO_CLOUDZAO_INTEGRATION_ID
-    string "CloudZao integration ID"
-    depends on MOGO_CLOUDZAO_TRANSFER
-    default ""
-    help
-        仅从被忽略的本机配置注入；该值会编入镜像，公开发行必须留空。
-        Set only in ignored local configuration; the value is embedded in the image and must be empty for public releases.

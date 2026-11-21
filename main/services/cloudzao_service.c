@@ -3,6 +3,7 @@
  * English: Own CloudZao HTTPS and TF handles without changing radio switches or route preferences.
  */
 #include "cloudzao_service.h"
+#include "cloudzao_integration.h"
 #include "cloudzao_history.h"
 #include "esp_attr.h"
 #include "board_sd.h"
@@ -37,6 +38,11 @@
 
 extern const uint8_t oss_root_r3_start[] asm("_binary_cloudzao_oss_root_r3_pem_start");
 extern const uint8_t oss_root_r3_end[] asm("_binary_cloudzao_oss_root_r3_pem_end");
+
+static const char s_integration_id[] = MOGO_CLOUDZAO_BUILD_ID;
+_Static_assert(sizeof(s_integration_id) <= CLOUDZAO_TOKEN_MAX + 1, "CloudZao integration ID is too long");
+
+bool cloudzao_available(void) { return sizeof(s_integration_id) > 1; }
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static cz_status_t s_status;
@@ -378,7 +384,7 @@ typedef struct {
 static bool persist_session(void *context, const cz_session_record_t *record) {
     worker_t *worker = context;
     stored_session_t stored = {.version = CZ_NVS_VERSION, .record = *record};
-    memcpy(stored.integration, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID, strlen(CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID) + 1);
+    memcpy(stored.integration, s_integration_id, sizeof(s_integration_id));
     const esp_err_t err = nvs_set_blob(worker->nvs, CZ_NVS_KEY, &stored, sizeof(stored));
     cloudzao_partner_wipe(&stored, sizeof(stored));
     return err == ESP_OK && nvs_commit(worker->nvs) == ESP_OK;
@@ -391,7 +397,7 @@ static bool load_session(worker_t *worker) {
     bool valid = err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && size == sizeof(stored) &&
         stored.version == CZ_NVS_VERSION && stored.integration[CLOUDZAO_TOKEN_MAX] == 0 &&
         cloudzao_partner_record_valid(&stored.record));
-    if (valid && err == ESP_OK && !strcmp(stored.integration, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID))
+    if (valid && err == ESP_OK && !strcmp(stored.integration, s_integration_id))
         worker->partner.record = stored.record;
     cloudzao_partner_wipe(&stored, sizeof(stored));
     return valid;
@@ -419,7 +425,7 @@ static void run(void *argument) {
     network_lease_t lease = {0};
     cz_status_t result = {.error = stop(&worker)};
     char *json = NULL;
-    if (result.error == CZ_OK && !cloudzao_token_valid(CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID)) result.error = CZ_INTEGRATION;
+    if (result.error == CZ_OK && !cloudzao_token_valid(s_integration_id)) result.error = CZ_INTEGRATION;
     if (result.error == CZ_OK && !current_utc(NULL)) result.error = CZ_CLOCK;
     if (result.error == CZ_OK && network_service_borrow_ready_wifi(&lease) != ESP_OK) result.error = CZ_WIFI;
     if (result.error == CZ_OK && pair_job(worker.job) && esp_read_mac(bytes, ESP_MAC_WIFI_STA) != ESP_OK) result.error = CZ_WIFI;
@@ -437,7 +443,7 @@ static void run(void *argument) {
         worker.partner.persist = persist_session;
         if (pair_job(worker.job)) {
             snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
-            result = cloudzao_partner_pair(&worker.partner, worker.job == CZ_JOB_POLL, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID,
+            result = cloudzao_partner_pair(&worker.partner, worker.job == CZ_JOB_POLL, s_integration_id,
                                            mac, esp_app_get_description()->version);
         } else {
             const cz_ops_t ops = {.context = &worker, .root = "/sdcard", .stop = stop, .request = partner_request,

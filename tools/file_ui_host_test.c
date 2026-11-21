@@ -52,7 +52,7 @@ static void interaction(app_ctx_t *ctx) {
     gesture(ctx,UI_GESTURE_LONG_PRESS,120,574);
     assert(s_view==FILE_VIEW_ACTIONS && !strcmp(s_selected.name,s_files[7].name));
     fixture(true);
-    if (CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID[0]) {
+    if (CLOUDZAO_FIXTURE_CONFIGURED) {
         assert(home_transfer_count()==4);
         render(ctx,ctx->fb);
         const EpdRect cloud=home_transfer_rect(3);
