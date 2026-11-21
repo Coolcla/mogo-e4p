@@ -4,50 +4,51 @@
  */
 #include "cloudzao_receive.h"
 #include "cloudzao_history.h"
+#include "cloudzao_partner.h"
 #include <sys/stat.h>
 #include "cloudzao_wire.h"
 #include <assert.h>
 #include <errno.h>
+#include <psa/crypto.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#define MAC "aa:bb:cc:dd:ee:ff"
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-#include "cloudzao_local_relay.h"
-#define KEY "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-#define BIND_PATH "/api/v1/cloudzao/binding"
-#define LIST_PATH "/api/v1/cloudzao/tasks/next"
-#define ACK_PATH "/api/v1/cloudzao/tasks"
-#else
-#define KEY "host-only-placeholder"
-#define BIND_PATH "/xiaozhi/api/firmware-resources/ota"
-#define LIST_PATH "/xiaozhi/api/firmware-resources/push-resources/next"
-#define ACK_PATH "/xiaozhi/api/firmware-resources/push-resources"
-#endif
+#define MAC "AA:BB:CC:DD:EE:FF"
+#define KEY "pat_test.access"
+#define BASE "/xiaozhi/api/partner/v1"
+#define BIND_PATH BASE "/pairings"
+#define LIST_PATH BASE "/deliveries"
 #define TARGET "/objects/a%2Fb?sig=x%2B1&expires=12"
 #define URL "https://cdn.example.invalid" TARGET
 #define OSS_HOST "bucket.oss-cn-hangzhou.aliyuncs.com"
 #define OSS_URL "http://" OSS_HOST TARGET
+#define EP_SIGNATURE "?Expires=12&Signature=x%2B1%3d&OSSAccessKeyId=fixture"
+#define EP_RAW_PATH "/objects/a%2fb/书📖.epub"
+#define EP_WIRE_PATH "/objects/a%2fb/%E4%B9%A6%F0%9F%93%96.epub"
+#define EP_OSS_URL "http://" OSS_HOST EP_RAW_PATH EP_SIGNATURE
 #define DIGEST "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 #define ITEM_URL(kind,format_,mime,name,id,sha,url) \
-    "{\"resourceType\":\"" kind "\",\"format\":\"" format_ "\",\"contentType\":\"" mime \
-    "\",\"name\":\"" name "\",\"taskId\":\"" id "\",\"fileSize\":\"3\",\"sha256\":\"" sha "\",\"downloadUrl\":\"" url "\"}"
+    "{\"kind\":\"" kind "\",\"format\":\"" format_ "\",\"mediaType\":\"" mime \
+    "\",\"name\":\"" name "\",\"deliveryId\":\"" id "\",\"sizeBytes\":3,\"sha256\":\"" sha "\",\"downloadUrl\":\"" url "\"}"
 #define ITEM(kind,format_,mime,name,id,sha) ITEM_URL(kind,format_,mime,name,id,sha,URL)
 #define TXT(name,id,sha) ITEM("BOOK", "TXT", "text/plain", name, id, sha)
-#define LIST(items) "{\"code\":0,\"data\":[" items "]}"
+#define LIST(items) "{\"items\":[" items "]}"
 
 typedef struct {
-    const char *root, *json, *probe_json, *expected_ack;
-    unsigned downloads, confirmations, books, lists, bindings;
+    const char *root, *json, *replacement_json, *expected_ack, *list_reply;
+    unsigned downloads, confirmations, books, lists, replacement_on, ack_timeouts;
     cz_error_t interrupt, ack_result, interrupt_during_download;
     uint64_t space;
-    bool oversized, cancel_after_bind;
+    bool oversized;
     unsigned queued, finished, stage_mask;
     size_t written;
     uint32_t history_next;
 } test_t;
+
+static bool fail_crypto_init;
+int psa_crypto_init(void) { return fail_crypto_init ? -1 : PSA_SUCCESS; }
 
 static bool present(const char *root, const char *file) {
     char path[512];
@@ -139,24 +140,21 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
                           cz_sink_t sink, void *sink_context) {
     test_t *test = context;
     char wire[CLOUDZAO_CHUNK], host[254];
-    assert(cloudzao_wire_request(operation, req, host, sizeof(host), wire, sizeof(wire)));
+    cz_http_request_t authenticated = *req;
+    if (operation != CZ_DOWNLOAD) authenticated.token = KEY;
+    assert(cloudzao_wire_request(operation, &authenticated, host, sizeof(host), wire, sizeof(wire)));
     if (operation != CZ_DOWNLOAD) {
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-        assert(!strcmp(host, CZ_RELAY_ADDRESS) && strstr(wire, "Host: " CZ_RELAY_AUTHORITY "\r\n"));
+        assert(!strcmp(host, "claw.cloudzao.cn") && strstr(wire, "\r\nHost: claw.cloudzao.cn\r\n"));
         assert(strstr(wire, "Authorization: Bearer " KEY "\r\n"));
-        assert(!strstr(wire, "X-Resource-Key") && !strstr(wire, "Device-Id") && !strstr(wire, MAC));
-#else
-        assert(!strcmp(host, "admin.metalio.world"));
-        assert(strstr(wire, "X-Resource-Key: " KEY) && strstr(wire, "Device-Id: " MAC));
-#endif
-        assert(!req->url);
+        assert(!strstr(wire, "X-Resource-Key") && !strstr(wire, "Device-Id") && !req->url && !req->token);
     }
     if (operation == CZ_DOWNLOAD) {
-        assert(!req->key && !req->mac && !req->body);
-        if (!strcmp(req->url, OSS_URL)) assert(!strcmp(host, OSS_HOST));
+        assert(!req->token && !req->delivery_id && !req->body);
+        const bool unicode_oss = !strcmp(req->url, EP_OSS_URL);
+        if (unicode_oss || !strcmp(req->url, OSS_URL)) assert(!strcmp(host, OSS_HOST));
         else assert(!strcmp(req->url, URL) && !strcmp(host, "cdn.example.invalid"));
         assert(!strstr(wire, KEY) && !strstr(wire, MAC) && !strstr(wire, "Authorization") && !strstr(wire, "Device-Id") && !strstr(wire, "X-Resource-Key"));
-        assert(strstr(wire, "GET /objects/a%2Fb?sig=x%2B1&expires=12 HTTP/1.1"));
+        assert(strstr(wire, unicode_oss ? "GET " EP_WIRE_PATH EP_SIGNATURE " HTTP/1.1" : "GET " TARGET " HTTP/1.1"));
         assert(req->limit == 3);
         ++test->downloads;
         assert(sink(sink_context, "a", 1));
@@ -166,32 +164,32 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
     }
     if (operation == CZ_ACK) {
         ++test->confirmations;
-        assert(strstr(wire, "DELETE " ACK_PATH " HTTP/1.1"));
-        assert(req->body && strstr(req->body, "\"taskId\":\""));
-        if (test->expected_ack) assert(strstr(req->body, test->expected_ack));
-        if (strstr(req->body, "book-1\"")) assert(present(test->root, "books/中文.txt"));
-        const char *ok = "{\"code\":0,\"data\":{\"removedTasks\":0}}";
-        if (test->ack_result != CZ_OK) return test->ack_result;
-        return sink(sink_context, ok, strlen(ok)) ? CZ_OK : CZ_INVALID;
+        char expected[192];
+        snprintf(expected, sizeof(expected), "POST " LIST_PATH "/%s/acknowledgements HTTP/1.1", req->delivery_id);
+        assert(strstr(wire, expected) && !req->body && !sink);
+        if (test->expected_ack) assert(!strcmp(req->delivery_id, test->expected_ack));
+        if (!strcmp(req->delivery_id, "book-1")) assert(present(test->root, "books/中文.txt"));
+        if (test->ack_timeouts) { --test->ack_timeouts; return CZ_TIMEOUT; }
+        return test->ack_result;
     }
-    if (operation == CZ_BIND) {
-        ++test->bindings;
-        assert(strstr(wire, "POST " BIND_PATH " HTTP/1.1"));
-        assert(req->body && strstr(req->body, "\"application\":{\"version\":\"1.1.6\"}"));
-    } else {
-        ++test->lists;
-        assert(strstr(wire, "POST " LIST_PATH " HTTP/1.1"));
-        assert(!req->body);
+    assert(operation == CZ_LIST && strstr(wire, "GET " LIST_PATH " HTTP/1.1") && !req->body);
+    ++test->lists;
+    if (test->list_reply) {
+        cz_response_t response;
+        cloudzao_wire_begin(&response, CZ_LIST, req->limit, sink, sink_context);
+        const char *p = test->list_reply;
+        for (; *p; ++p) if (!cloudzao_wire_feed(&response, p, 1)) return response.error;
+        return response.done ? response.error : CZ_INVALID;
     }
     if (test->oversized) {
         static char big[CLOUDZAO_JSON_MAX + 1];
         return sink(sink_context, big, sizeof(big)) ? CZ_OK : CZ_INVALID;
     }
-    const char *body = operation == CZ_LIST && test->probe_json ? test->probe_json : test->json;
-    const bool accepted = sink(sink_context, body, strlen(body));
-    if (operation == CZ_BIND && test->cancel_after_bind) test->interrupt = CZ_CANCELLED;
-    return accepted ? CZ_OK : CZ_INVALID;
+    const char *body = test->replacement_json && test->lists >= test->replacement_on ? test->replacement_json : test->json;
+    return sink(sink_context, body, strlen(body)) ? CZ_OK : CZ_INVALID;
 }
+
+static int64_t now_fixed(void *context) { (void)context; return 1794787500; }
 
 static cz_queue_t test_queue;
 static cz_status_t run_job(test_t *test, cz_job_t job, const char *json) {
@@ -200,13 +198,12 @@ static cz_status_t run_job(test_t *test, cz_job_t job, const char *json) {
     static char buffer[CLOUDZAO_JSON_MAX + 1];
     static unsigned char chunk[CLOUDZAO_CHUNK];
     cz_ops_t ops = {.context = test, .root = test->root, .stop = stopped, .request = request,
-                    .free_bytes = available, .book_added = added, .progress = progress,
+                    .now = now_fixed, .free_bytes = available, .book_added = added, .progress = progress,
                     .row = observe_row, .stage = observe_stage, .record = observe_result};
-    return cloudzao_run(&ops, job, &test_queue, KEY, MAC, "1.1.6", buffer, chunk);
+    return cloudzao_run(&ops, job, &test_queue, buffer, chunk);
 }
 
-static cz_status_t run(test_t *test, bool bind, const char *json) {
-    if (bind) return run_job(test, CZ_JOB_BIND, json);
+static cz_status_t run(test_t *test, const char *json) {
     cz_status_t preview = run_job(test, CZ_JOB_PREVIEW, json);
     if (preview.error) return preview;
     bool any = false;
@@ -215,6 +212,26 @@ static cz_status_t run(test_t *test, bool bind, const char *json) {
         any |= test_queue.selection.checked[i];
     }
     return any ? run_job(test, CZ_JOB_DOWNLOAD, json) : preview;
+}
+
+static void empty_preview_regression(void) {
+    test_t f = {.list_reply = "HTTP/1.1 200 \r\nTransfer-Encoding: chunked\r\n\r\n"
+        "c\r\n" LIST("") "\r\n0\r\n\r\n"};
+    test_queue.count = 1;
+    fail_crypto_init = true;
+    cz_status_t status = run_job(&f, CZ_JOB_PREVIEW, NULL);
+    assert(status.error == CZ_OK && !status.total && !test_queue.count && f.lists == 1);
+    assert(!f.downloads && !f.confirmations && !f.finished);
+    f.list_reply = NULL;
+    status = run_job(&f, CZ_JOB_PREVIEW, LIST(TXT("book.txt", "test-book", DIGEST)));
+    assert(status.error == CZ_RESOURCES);
+    fail_crypto_init = false;
+    f.list_reply = "HTTP/1.1 503 \r\nTransfer-Encoding: chunked\r\n\r\n"
+        "c\r\n" LIST("") "\r\n0\r\n\r\n";
+    assert(run_job(&f, CZ_JOB_PREVIEW, NULL).error == CZ_SERVER);
+    f.list_reply = "HTTP/1.1 200 \r\nContent-Length: 0\r\n\r\n";
+    assert(run_job(&f, CZ_JOB_PREVIEW, NULL).error == CZ_INVALID);
+    puts("CloudZao empty preview, HTTP error and missing list body: PASS");
 }
 
 static bool count(void *context, const void *data, size_t length) {
@@ -233,73 +250,288 @@ static void framing(void) {
     const char *unauthorized = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n";
     cz_response_t response;
     size_t received = 0;
-    cloudzao_wire_begin(&response, true, 3, count, &received);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 3, count, &received);
     for (size_t i = 0; i < strlen(content); ++i) assert(cloudzao_wire_feed(&response, content+i, 1));
     assert(response.done && received == 3);
     received = 0;
-    cloudzao_wire_begin(&response, true, 3, count, &received);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 3, count, &received);
     assert(cloudzao_wire_feed(&response, chunked, strlen(chunked)) && response.done && received == 3);
     received = 0;
-    cloudzao_wire_begin(&response, true, 2, count, &received);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 2, count, &received);
     assert(!cloudzao_wire_feed(&response, content, strlen(content)) && !received && response.error == CZ_INVALID);
-    cloudzao_wire_begin(&response, true, 2, count, &received);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 2, count, &received);
     assert(!cloudzao_wire_feed(&response, chunked, strlen(chunked)) && received == 1 && response.error == CZ_INVALID);
     received = 0;
-    cloudzao_wire_begin(&response, true, 3, count, &received);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 3, count, &received);
     assert(!cloudzao_wire_feed(&response, redirect, strlen(redirect)) && !received && response.error == CZ_SERVER);
-    cloudzao_wire_begin(&response, false, 3, count, &received);
-    assert(!cloudzao_wire_feed(&response, unauthorized, strlen(unauthorized)) && response.error == CZ_AUTH);
-    cloudzao_wire_begin(&response, true, 3, count, &received);
+    cloudzao_wire_begin(&response, CZ_LIST, 3, count, &received);
+    assert(cloudzao_wire_feed(&response, unauthorized, strlen(unauthorized)) && response.done && response.error == CZ_AUTH);
+    cloudzao_wire_begin(&response, CZ_DOWNLOAD, 3, count, &received);
     assert(cloudzao_wire_feed(&response, content, strlen(content) - 1) && !response.done);
     assert(!cloudzao_wire_feed(&response, "", 0));
     char host[254], wire[CLOUDZAO_CHUNK];
-    cz_http_request_t req = {.url = "https://admin.metalio.world@other.invalid/x"};
+    cz_http_request_t req = {.url = "https://claw.cloudzao.cn@other.invalid/x"};
     assert(!cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire)));
-    req.url = OSS_URL; req.key = KEY;
+    req.url = OSS_URL; req.token = KEY;
     assert(!cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire)));
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-    const cz_http_request_t invalid_token = {.key = "not-a-device-bearer", .mac = MAC};
+    const cz_http_request_t invalid_token = {.token = "invalid\r\nAuthorization: injected"};
     assert(!cloudzao_wire_request(CZ_LIST, &invalid_token, host, sizeof(host), wire, sizeof(wire)));
-#endif
-    req.key = NULL;
+    const char *bad_id[] = {"..", "a/b", "a%2fb", "a?b", "a\r\nb"};
+    for (unsigned i = 0; i < sizeof(bad_id) / sizeof(*bad_id); ++i) {
+        cz_http_request_t ack = {.token = KEY, .delivery_id = bad_id[i]};
+        assert(!cloudzao_wire_request(CZ_ACK, &ack, host, sizeof(host), wire, sizeof(wire)));
+    }
+    const char *acknowledged = "HTTP/1.1 204 No Content\r\n\r\n";
+    cloudzao_wire_begin(&response, CZ_ACK, 0, NULL, NULL);
+    assert(cloudzao_wire_feed(&response, acknowledged, strlen(acknowledged)) && response.done && response.error == CZ_OK);
+    cloudzao_wire_begin(&response, CZ_ACK, 0, NULL, NULL);
+    assert(!cloudzao_wire_feed(&response, content, strlen(content)));
+    req.token = NULL;
     const char *rejected[] = {
         "http://cdn.example.invalid" TARGET, "http://bucket.aliyuncs.com.example.invalid" TARGET,
         "http://bucket.aliyuncs.com@other.aliyuncs.com" TARGET, "http://bucket.aliyuncs.com:80" TARGET,
         OSS_URL "#fragment", "https://host.example.invalid:80" TARGET,
+        "https://cdn.example.invalid" EP_RAW_PATH EP_SIGNATURE,
+        "https://" OSS_HOST "/object.epub?name=书", "https://" OSS_HOST "/\xC0\xAF.epub",
+        "https://" OSS_HOST "/\xED\xA0\x80.epub", "https://" OSS_HOST "/\xE4\xB9.epub",
+        "https://" OSS_HOST "/书 .epub", "https://" OSS_HOST "/书.epub?x=\r\n",
     };
     for (size_t i = 0; i < sizeof(rejected) / sizeof(rejected[0]); ++i) {
         req.url = rejected[i];
         assert(!cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire)));
     }
+    req.url = EP_OSS_URL;
+    const size_t written = cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire));
+    assert(written && written == strlen(wire) && !strcmp(host, OSS_HOST));
+    assert(!memcmp(wire, "GET " EP_WIRE_PATH EP_SIGNATURE " HTTP/1.1\r\n", sizeof("GET " EP_WIRE_PATH EP_SIGNATURE " HTTP/1.1\r\n") - 1));
+    assert(!strstr(wire, "Authorization:") && !strstr(wire, "书"));
+    assert(!cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, written));
+    assert(cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, written + 1) == written);
+    char max_url[CLOUDZAO_URL_MAX + 1] = "https://" OSS_HOST "/书";
+    const size_t prefix = strlen(max_url);
+    memset(max_url + prefix, 'x', CLOUDZAO_URL_MAX - prefix - 6);
+    max_url[CLOUDZAO_URL_MAX - 6] = 0;
+    req.url = max_url;
+    assert(cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire)));
+    max_url[CLOUDZAO_URL_MAX - 6] = 'x';
+    assert(!cloudzao_wire_request(CZ_DOWNLOAD, &req, host, sizeof(host), wire, sizeof(wire)));
 }
 
-static void binding_regression(const char *root) {
-    test_t test = {.root = root, .space = 1ULL << 30, .probe_json = LIST("")};
-    cz_status_t status = run(&test, true, "{\"activation\":{\"code\":\"012345\"},\"firmware\":{\"url\":\"ignored\"}}");
-    assert(!status.error && !status.binding_probed && !strcmp(status.code, "012345") && !test.lists);
-    assert(run(&test, true, "{\"error\":\"upstream\",\"activation\":{\"code\":\"012345\"}}").error == CZ_SERVER);
-    assert(run(&test, true, "{\"activation\":{\"code\":12345}}").error == CZ_INVALID && !test.lists);
+#define PAIR_RESPONSE "{\"activationCode\":\"012345\",\"deviceCode\":\"pdc_fixture\",\"expiresIn\":86400,\"pollInterval\":5}"
+#define TOKEN_REPLY(access, refresh) "{\"accessToken\":\"" access "\",\"refreshToken\":\"" refresh \
+    "\",\"expiresIn\":900,\"refreshExpiresIn\":2592000}"
 
-    status = run(&test, true, "{\"firmware\":{}}");
-    assert(!status.error && status.binding_probed && !status.code[0] && test.lists == 1);
-    test.probe_json = LIST(TXT("probe-only.txt", "book-probe", DIGEST));
-    status = run(&test, true, "{\"activation\":null}");
-    assert(!status.error && status.binding_probed && !status.total && test.lists == 2);
-    assert(!test.queued && !test.stage_mask && !test.downloads && !test.confirmations && !test.books);
-    assert(!present(root, "books/probe-only.txt") && !present(root, ".readpico"));
+typedef struct {
+    int64_t now, request_seconds;
+    cz_session_record_t durable;
+    cz_request_t expected;
+    const char *body, *token;
+    unsigned calls[6], deny_list, deny_ack;
+    int http;
+    cz_error_t transport;
+    bool fail_write, reject_tokens, unsent;
+} partner_fixture_t;
 
-    test.probe_json = "{\"code\":500,\"data\":[]}";
-    status = run(&test, true, "{}");
-    assert(status.binding_probed && status.error == CZ_SERVER && test.lists == 3);
-    test.probe_json = "{\"code\":401,\"data\":[]}";
-    status = run(&test, true, "{}");
-    assert(status.binding_probed && status.error == CZ_AUTH && test.lists == 4);
-    test.probe_json = "{\"code\":0,\"data\":null}";
-    status = run(&test, true, "{}");
-    assert(status.binding_probed && status.error == CZ_INVALID && test.lists == 5);
-    test.cancel_after_bind = true;
-    status = run(&test, true, "{}");
-    assert(status.error == CZ_CANCELLED && test.lists == 5);
+static int64_t partner_clock(void *context) { return ((partner_fixture_t *)context)->now; }
+static cz_error_t partner_stop(void *context) { (void)context; return CZ_OK; }
+static bool partner_persist(void *context, const cz_session_record_t *record) {
+    partner_fixture_t *f = context;
+    assert(cloudzao_partner_record_valid(record));
+    if (f->fail_write || (f->reject_tokens && record->state == CZ_SESSION_AUTHORIZED)) return false;
+    f->durable = *record;
+    return true;
+}
+
+static cz_error_t partner_raw(void *context, cz_request_t op, const cz_http_request_t *req,
+                              cz_sink_t sink, void *sink_context) {
+    partner_fixture_t *f = context;
+    char wire[1024], host[254];
+    assert(cloudzao_wire_request(op, req, host, sizeof(host), wire, sizeof(wire)));
+    assert(!strcmp(host, "claw.cloudzao.cn") && strstr(wire, "\r\nHost: claw.cloudzao.cn\r\n"));
+    ++f->calls[op];
+    f->now += f->request_seconds;
+    unsigned http = f->http;
+    const char *body = f->body;
+    if (op == CZ_LIST || op == CZ_ACK) {
+        assert(req->token && !req->body && !req->url);
+        unsigned *deny = op == CZ_LIST ? &f->deny_list : &f->deny_ack;
+        if (*deny) {
+            --*deny;
+            http = 401;
+            body = "{\"error\":\"invalid_device_credential\"}";
+        } else {
+            assert(!f->token || !strcmp(req->token, f->token));
+            http = op == CZ_LIST ? 200 : 204;
+            body = op == CZ_LIST ? LIST("") : "";
+        }
+    } else {
+        assert(op == f->expected && !req->token && !strstr(wire, "Authorization:"));
+        if (op == CZ_BIND) {
+            assert(strstr(wire, "POST " BIND_PATH " HTTP/1.1"));
+            assert(!strcmp(req->body, "{\"integrationId\":\"integration_fixture\",\"deviceMac\":\"" MAC
+                          "\",\"currentVersion\":\"1.1.6\"}"));
+        } else if (op == CZ_EXCHANGE) {
+            assert(strstr(wire, "POST " BASE "/device-tokens HTTP/1.1"));
+            assert(!strcmp(req->body, "{\"deviceCode\":\"pdc_fixture\"}"));
+        } else if (op == CZ_REFRESH) {
+            assert(strstr(wire, "POST " BASE "/device-tokens/refresh HTTP/1.1"));
+            assert(strstr(req->body, "\"refreshToken\":\"prf_fixture"));
+            assert(f->durable.state == CZ_SESSION_ROTATING && !f->durable.refresh[0]);
+        }
+        if (req->maybe_sent) *req->maybe_sent = !f->unsent;
+        if (f->transport) return f->transport;
+    }
+    cz_response_t response;
+    const int n = snprintf(wire, sizeof(wire), "HTTP/1.1 %u Test\r\nContent-Length: %zu\r\n\r\n%s", http, strlen(body), body);
+    assert(n > 0 && (size_t)n < sizeof(wire));
+    cloudzao_wire_begin(&response, op, req->limit, sink, sink_context);
+    for (int i = 0; i < n; ++i) {
+        if (!cloudzao_wire_feed(&response, wire + i, 1)) return response.error;
+    }
+    assert(response.done);
+    return response.error;
+}
+
+static cz_status_t pair(cz_partner_t *p, bool poll) {
+    return cloudzao_partner_pair(p, poll, "integration_fixture", MAC, "1.1.6");
+}
+
+static cz_error_t inbox(cz_partner_t *p, cz_request_t operation) {
+    size_t received = 0;
+    const cz_http_request_t req = {.limit = 128, .delivery_id = operation == CZ_ACK ? "book-fixture" : NULL};
+    return cloudzao_partner_request(p, operation, &req, operation == CZ_LIST ? count : NULL, &received);
+}
+
+static void partner_regression(void) {
+    partner_fixture_t f = {.now = 1794787500, .expected = CZ_BIND, .http = 409,
+        .body = "{\"error\":\"activation_unavailable\"}"};
+    const cz_ops_t ops = {.context = &f, .request = partner_raw, .now = partner_clock, .stop = partner_stop};
+    char reply[CLOUDZAO_PARTNER_RESPONSE_CAP];
+    cz_partner_t p = {.raw = &ops, .persist = partner_persist, .response = reply};
+    assert(inbox(&p, CZ_LIST) == CZ_AUTH && f.calls[CZ_LIST] == 0);
+    assert(pair(&p, false).error == CZ_ACTIVATION_UNAVAILABLE && !f.calls[CZ_LIST]);
+    assert(cloudzao_partner_pair(&p, false, "", MAC, "1.1.6").error == CZ_INTEGRATION && f.calls[CZ_BIND] == 1);
+    f.http = 200; f.body = "{\"activationCode\":12345}";
+    assert(pair(&p, false).error == CZ_INVALID && !f.durable.state);
+    f.body = PAIR_RESPONSE;
+    cz_status_t status = pair(&p, false);
+    assert(status.error == CZ_OK && !strcmp(status.code, "012345") && status.poll_after_s == 5);
+    assert(f.durable.state == CZ_SESSION_PAIRING && !strcmp(f.durable.credential, "pdc_fixture"));
+    p.record = f.durable;
+    status = pair(&p, false);
+    assert(status.error == CZ_PAIR_PENDING && status.poll_after_s == 5 && f.calls[CZ_BIND] == 3);
+    assert(pair(&p, true).error == CZ_PAIR_PENDING && !f.calls[CZ_EXCHANGE]);
+    f.now += 5; f.expected = CZ_EXCHANGE; f.http = 409; f.body = "{\"error\":\"authorization_pending\"}";
+    assert(pair(&p, true).error == CZ_PAIR_PENDING && f.calls[CZ_EXCHANGE] == 1);
+    f.now += 5; f.http = 429; f.body = "{\"error\":\"slow_down\"}";
+    status = pair(&p, true);
+    assert(status.error == CZ_SLOW_DOWN && status.poll_after_s == 30);
+    p.record = f.durable;
+    f.now += 29;
+    assert(pair(&p, true).poll_after_s == 30 && f.calls[CZ_EXCHANGE] == 2);
+    f.now += 30; f.http = 200; f.body = TOKEN_REPLY("pat_fixture.first", "prf_fixture.first");
+    assert(pair(&p, true).authorized && f.durable.state == CZ_SESSION_AUTHORIZED && !f.durable.code[0]);
+    assert(f.durable.expires_at == f.now + 900 && f.durable.refresh_expires_at == f.now + 2592000);
+    const cz_session_record_t first = f.durable;
+    p.record = f.durable; f.token = "pat_fixture.first";
+    assert(inbox(&p, CZ_LIST) == CZ_OK && !f.calls[CZ_REFRESH]);
+    f.now = 0;
+    assert(inbox(&p, CZ_LIST) == CZ_CLOCK && f.calls[CZ_LIST] == 1);
+    f.now = first.issued_at + 815; f.expected = CZ_REFRESH;
+    f.body = TOKEN_REPLY("pat_fixture.second", "prf_fixture.second"); f.token = "pat_fixture.second";
+    assert(inbox(&p, CZ_LIST) == CZ_OK && f.calls[CZ_REFRESH] == 1 && f.calls[CZ_LIST] == 2);
+    assert(f.durable.refresh_expires_at == first.refresh_expires_at);
+    f.deny_ack = 1; f.body = TOKEN_REPLY("pat_fixture.third", "prf_fixture.third"); f.token = "pat_fixture.third";
+    assert(inbox(&p, CZ_ACK) == CZ_OK && f.calls[CZ_REFRESH] == 2 && f.calls[CZ_ACK] == 2);
+    f.deny_list = 2; f.body = TOKEN_REPLY("pat_fixture.fourth", "prf_fixture.fourth");
+    assert(inbox(&p, CZ_LIST) == CZ_AUTH && f.calls[CZ_REFRESH] == 3 && f.calls[CZ_LIST] == 4);
+    f.deny_list = 1; f.http = 429; f.body = "{\"error\":\"slow_down\"}";
+    assert(inbox(&p, CZ_LIST) == CZ_SLOW_DOWN && f.calls[CZ_REFRESH] == 4 && f.durable.state == CZ_SESSION_AUTHORIZED);
+    f.deny_list = 1;
+    assert(inbox(&p, CZ_LIST) == CZ_SLOW_DOWN && f.calls[CZ_REFRESH] == 4);
+    f.now += 30; f.http = 401; f.body = "{\"error\":\"refresh_reused\"}"; f.deny_list = 1;
+    assert(inbox(&p, CZ_LIST) == CZ_REFRESH_REUSED && f.durable.state == CZ_SESSION_EMPTY);
+
+    f.http = 200; f.fail_write = true; f.now = first.expires_at;
+    p.record = f.durable = first;
+    assert(inbox(&p, CZ_LIST) == CZ_CREDENTIAL_STORAGE && f.calls[CZ_REFRESH] == 5);
+    f.fail_write = false; f.transport = CZ_TIMEOUT; f.unsent = true;
+    assert(inbox(&p, CZ_LIST) == CZ_TIMEOUT && f.durable.state == CZ_SESSION_AUTHORIZED);
+    f.unsent = false;
+    assert(inbox(&p, CZ_LIST) == CZ_TIMEOUT && f.durable.state == CZ_SESSION_ROTATING);
+    p.record = f.durable; f.transport = CZ_OK;
+    assert(inbox(&p, CZ_LIST) == CZ_AUTH && f.calls[CZ_REFRESH] == 7);
+    p.record = f.durable = first; f.reject_tokens = true; f.body = TOKEN_REPLY("pat_fixture.lost", "prf_fixture.lost");
+    assert(inbox(&p, CZ_ACK) == CZ_CREDENTIAL_STORAGE && f.durable.state == CZ_SESSION_ROTATING);
+    f.reject_tokens = false; p.record = f.durable = first;
+    f.body = TOKEN_REPLY("pat_fixture.lost", "prf_fixture.first");
+    assert(inbox(&p, CZ_ACK) == CZ_INVALID && f.durable.state == CZ_SESSION_ROTATING);
+    f.expected = CZ_BIND; f.body = PAIR_RESPONSE;
+    assert(pair(&p, false).poll_after_s == 5);
+    f.expected = CZ_EXCHANGE; f.now += 5; f.http = 410; f.body = "{\"error\":\"pairing_expired\"}";
+    assert(pair(&p, true).error == CZ_PAIR_EXPIRED && f.durable.state == CZ_SESSION_EMPTY);
+    assert(pair(&p, true).error == CZ_PAIR_EXPIRED);
+    puts("CloudZao Partner pairing, reboot, backoff, rotation, 401 and ambiguous refresh: PASS");
+}
+
+static void partner_pair_timeout_regression(void) {
+    partner_fixture_t f = {.now = 1794787500, .expected = CZ_BIND, .http = 200, .body = PAIR_RESPONSE};
+    const cz_ops_t ops = {.context = &f, .request = partner_raw, .now = partner_clock, .stop = partner_stop};
+    char reply[CLOUDZAO_PARTNER_RESPONSE_CAP];
+    cz_partner_t p = {.raw = &ops, .persist = partner_persist, .response = reply};
+    assert(pair(&p, false).poll_after_s == 5);
+    f.expected = CZ_EXCHANGE;
+    f.now += 5;
+    f.transport = CZ_TIMEOUT;
+    cz_status_t status = pair(&p, true);
+    assert(status.error == CZ_TIMEOUT && !strcmp(status.code, "012345") && status.poll_after_s == 10);
+    assert(!status.authorized && f.calls[CZ_BIND] == 1 && f.calls[CZ_EXCHANGE] == 1);
+    assert(f.durable.state == CZ_SESSION_PAIRING && !strcmp(f.durable.credential, "pdc_fixture"));
+
+    p.record = f.durable;
+    assert(pair(&p, false).poll_after_s == 5 && f.calls[CZ_BIND] == 1);
+    f.now += status.poll_after_s;
+    f.transport = CZ_OK;
+    f.body = TOKEN_REPLY("pat_fixture.first", "prf_fixture.first");
+    assert(pair(&p, true).authorized && f.calls[CZ_EXCHANGE] == 2);
+    assert(f.durable.state == CZ_SESSION_AUTHORIZED && !strcmp(f.durable.refresh, "prf_fixture.first"));
+
+    p.record = f.durable = (cz_session_record_t){0};
+    f.expected = CZ_BIND;
+    f.body = "{\"activationCode\":\"012345\",\"deviceCode\":\"pdc_fixture\",\"expiresIn\":60,\"pollInterval\":15}";
+    assert(pair(&p, false).poll_after_s == 15);
+    f.expected = CZ_EXCHANGE;
+    f.now += 15;
+    f.transport = CZ_TIMEOUT;
+    status = pair(&p, true);
+    assert(status.error == CZ_TIMEOUT && status.poll_after_s == 15);
+    f.now = f.durable.expires_at - 8;
+    f.request_seconds = 4;
+    status = pair(&p, true);
+    assert(status.error == CZ_TIMEOUT && status.poll_after_s == 4 && status.code[0]);
+    f.request_seconds = 6;
+    status = pair(&p, true);
+    assert(status.error == CZ_PAIR_EXPIRED && !status.poll_after_s && !status.code[0]);
+    assert(pair(&p, true).error == CZ_PAIR_EXPIRED && f.calls[CZ_EXCHANGE] == 5);
+
+    f.request_seconds = 0;
+    f.expected = CZ_BIND;
+    f.transport = CZ_OK;
+    assert(pair(&p, false).poll_after_s == 15);
+    f.expected = CZ_EXCHANGE;
+    f.now += 15;
+    f.transport = CZ_TIMEOUT;
+    status = pair(&p, true);
+    assert(status.error == CZ_TIMEOUT && status.code[0]);
+    f.now += status.poll_after_s;
+    f.transport = CZ_OK;
+    f.http = 410;
+    f.body = "{\"error\":\"pairing_expired\"}";
+    status = pair(&p, true);
+    assert(status.error == CZ_PAIR_EXPIRED && !status.authorized && !status.poll_after_s && !status.code[0]);
+    assert(f.durable.state == CZ_SESSION_EMPTY);
+    assert(pair(&p, true).error == CZ_PAIR_EXPIRED && f.calls[CZ_BIND] == 3 && f.calls[CZ_EXCHANGE] == 7);
+    puts("CloudZao Partner exchange timeout, retry, and expiry: PASS");
 }
 
 static void selection_regression(const char *root) {
@@ -308,7 +540,7 @@ static void selection_regression(const char *root) {
 #define SELECT_FONT ITEM("FONT", "", "font/ttf", "choice.ttf", "choice-font", DIGEST)
 #define UNSUPPORTED_ITEM ITEM("FONT", "", "application/octet-stream", "choice.ef", "choice-unsupported", DIGEST)
     const char *queue = LIST(SELECT_BOOK "," SELECT_IMAGE "," UNSUPPORTED_ITEM "," SELECT_FONT);
-    test_t test = {.root = root, .space = 1ULL << 30, .expected_ack = "choice-image\""};
+    test_t test = {.root = root, .space = 1ULL << 30, .expected_ack = "choice-image"};
     cz_status_t status = run_job(&test, CZ_JOB_PREVIEW, queue);
     assert(!status.error && status.total == 4 && test_queue.count == 4 && test.lists == 1);
     assert(test_queue.offers[0].kind == CZ_KIND_TXT && test_queue.offers[1].kind == CZ_KIND_PNG &&
@@ -341,78 +573,93 @@ static void selection_regression(const char *root) {
 #undef UNSUPPORTED_ITEM
 }
 
+static void expired_link_regression(const char *root) {
+    char expired[512];
+    const char *valid = LIST(TXT("expiring.txt", "expiry-id", DIGEST));
+    assert(snprintf(expired, sizeof(expired), "%.*s,\"downloadExpiresAt\":1794787499}]}", (int)strlen(valid) - 3, valid) < (int)sizeof(expired));
+    test_t test = {.root = root, .space = 1ULL << 30, .replacement_json = valid, .replacement_on = 3, .ack_timeouts = 1};
+    cz_status_t status = run(&test, expired);
+    assert(!status.error && status.saved == 1 && status.pending == 0 && test.lists == 3 && test.downloads == 1 && test.confirmations == 2);
+    test.replacement_json = NULL;
+    status = run_job(&test, CZ_JOB_PREVIEW, LIST("{\"kind\":\"book\",\"format\":\"txt\",\"mediaType\":\"text/plain\",\"name\":\"no-digest.txt\",\"deliveryId\":\"no-digest\",\"sizeBytes\":3}"));
+    assert(!status.error && test_queue.offers[0].kind == CZ_KIND_NONE);
+}
+
 int main(int argc, char **argv) {
     assert(argc == 2);
     framing();
+    empty_preview_regression();
     test_t test = {.root = argv[1], .space = 1ULL << 30};
-    binding_regression(argv[1]);
+    partner_regression();
+    partner_pair_timeout_regression();
     char selection_root[512];
     assert(snprintf(selection_root, sizeof(selection_root), "%s/selection", argv[1]) < (int)sizeof(selection_root));
     assert(!mkdir(selection_root, 0775));
     selection_regression(selection_root);
     cz_status_t status;
-    assert(!run(&test, false, LIST("")).total && test.lists == 1);
-    assert(run(&test, false, "{\"code\":401,\"data\":[]}").error == CZ_AUTH);
-    assert(run(&test, false, "{\"code\":500,\"data\":[]}").error == CZ_SERVER);
-    assert(run(&test, false, "{\"code\":0,\"data\":[]}junk").error == CZ_INVALID);
-    assert(run(&test, false, "{\"code\":0,\"data\":[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]}").error == CZ_INVALID);
+    assert(!run(&test, LIST("")).total && test.lists == 1);
+    assert(run(&test, "{\"code\":401,\"data\":[]}").error == CZ_INVALID);
+    assert(run(&test, "{\"code\":500,\"data\":[]}").error == CZ_INVALID);
+    assert(run(&test, "{\"items\":[]}junk").error == CZ_INVALID);
+    assert(run(&test, "{\"items\":[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]}").error == CZ_INVALID);
     test.oversized = true;
-    assert(run(&test, false, "").error == CZ_INVALID);
+    assert(run(&test, "").error == CZ_INVALID);
     test.oversized = false;
-    status = run(&test, false, LIST(TXT("../escape.txt", "book-0", DIGEST) "," TXT("a\\u0000.txt", "book-0", DIGEST)));
+    status = run(&test, LIST(TXT("../escape.txt", "book-0", DIGEST) "," TXT("a\\u0000.txt", "book-0", DIGEST)));
     assert(status.error == CZ_INVALID && !test.downloads && !test.confirmations);
-    status = run(&test, false, LIST(TXT("../escape.txt", "book-0", DIGEST) "," TXT(".hidden.txt", "book-0", DIGEST)
+    status = run(&test, LIST(TXT("../escape.txt", "book-0", DIGEST) "," TXT(".hidden.txt", "book-0", DIGEST)
         "," ITEM("FONT", "", "application/octet-stream", "unsupported.ef", "font-1", DIGEST)));
     assert(!status.error && status.total == 3 && !test.downloads && !test.confirmations);
     for (unsigned i = 0; i < 3; ++i) assert(test_queue.offers[i].kind == CZ_KIND_NONE);
     assert(!test_queue.offers[0].file.name[0] && !test_queue.offers[1].file.name[0]);
-    status = run(&test, false, LIST(TXT("bad.txt", "book-0", "aa7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")));
+    status = run(&test, LIST(TXT("bad.txt", "book-0", "aa7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")));
     assert(!status.error && status.failed == 1 && !test.confirmations && !present(test.root, "books/bad.txt"));
     test.downloads = 0;
-    test.ack_result = CZ_TIMEOUT;
-    status = run(&test, false, LIST(TXT("中文.txt", "book-1", DIGEST)));
-    assert(!status.error && status.saved == 1 && status.pending == 1 && status.item_request == CZ_ACK && test.confirmations == 1 && test.downloads == 1 && test.books == 1);
+    test.ack_timeouts = 2;
+    status = run(&test, LIST(TXT("中文.txt", "book-1", DIGEST)));
+    assert(!status.error && status.saved == 1 && status.pending == 1 && status.item_request == CZ_ACK && test.confirmations == 2 && test.downloads == 1 && test.books == 1);
     assert(test.queued == 1 && test.finished == 1 && test.written == 3);
     assert(test.stage_mask == ((1u << CZ_ROW_DOWNLOAD) | (1u << CZ_ROW_VERIFY) | (1u << CZ_ROW_CONFIRM)));
     test.ack_result = CZ_OK;
-    assert(!run(&test, false, LIST("")).total && test.confirmations == 1 && test.downloads == 1);
-    status = run(&test, false, LIST(TXT("中文.txt", "book-1", DIGEST)));
-    assert(!status.error && status.saved == 1 && !status.pending && test.confirmations == 2 && test.downloads == 1 && test.books == 1);
-    status = run(&test, false, LIST(TXT("中文.txt", "book-2", "aa7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")));
-    assert(status.item_error == CZ_CONFLICT && test.confirmations == 2 && test.downloads == 1);
-    status = run(&test, false, LIST(ITEM("BOOK", "EPUB", "application/epub+zip", "book.epub", "book-3", DIGEST) ","
+    assert(!run(&test, LIST("")).total && test.confirmations == 2 && test.downloads == 1);
+    status = run(&test, LIST(TXT("中文.txt", "book-1", DIGEST)));
+    assert(!status.error && status.saved == 1 && !status.pending && test.confirmations == 3 && test.downloads == 1 && test.books == 1);
+    status = run(&test, LIST(TXT("中文.txt", "book-2", "aa7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")));
+    assert(status.item_error == CZ_CONFLICT && test.confirmations == 3 && test.downloads == 1);
+    status = run(&test, LIST(ITEM_URL("BOOK", "EPUB", "application/epub+zip", "中文.epub", "book-3", DIGEST, EP_OSS_URL) ","
         ITEM("BADGE", "", "image/png", "wall.png", "badge-3", DIGEST) "," ITEM("FONT", "", "font/ttf", "font.ttf", "font-3", DIGEST)));
     assert(!status.error && status.saved == 3 && !status.pending && test.books == 2);
-    assert(present(test.root, "books/book.epub") && present(test.root, "pictures/wall.png") && present(test.root, "fonts/font.ttf"));
-    status = run(&test, false, LIST(ITEM_URL("BOOK", "TXT", "text/plain", "oss.txt", "book-4", DIGEST, OSS_URL)));
+    assert(present(test.root, "books/中文.epub") && present(test.root, "pictures/wall.png") && present(test.root, "fonts/font.ttf"));
+    status = run(&test, LIST(ITEM_URL("BOOK", "TXT", "text/plain", "oss.txt", "book-4", DIGEST, OSS_URL)));
     assert(!status.error && status.saved == 1 && !status.pending && present(test.root, "books/oss.txt"));
     unsigned confirmations = test.confirmations, downloads = test.downloads;
-    status = run(&test, false, LIST(ITEM_URL("BOOK", "TXT", "text/plain", "insecure.txt", "book-5", DIGEST,
+    status = run(&test, LIST(ITEM_URL("BOOK", "TXT", "text/plain", "insecure.txt", "book-5", DIGEST,
         "http://cdn.example.invalid" TARGET)));
     assert(!status.error && !status.saved && test_queue.offers[0].kind == CZ_KIND_NONE);
     assert(test.confirmations == confirmations && test.downloads == downloads && !present(test.root, "books/insecure.txt"));
     test.interrupt_during_download = CZ_CANCELLED;
-    status = run(&test, false, LIST(TXT("cancel.txt", "book-5", DIGEST)));
+    status = run(&test, LIST(TXT("cancel.txt", "book-5", DIGEST)));
     assert(status.error == CZ_CANCELLED && test.confirmations == confirmations && !present(test.root, "books/cancel.txt"));
     assert(!present(test.root, ".readpico/cloudzao/incoming.part"));
     test.interrupt = CZ_OK;
     test.interrupt_during_download = CZ_MEDIA;
-    status = run(&test, false, LIST(TXT("pull.txt", "book-5", DIGEST)));
+    status = run(&test, LIST(TXT("pull.txt", "book-5", DIGEST)));
     assert(status.error == CZ_MEDIA && test.confirmations == confirmations && !present(test.root, "books/pull.txt"));
     assert(present(test.root, ".readpico/cloudzao/incoming.part"));
     test.interrupt = test.interrupt_during_download = CZ_OK;
-    assert(!run(&test, false, LIST("")).error && present(test.root, ".readpico/cloudzao/incoming.part"));
+    assert(!run(&test, LIST("")).error && present(test.root, ".readpico/cloudzao/incoming.part"));
     test.space = 0;
-    status = run(&test, false, LIST(TXT("full.txt", "book-5", DIGEST)));
+    status = run(&test, LIST(TXT("full.txt", "book-5", DIGEST)));
     assert(status.item_error == CZ_STORAGE && test.confirmations == confirmations);
     assert(!present(test.root, ".readpico/cloudzao/incoming.part"));
-    char many[1024] = "{\"code\":0,\"data\":[";
+    char many[1024] = "{\"items\":[";
     for (unsigned i = 0; i < CLOUDZAO_LIST_ROWS + 3; ++i) strcat(many, i ? ",{}" : "{}");
     strcat(many, "]}");
-    status = run(&test, false, many);
+    status = run(&test, many);
     assert(!status.error && status.total == CLOUDZAO_LIST_ROWS + 3 && test_queue.count == CLOUDZAO_LIST_ROWS);
     assert(!test.queued && !test.finished);
     history_regression(&test);
+    expired_link_regression(argv[1]);
     puts("CloudZao framing, storage, acknowledgement and cancellation passed");
     return 0;
 }

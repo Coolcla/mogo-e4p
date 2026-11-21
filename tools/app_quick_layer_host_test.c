@@ -222,6 +222,9 @@ static void hold(int button, const app_desc_t *p) {
     (void)frame(true, false, false, x, 156, 500, false);
     assert(!app_quick_layer_is_open()); release();
 }
+static bool page_modal_visible(app_ctx_t *c) { assert(c == &ctx); return true; }
+static const app_desc_t modal_page = {.render = render, .modal_input_owned = page_modal_visible};
+
 int main(void) {
     ctx = (app_ctx_t){.hl = &hl, .fb = fb, .touch = &touch};
     // 锁屏、切页与读点错误会重置快捷层；实体键已改过设置时，旧预览不能写回。
@@ -454,6 +457,15 @@ int main(void) {
     assert(setup_wifi==old_setup+1&&!app_quick_layer_is_open());release();
     saved_quick_layout=(app_quick_layout_t)APP_QUICK_LAYOUT_DEFAULT;
     puts("PASS: resident rotation notice expires without toggling, custom ordering drives actual light/WiFi-hold actions");
+    for (unsigned replay = 0; replay < 2; ++replay) {
+        app_quick_layer_reset(); online = usb = false; current = &modal_page;
+        (void)frame(true, true, false, 200, 10, 10, replay);
+        (void)frame(true, false, false, 200, 130, 10, replay);
+        release();
+        assert(!app_quick_layer_is_open());
+    }
+    open_layer();
+    app_quick_layer_reset();
     printf("QUICK_TRACE %016" PRIx64 " applies=%u rows=%u pushes=%u failures=%u\n", trace, applies, rows, pushes, failures);
     return 0;
 }

@@ -20,6 +20,7 @@ typedef struct { char *data; size_t used; } json_buffer_t;
 typedef struct {
     const char *task, *name, *url, *directory;
     size_t length;
+    int64_t expires;
     cz_kind_t kind;
     uint8_t digest[32];
 } item_t;
@@ -32,11 +33,16 @@ typedef struct {
     cz_error_t error;
 } writer_t;
 
-bool cloudzao_key_valid(const char *key) {
-    if (!key || !*key) return false;
-    for (size_t i = 0; key[i]; ++i)
-        if (i >= CLOUDZAO_KEY_MAX || (unsigned char)key[i] <= ' ' || (unsigned char)key[i] > '~') return false;
-    return true;
+bool cloudzao_token_valid(const char *token) {
+    if (!token || !*token) return false;
+    size_t n = strnlen(token, CLOUDZAO_TOKEN_MAX + 1);
+    return n <= CLOUDZAO_TOKEN_MAX && strspn(token,
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~+/=") == n;
+}
+
+bool cloudzao_delivery_id_valid(const char *id) {
+    if (!id || !*id || strlen(id) > CLOUDZAO_DELIVERY_ID_MAX) return false;
+    return id[strspn(id, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")] == 0;
 }
 
 static bool collect_json(void *context, const void *bytes, size_t length) {
@@ -71,33 +77,22 @@ static bool json_safe(const char *json) {
     return !quoted && !depth;
 }
 
-static cz_error_t read_json(const cz_ops_t *ops, cz_request_t operation, const char *body,
-                            const char *key, const char *mac, char *json, cJSON **root) {
+cJSON *cloudzao_json_parse(const char *json, size_t used) {
+    if (memchr(json, 0, used) || !json_safe(json)) return NULL;
+    return cJSON_ParseWithLengthOpts(json, used + 1, NULL, true);
+}
+
+static cz_error_t read_list(const cz_ops_t *ops, char *json, cJSON **root) {
     *root = NULL;
     cz_error_t error = ops->stop(ops->context);
     if (error != CZ_OK) return error;
     json[0] = 0;
     json_buffer_t response = {.data = json};
-    cz_http_request_t request = {.body = body, .key = key, .mac = mac, .limit = CLOUDZAO_JSON_MAX};
-    error = ops->request(ops->context, operation, &request, collect_json, &response);
+    const cz_http_request_t request = {.limit = CLOUDZAO_JSON_MAX};
+    error = ops->request(ops->context, CZ_LIST, &request, collect_json, &response);
     if (error != CZ_OK) return error;
-    // cJSON 丢失字符串中的 NUL 长度；拒绝该转义而不是接受被截断的路径或任务 ID。
-    // cJSON loses embedded NUL lengths; reject the escape rather than accepting a truncated path or task ID.
-    if (!json_safe(json)) return CZ_INVALID;
-    *root = cJSON_ParseWithLengthOpts(json, response.used + 1, NULL, true);
-    return *root ? CZ_OK : CZ_INVALID;
-}
-
-static cz_error_t business_status(const cJSON *root) {
-    const cJSON *code = cJSON_GetObjectItemCaseSensitive(root, "code");
-    return !cJSON_IsNumber(code) ? CZ_INVALID : code->valuedouble == 0 ? CZ_OK :
-        code->valuedouble == 401 ? CZ_AUTH : CZ_SERVER;
-}
-
-static cz_error_t task_list_status(const cJSON *root) {
-    const cz_error_t error = business_status(root);
-    if (error != CZ_OK) return error;
-    return cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(root, "data")) ? CZ_OK : CZ_INVALID;
+    *root = cloudzao_json_parse(json, response.used);
+    return cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(*root, "items")) ? CZ_OK : CZ_INVALID;
 }
 
 static bool equal(const char *value, const char *expected) { return value && !strcasecmp(value, expected); }
@@ -112,22 +107,29 @@ static bool mime_is(const char *value, const char *expected) {
     return !*value || *value == ';';
 }
 
+static size_t utf8_non_ascii_width(const unsigned char *text, size_t remaining) {
+    const unsigned char c = text[0];
+    const size_t width = c >= 0xc2 && c <= 0xdf ? 2 : c >= 0xe0 && c <= 0xef ? 3 :
+                         c >= 0xf0 && c <= 0xf4 ? 4 : 0;
+    if (!width || width > remaining) return 0;
+    const unsigned char next = text[1];
+    if ((c == 0xe0 && next < 0xa0) || (c == 0xed && next >= 0xa0) ||
+        (c == 0xf0 && next < 0x90) || (c == 0xf4 && next >= 0x90)) return 0;
+    for (size_t i = 1; i < width; ++i) if ((text[i] & 0xc0) != 0x80) return 0;
+    return width;
+}
+
 bool cloudzao_name_valid(const char *name) {
     if (!name) return false;
     size_t n = strlen(name);
     if (!n || n > CLOUDZAO_NAME_MAX || name[0] == '.' || name[0] == ' ' || name[n - 1] == ' ' || strstr(name, ".."))
         return false;
     for (size_t i = 0; i < n;) {
-        unsigned char c = name[i++];
+        const unsigned char c = name[i];
         if (c < 32 || c == 127 || strchr("/\\:*?\"<>|", c)) return false;
-        if (c < 128) continue;
-        unsigned continuation = c >= 0xc2 && c <= 0xdf ? 1 : c >= 0xe0 && c <= 0xef ? 2 :
-            c >= 0xf0 && c <= 0xf4 ? 3 : 0;
-        if (!continuation || continuation > n - i) return false;
-        unsigned char next = name[i];
-        if ((c == 0xe0 && next < 0xa0) || (c == 0xed && next >= 0xa0) ||
-            (c == 0xf0 && next < 0x90) || (c == 0xf4 && next >= 0x90)) return false;
-        while (continuation--) if (((unsigned char)name[i++] & 0xc0) != 0x80) return false;
+        const size_t width = c < 128 ? 1 : utf8_non_ascii_width((const unsigned char *)name + i, n - i);
+        if (!width) return false;
+        i += width;
     }
     return true;
 }
@@ -139,7 +141,9 @@ bool cloudzao_oss_host(const char *host, size_t length) {
 }
 
 bool cloudzao_download_target(const char *url, cz_download_target_t *target) {
-    if (!url || strlen(url) > CLOUDZAO_URL_MAX) return false;
+    if (!url) return false;
+    const size_t url_len = strnlen(url, CLOUDZAO_URL_MAX + 1);
+    if (url_len > CLOUDZAO_URL_MAX) return false;
     bool legacy_oss = !strncmp(url, "http://", 7);
     if (!legacy_oss && strncmp(url, "https://", 8)) return false;
     const char *host = url + (legacy_oss ? 7 : 8);
@@ -148,7 +152,8 @@ bool cloudzao_download_target(const char *url, cz_download_target_t *target) {
     size_t host_len = (size_t)(end - host);
     // 云造当前给部分 OSS 资源返回 HTTP 签名 URL；只借用目标并继续使用 443/TLS。
     // CloudZao returns HTTP-signed URLs for some OSS objects; reuse the target only over 443/TLS.
-    if (legacy_oss && !cloudzao_oss_host(host, host_len)) return false;
+    const bool oss = cloudzao_oss_host(host, host_len);
+    if (legacy_oss && !oss) return false;
     bool letter = false;
     for (const char *p = host; p < end; ++p) {
         const unsigned char c = *p;
@@ -156,9 +161,26 @@ bool cloudzao_download_target(const char *url, cz_download_target_t *target) {
         else if (!(c >= '0' && c <= '9') && c != '.' && c != '-') return false;
     }
     if (!letter) return false;
-    for (const unsigned char *p = (const unsigned char *)end; *p; ++p)
-        if (*p <= ' ' || *p >= 127 || *p == '\\' || *p == '#') return false;
-    if (target) *target = (cz_download_target_t){.host = host, .path = end, .host_len = host_len};
+    size_t encoded_len = 0;
+    bool query = false;
+    const unsigned char *stop = (const unsigned char *)url + url_len;
+    for (const unsigned char *p = (const unsigned char *)end; p < stop;) {
+        if (*p <= ' ' || *p == 127 || *p == '\\' || *p == '#') return false;
+        if (*p == '?') query = true;
+        if (*p < 128) {
+            ++encoded_len;
+            ++p;
+        } else {
+            // 仅兼容 OSS 路径中的裸 UTF-8；签名查询串保持原字节。/ Accept raw UTF-8 only in OSS paths; keep signed queries byte-for-byte.
+            const size_t width = oss && !query ? utf8_non_ascii_width(p, (size_t)(stop - p)) : 0;
+            if (!width) return false;
+            encoded_len += 3 * width;
+            p += width;
+        }
+    }
+    if ((size_t)(end - url) + encoded_len > CLOUDZAO_URL_MAX) return false;
+    if (target) *target = (cz_download_target_t){.host = host, .path = end, .host_len = host_len,
+        .encoded_len = encoded_len};
     return true;
 }
 
@@ -186,12 +208,13 @@ static size_t file_size(const cJSON *value, size_t max) {
 
 // 空目录表示格式不支持；格式支持但元数据损坏时返回错误。/ An empty directory means unsupported; malformed metadata is an error.
 static cz_error_t parse_item(const cJSON *object, item_t *item) {
+    *item = (item_t){0};
     if (!cJSON_IsObject(object)) return CZ_INVALID;
     item->name = string_at(object, "name");
     const char *ext = item->name ? strrchr(item->name, '.') : NULL;
-    const char *type = string_at(object, "resourceType");
+    const char *type = string_at(object, "kind");
     const char *format = string_at(object, "format");
-    const char *mime = string_at(object, "contentType");
+    const char *mime = string_at(object, "mediaType");
     bool binary = mime_is(mime, "application/octet-stream");
     size_t max = 0;
     if (equal(type, "BOOK") &&
@@ -206,12 +229,18 @@ static cz_error_t parse_item(const cJSON *object, item_t *item) {
          mime_is(mime, "application/font-sfnt"))) {
         item->directory = "fonts"; max = 32 * MIB; item->kind = CZ_KIND_TTF;
     } else return CZ_OK;
-    item->task = string_at(object, "taskId");
+    item->task = string_at(object, "deliveryId");
     item->url = string_at(object, "downloadUrl");
     const char *sha = string_at(object, "sha256");
-    item->length = file_size(cJSON_GetObjectItemCaseSensitive(object, "fileSize"), max);
-    if (!cloudzao_name_valid(item->name) || !item->task || !*item->task || strlen(item->task) > 32 ||
+    item->length = file_size(cJSON_GetObjectItemCaseSensitive(object, "sizeBytes"), max);
+    if (!cloudzao_name_valid(item->name) || !cloudzao_delivery_id_valid(item->task) ||
         !cloudzao_download_target(item->url, NULL) || !item->length || !sha || strlen(sha) != 64) return CZ_INVALID;
+    const cJSON *expires = cJSON_GetObjectItemCaseSensitive(object, "downloadExpiresAt");
+    if (expires && !cJSON_IsNull(expires)) {
+        if (!cJSON_IsNumber(expires) || expires->valuedouble < 1 || expires->valuedouble > 253402300799.0 ||
+            (int64_t)expires->valuedouble != expires->valuedouble) return CZ_INVALID;
+        item->expires = (int64_t)expires->valuedouble;
+    }
     for (size_t i = 0; i < sizeof(item->digest); ++i) {
         int hi = hex_digit(sha[2*i]), lo = hex_digit(sha[2*i+1]);
         if (hi < 0 || lo < 0) return CZ_INVALID;
@@ -282,7 +311,9 @@ static cz_error_t save_item(const cz_ops_t *ops, const item_t *item, unsigned ch
         if (ops->stage) ops->stage(ops->context, CZ_ROW_VERIFY, 0);
         return verify_existing(ops, item, path, chunk);
     }
-    if (errno != ENOENT || ops->free_bytes(ops->context) < item->length) return CZ_STORAGE;
+    if (errno != ENOENT) return CZ_STORAGE;
+    if (item->expires && ops->now && ops->now(ops->context) >= item->expires) return CZ_LINK_EXPIRED;
+    if (ops->free_bytes(ops->context) < item->length) return CZ_STORAGE;
     if (!make_path(part, ops->root, ".readpico", NULL) || !ensure_dir(part) ||
         !make_path(part, ops->root, ".readpico/cloudzao", NULL) || !ensure_dir(part) ||
         !make_path(part, ops->root, ".readpico/cloudzao", "incoming.part")) return CZ_STORAGE;
@@ -318,17 +349,13 @@ static cz_error_t save_item(const cz_ops_t *ops, const item_t *item, unsigned ch
     return error;
 }
 
-static cz_error_t acknowledge(const cz_ops_t *ops, const item_t *item, const char *key, const char *mac, char *json) {
-    char body[240];
-    cJSON *payload = cJSON_CreateObject();
-    bool built = payload && cJSON_AddStringToObject(payload, "taskId", item->task) &&
-        cJSON_PrintPreallocated(payload, body, sizeof(body), false);
-    cJSON_Delete(payload);
-    if (!built) return CZ_RESOURCES;
-    cJSON *root;
-    cz_error_t error = read_json(ops, CZ_ACK, body, key, mac, json, &root);
-    if (error == CZ_OK) error = business_status(root);
-    cJSON_Delete(root);
+static cz_error_t acknowledge(const cz_ops_t *ops, const item_t *item) {
+    const cz_http_request_t request = {.delivery_id = item->task};
+    cz_error_t error = ops->stop(ops->context);
+    if (error == CZ_OK) error = ops->request(ops->context, CZ_ACK, &request, NULL, NULL);
+    // 仅确认接口允许超时后重发；保存过的文件不重下。/ Only acknowledgement retries a timeout, without downloading again.
+    if (error == CZ_TIMEOUT && ops->stop(ops->context) == CZ_OK)
+        error = ops->request(ops->context, CZ_ACK, &request, NULL, NULL);
     return error;
 }
 
@@ -393,60 +420,26 @@ static cz_error_t match_offers(const cz_ops_t *ops, const cJSON *list, const cz_
     return CZ_OK;
 }
 
-cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, const char *key, const char *mac,
-                         const char *version, char *json, unsigned char *chunk) {
+cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, char *json, unsigned char *chunk) {
     cz_status_t status = {.busy = true};
-    if (!cloudzao_key_valid(key) || !mac || !*mac || (job != CZ_JOB_BIND && !queue) ||
-        (job != CZ_JOB_BIND && job != CZ_JOB_PREVIEW && job != CZ_JOB_DOWNLOAD)) {
+    if (!queue || (job != CZ_JOB_PREVIEW && job != CZ_JOB_DOWNLOAD)) {
         status.error = CZ_INVALID;
         return status;
     }
-    const bool binding = job == CZ_JOB_BIND;
     if (job == CZ_JOB_DOWNLOAD) {
         if (queue->count <= CLOUDZAO_LIST_ROWS)
             for (unsigned i = 0; i < queue->count; ++i) if (is_chosen(queue, i)) ++status.total;
         if (!status.total) { status.error = CZ_INVALID; return status; }
     }
-    char body[256];
-    if (binding) {
-        cJSON *payload = cJSON_CreateObject();
-        cJSON *app = payload ? cJSON_AddObjectToObject(payload, "application") : NULL;
-        bool built = app && cJSON_AddStringToObject(app, "version", version) &&
-            cJSON_PrintPreallocated(payload, body, sizeof(body), false);
-        cJSON_Delete(payload);
-        if (!built) { status.error = CZ_RESOURCES; return status; }
-    }
     cJSON *root;
-    status.error = read_json(ops, binding ? CZ_BIND : CZ_LIST, binding ? body : NULL, key, mac, json, &root);
-    if (status.error != CZ_OK) return status;
-    if (binding) {
-        const cJSON *error = cJSON_GetObjectItemCaseSensitive(root, "error");
-        const cJSON *activation = cJSON_GetObjectItemCaseSensitive(root, "activation");
-        const char *code = string_at(activation, "code");
-        if (!cJSON_IsObject(root)) status.error = CZ_INVALID;
-        else if (error && !cJSON_IsNull(error) && (!cJSON_IsString(error) || *error->valuestring)) status.error = CZ_SERVER;
-        else if (code || (activation && !cJSON_IsNull(activation))) {
-            if (!code || strlen(code) != 6 || strspn(code, "0123456789") != 6) status.error = CZ_INVALID;
-            else memcpy(status.code, code, sizeof(status.code));
-        }
-        cJSON_Delete(root);
-        if (status.error != CZ_OK || status.code[0]) return status;
-
-        // 资源列表要求有效绑定；只验证响应，不进入接收、写卡或确认流程。
-        // Listing requires a valid binding; validate the response without receiving, writing, or acknowledging files.
-        status.binding_probed = true;
-        status.error = read_json(ops, CZ_LIST, NULL, key, mac, json, &root);
-        if (status.error == CZ_OK) status.error = task_list_status(root);
-        cJSON_Delete(root);
-        if (status.error == CZ_OK) status.error = ops->stop(ops->context);
-        return status;
-    }
-    status.error = task_list_status(root);
-    const cJSON *list = cJSON_GetObjectItemCaseSensitive(root, "data");
+    status.error = read_list(ops, json, &root);
+    const cJSON *list = cJSON_GetObjectItemCaseSensitive(root, "items");
     if (status.error == CZ_OK) status.error = ops->stop(ops->context);
-    if (status.error == CZ_OK && psa_crypto_init() != PSA_SUCCESS) status.error = CZ_RESOURCES;
+    if (status.error == CZ_OK && job == CZ_JOB_PREVIEW) status.total = (unsigned)cJSON_GetArraySize(list);
+    // 空清单没有需要计算摘要的条目。/ An empty preview has no entries to hash.
+    if (status.error == CZ_OK && (job == CZ_JOB_DOWNLOAD || status.total) && psa_crypto_init() != PSA_SUCCESS)
+        status.error = CZ_RESOURCES;
     if (status.error == CZ_OK && job == CZ_JOB_PREVIEW) {
-        status.total = (unsigned)cJSON_GetArraySize(list);
         status.error = preview_offers(ops, list, queue);
     } else if (status.error == CZ_OK && job == CZ_JOB_DOWNLOAD) {
         const cJSON *matches[CLOUDZAO_LIST_ROWS] = {0};
@@ -468,6 +461,7 @@ cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, c
                 if (is_chosen(queue, i)) ops->row(ops->context, index++, &queue->offers[i].file, false);
         }
         if (status.error == CZ_OK) ops->progress(ops->context, &status);
+        bool link_relisted = false;
         for (unsigned i = 0; i < queue->count && status.error == CZ_OK; ++i) {
             if (!is_chosen(queue, i)) continue;
             if ((status.error = ops->stop(ops->context)) != CZ_OK) break;
@@ -483,12 +477,25 @@ cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, c
                 row.state = CZ_ROW_CHECK;
                 if (ops->row) ops->row(ops->context, status.processed, &row, true);
                 if (error == CZ_OK) error = save_item(ops, &item, chunk, &added);
+                if (error == CZ_LINK_EXPIRED && !link_relisted) {
+                    link_relisted = true;
+                    cJSON *fresh;
+                    error = read_list(ops, json, &fresh);
+                    if (error == CZ_OK) {
+                        cJSON_Delete(root);
+                        root = fresh;
+                        memset(matches, 0, sizeof(matches));
+                        error = match_offers(ops, cJSON_GetObjectItemCaseSensitive(root, "items"), queue, matches, status.total);
+                        if (error == CZ_OK) error = matches[i] ? parse_item(matches[i], &item) : CZ_DELIVERY_MISSING;
+                        if (error == CZ_OK) error = save_item(ops, &item, chunk, &added);
+                    } else cJSON_Delete(fresh);
+                }
                 if (error == CZ_OK) {
                     ++status.saved;
                     if (added && !strcmp(item.directory, "books")) ops->book_added(ops->context);
                     operation = CZ_ACK;
                     if (ops->stage) ops->stage(ops->context, CZ_ROW_CONFIRM, item.length);
-                    error = acknowledge(ops, &item, key, mac, json);
+                    error = acknowledge(ops, &item);
                     if (error != CZ_OK) ++status.pending;
                     row.state = error == CZ_OK ? CZ_ROW_SAVED : CZ_ROW_PENDING;
                 } else {
@@ -501,7 +508,8 @@ cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, c
                     status.item_error = error;
                     status.item_request = operation;
                 }
-                if (error == CZ_AUTH) status.error = error;
+                if (error == CZ_AUTH || error == CZ_CREDENTIAL_STORAGE || error == CZ_CLOCK || error == CZ_REFRESH_REUSED)
+                    status.error = error;
             }
             if (ops->row) ops->row(ops->context, status.processed, &row, false);
             ++status.processed;

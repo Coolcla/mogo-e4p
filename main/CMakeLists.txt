@@ -59,7 +59,7 @@ set(cellular_sources
     "services/cellular/uart_eth_modem.cc")
 if(CONFIG_MOGO_CLOUDZAO_TRANSFER)
     set(cloudzao_sources "services/cloudzao_receive.c" "services/cloudzao_wire.c" "services/cloudzao_service.c"
-        "services/cloudzao_history.c")
+        "services/cloudzao_history.c" "services/cloudzao_partner.c")
 endif()
 
 # 原始位图保留在源码中，只把可复现的压缩资源嵌入 app。/ Retain source bitmaps and embed only reproducible compressed resources in the app.
@@ -260,19 +260,6 @@ idf_component_register(
 
 if(CONFIG_MOGO_CLOUDZAO_TRANSFER)
     target_add_binary_data(${COMPONENT_LIB} "services/cloudzao_oss_root_r3.pem" TEXT)
-endif()
-
-# 本机中转仅在隔离构建中启用，并单独信任测试 CA。/ Enable the local relay and its test CA only in an isolated build.
-if(MOGO_CLOUDZAO_LOCAL_RELAY)
-    if(NOT CONFIG_MOGO_CLOUDZAO_TRANSFER OR DEFINED ENV{CI}
-        OR DEFINED ENV{PICO_PROJECT_VER} OR CCACHE_ENABLE
-        OR NOT CMAKE_BINARY_DIR STREQUAL "${CMAKE_SOURCE_DIR}/build/cloudzao-relay-local/firmware")
-        message(FATAL_ERROR "CloudZao local relay requires its isolated build without caching or version overrides")
-    endif()
-    set(cloudzao_relay_private "${CMAKE_BINARY_DIR}/../private")
-    target_include_directories(${COMPONENT_LIB} PRIVATE "${cloudzao_relay_private}")
-    target_compile_definitions(${COMPONENT_LIB} PRIVATE MOGO_CLOUDZAO_LOCAL_RELAY=1)
-    target_add_binary_data(${COMPONENT_LIB} "${cloudzao_relay_private}/cloudzao_relay_ca.pem" TEXT)
 endif()
 
 # 连接失败后 IDF 会关闭 socket；按需保留解析地址和连接阶段，正式默认关闭。

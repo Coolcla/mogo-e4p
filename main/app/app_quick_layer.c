@@ -302,7 +302,8 @@ bool app_quick_layer_feed_frame(app_ctx_t *ctx, const app_desc_t *current, bool 
         s_quick.layout = *app_settings_quick_layout();
     ui_quick_event_t event;
     bool owned = ui_quick_menu_feed(&s_quick, ctx,
-        current->render && !current->holds_pmu && !usb_storage_active() && !pico_online_busy(),
+        current->render && !current->holds_pmu && !usb_storage_active() && !pico_online_busy() &&
+        (!current->modal_input_owned || !current->modal_input_owned(ctx)),
         &event);
     if (owned) ctx->consumed = true;
     if (event.action == UI_QUICK_OPEN || event.action == UI_QUICK_CLOSE) {

@@ -4,8 +4,8 @@
  *
  * 中文：TF 卡文件入口、目录浏览及 USB/Wi-Fi 传输入口。
  * English: SD file entry, directory browser and USB/Wi-Fi transfer routes.
- * 用户修订：文件管理直接显示 WiFi、热点、USB；联调构建并排显示 CloudZao。
- * User revision: show direct WiFi, hotspot and USB routes, alongside CloudZao in test builds.
+ * 用户修订：文件管理直接显示 WiFi、热点、USB；有接入 ID 时并排显示 CloudZao。
+ * User revision: show direct WiFi, hotspot and USB routes, alongside CloudZao when an integration ID is configured.
  * 用户授权新输入法：文件改名使用共用九宫格/全键盘及常亮光标；离页释放候选。
  * Authorized keyboard revision: rename uses shared T9/QWERTY and a steady caret; exit frees candidates.
  * 用户修订：输入只刷新变化区域，布局切换局部灰阶，避免打字累计整屏清残影。
@@ -180,7 +180,7 @@ static bool file_pager_event(app_ctx_t *ctx,const ui_gesture_event_t *ev,app_red
 }
 static int home_transfer_count(void) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    return 4;
+    return CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID[0] ? 4 : 3;
 #else
     return 3;
 #endif

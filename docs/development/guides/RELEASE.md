@@ -11,6 +11,12 @@ For each OTA version tag, summarize actual changes since the appropriate previou
 
 ### 正式版发布 / Official releases
 
+GitHub Release 只手动上传经验证的固件、USB 刷机包、校验值和构建来源文件；不制作、不上传整仓源码包或包含源码的自定义附件。此规则不影响 GitHub 按 tag 自动生成的 `Source code (zip)` / `Source code (tar.gz)` 链接，也不取消单独的 LGPL 合规和重链接验证。
+Manually attach only verified firmware, USB flash bundles, checksums and build provenance. Do not create or attach a repository source bundle or other custom asset containing source. This does not affect the `Source code (zip)` and `Source code (tar.gz)` links GitHub generates from the tag, or separate LGPL compliance and relinking checks.
+
+公开制品使用干净的标签构建，且须开启 `-D MOGO_PUBLIC_RELEASE=ON`。不读取本机 `sdkconfig.cloudzao.local`、不从 CI Secrets 注入 CloudZao 接入 ID。若接入 ID 非空，构建失败；不得用本机接入镜像或其衍生产物替换公开制品。OTA 工作流已开启此门禁，其制品同时作为 Release 和官网交付的来源。
+Build public artifacts from a clean tag with `-D MOGO_PUBLIC_RELEASE=ON`. Do not load `sdkconfig.cloudzao.local` or inject a CloudZao integration ID from CI secrets. A nonempty ID fails the build; do not substitute a local integration image or any derivative. The OTA workflow enables the guard and produces the shared inputs for Release and website delivery.
+
 用户 2026-11-03 确认：今后提到「发布版本」，均指发布到本仓库当前 `origin` 远端，替代此前固定的旧发布仓库；发布前核对 `git remote get-url origin`，当前为 `chopper1026/mogo-e4p`。推送代码，创建并推送对应版本的 Git tag，触发 OTA 网站的固件草稿构建与提交，并在同一远端创建 GitHub Release。附上经验证的 TF/OTA 应用 Bin、完整 USB 刷机包、SHA-256 校验值和简要更新日志；所有附件与 OTA 提交必须来自同一次正式构建。OTA 草稿仍须管理员审核发布，不得把草稿提交成功视为已经上线。
 Per the user's 2026-11-03 decision, "publish a version" means publishing to this repository's current `origin`, replacing the previously fixed legacy release repository. Check `git remote get-url origin` before publishing; it currently points to `chopper1026/mogo-e4p`. Push the code and a matching Git tag to trigger the OTA website's draft build/submission, and create a GitHub Release in the same remote repository. Attach the verified TF/OTA application Bin, complete USB flash bundle, SHA-256 checksums and brief release notes; all attachments and the OTA submission must come from the same official build. OTA drafts still require administrator review and publication; successful submission does not mean they are live.
 

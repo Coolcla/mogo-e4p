@@ -1,12 +1,13 @@
 /*
- * 中文：独占 CloudZao 联调 HTTP 和 TF 句柄；不改变无线开关或路由偏好。
- * English: Own CloudZao test HTTP and TF handles without changing radio switches or route preferences.
+ * 中文：独占 CloudZao 的 HTTPS 和 TF 句柄；不改变无线开关或路由偏好。
+ * English: Own CloudZao HTTPS and TF handles without changing radio switches or route preferences.
  */
 #include "cloudzao_service.h"
 #include "cloudzao_history.h"
 #include "esp_attr.h"
 #include "board_sd.h"
 #include "cloudzao_wire.h"
+#include "cloudzao_partner.h"
 #include "esp_app_desc.h"
 #include "esp_crt_bundle.h"
 #include "esp_heap_caps.h"
@@ -19,6 +20,8 @@
 #include "mbedtls/platform_util.h"
 #include "memory_peak.h"
 #include "network_service.h"
+#include "nvs.h"
+#include "time_sync_policy.h"
 #include "usb_storage.h"
 #include "wifi_transfer.h"
 #include <stdatomic.h>
@@ -29,16 +32,11 @@
 
 #define CZ_JOB_US (300LL * 1000000)
 #define CZ_IDLE_US (8LL * 1000000)
+#define CZ_EXCHANGE_REPLY_IDLE_US (20LL * 1000000)
 #define CZ_STACK 8192u
 
 extern const uint8_t oss_root_r3_start[] asm("_binary_cloudzao_oss_root_r3_pem_start");
 extern const uint8_t oss_root_r3_end[] asm("_binary_cloudzao_oss_root_r3_pem_end");
-
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-#include "cloudzao_local_relay.h"
-extern const uint8_t relay_ca_start[] asm("_binary_cloudzao_relay_ca_pem_start");
-extern const uint8_t relay_ca_end[] asm("_binary_cloudzao_relay_ca_pem_end");
-#endif
 
 static portMUX_TYPE s_lock = portMUX_INITIALIZER_UNLOCKED;
 static cz_status_t s_status;
@@ -49,16 +47,18 @@ static bool s_queue_ready;
 static EXT_RAM_BSS_ATTR cz_history_item_t s_history_items[CLOUDZAO_HISTORY_ROWS];
 static cz_history_status_t s_history;
 static atomic_bool s_busy, s_cancel, s_media_gone, s_books_changed;
-static char s_worker_key[CLOUDZAO_KEY_MAX + 1];
 static cz_job_t s_job;
 
 typedef struct {
     int64_t deadline, next_check;
     cz_error_t link;
     cz_job_t job;
+    uint16_t preview_http_error;
     unsigned char *chunk;
     int64_t rate_from_us;
     uint32_t rate_from_bytes, history_next;
+    cz_partner_t partner;
+    nvs_handle_t nvs;
 } worker_t;
 
 static void progress(void *context, const cz_status_t *status) {
@@ -284,6 +284,7 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
     size_t length = cloudzao_wire_request(operation, req, host, sizeof(host), (char *)worker->chunk, CLOUDZAO_CHUNK);
     esp_tls_t *tls = length ? esp_tls_init() : NULL;
     cz_error_t error = !length ? CZ_INVALID : !tls ? CZ_RESOURCES : CZ_TIMEOUT;
+    unsigned http_status = 0;
     if (tls) {
         // OSS 携带交叉签名链；直接信任官方 R3 根，由常规路径验证在 R3 截止。
         // OSS serves a cross-signed chain; the normal verifier can stop at the explicit official R3 trust anchor.
@@ -294,21 +295,10 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
             .cacert_buf = oss ? oss_root_r3_start : NULL,
             .cacert_bytes = oss ? (size_t)(oss_root_r3_end - oss_root_r3_start) : 0,
         };
-        int port = 443;
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-        // 测试 CA 与名称仅用于中转业务请求。/ Use the test CA and name only for relay API requests.
-        if (operation != CZ_DOWNLOAD) {
-            port = CZ_RELAY_PORT;
-            cfg.crt_bundle_attach = NULL;
-            cfg.cacert_buf = relay_ca_start;
-            cfg.cacert_bytes = (size_t)(relay_ca_end - relay_ca_start);
-            cfg.common_name = CZ_RELAY_TLS_NAME;
-        }
-#endif
         int64_t idle = esp_timer_get_time() + CZ_IDLE_US;
         bool connected = false;
         while (active(worker, idle)) {
-            int result = esp_tls_conn_new_async(host, (int)strlen(host), port, &cfg, tls);
+            int result = esp_tls_conn_new_async(host, (int)strlen(host), 443, &cfg, tls);
             if (result == 1) { connected = true; break; }
             if (result < 0) { error = CZ_SERVER; break; }
             vTaskDelay(1);
@@ -317,6 +307,7 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
             size_t sent = 0;
             idle = esp_timer_get_time() + CZ_IDLE_US;
             while (sent < length && active(worker, idle)) {
+                if (req->maybe_sent) *req->maybe_sent = true;
                 ssize_t written = esp_tls_conn_write(tls, worker->chunk + sent, length - sent);
                 if (written > 0) {
                     sent += (size_t)written;
@@ -326,17 +317,20 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
             }
             mbedtls_platform_zeroize(worker->chunk, CLOUDZAO_CHUNK);
             if (sent == length) {
+                // 令牌只能领取一次，给回包更长的无进展时限。/ Allow more reply time for single-use token exchange.
+                const int64_t reply_idle_us = operation == CZ_EXCHANGE ? CZ_EXCHANGE_REPLY_IDLE_US : CZ_IDLE_US;
                 cz_response_t response;
-                cloudzao_wire_begin(&response, operation == CZ_DOWNLOAD, req->limit, sink, sink_context);
-                idle = esp_timer_get_time() + CZ_IDLE_US;
+                cloudzao_wire_begin(&response, operation, req->limit, sink, sink_context);
+                idle = esp_timer_get_time() + reply_idle_us;
                 while (active(worker, idle)) {
                     ssize_t n = esp_tls_conn_read(tls, worker->chunk, CLOUDZAO_CHUNK);
                     if (would_block(n)) { vTaskDelay(1); continue; }
                     if (n < 0) { error = CZ_SERVER; break; }
                     bool valid = cloudzao_wire_feed(&response, worker->chunk, (size_t)n);
+                    http_status = response.parser.status_code;
                     if (!valid) { error = response.error; break; }
-                    if (response.done) { error = CZ_OK; break; }
-                    idle = esp_timer_get_time() + CZ_IDLE_US;
+                    if (response.done) { error = response.error; break; }
+                    idle = esp_timer_get_time() + reply_idle_us;
                 }
             }
         }
@@ -345,7 +339,76 @@ static cz_error_t request(void *context, cz_request_t operation, const cz_http_r
     // 请求缓冲区可能仍含未发送的请求头；每条请求统一擦除。/ Wipe any unsent headers on every request exit.
     mbedtls_platform_zeroize(worker->chunk, CLOUDZAO_CHUNK);
     cz_error_t interrupted = stop(worker);
+    if (worker->job == CZ_JOB_PREVIEW)
+        worker->preview_http_error = interrupted == CZ_OK && error == CZ_SERVER &&
+            http_status >= 300 && http_status < 600 ? (uint16_t)http_status : 0;
     return interrupted == CZ_OK ? error : interrupted;
+}
+
+#define CZ_NVS_NAMESPACE "cloudzao"
+#define CZ_NVS_KEY "partner"
+#define CZ_NVS_VERSION 1u
+#define CZ_NVS_NOTICE_KEY "notice_rev"
+#define CZ_NOTICE_REVISION 1u
+
+bool cloudzao_notice_acknowledged(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(CZ_NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK) return false;
+    uint8_t revision = 0;
+    const esp_err_t err = nvs_get_u8(nvs, CZ_NVS_NOTICE_KEY, &revision);
+    nvs_close(nvs);
+    return err == ESP_OK && revision == CZ_NOTICE_REVISION;
+}
+
+bool cloudzao_acknowledge_notice(void) {
+    nvs_handle_t nvs;
+    if (nvs_open(CZ_NVS_NAMESPACE, NVS_READWRITE, &nvs) != ESP_OK) return false;
+    esp_err_t err = nvs_set_u8(nvs, CZ_NVS_NOTICE_KEY, CZ_NOTICE_REVISION);
+    if (err == ESP_OK) err = nvs_commit(nvs);
+    nvs_close(nvs);
+    return err == ESP_OK;
+}
+
+typedef struct {
+    uint32_t version;
+    char integration[CLOUDZAO_TOKEN_MAX + 1];
+    cz_session_record_t record;
+} stored_session_t;
+
+static bool persist_session(void *context, const cz_session_record_t *record) {
+    worker_t *worker = context;
+    stored_session_t stored = {.version = CZ_NVS_VERSION, .record = *record};
+    memcpy(stored.integration, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID, strlen(CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID) + 1);
+    const esp_err_t err = nvs_set_blob(worker->nvs, CZ_NVS_KEY, &stored, sizeof(stored));
+    cloudzao_partner_wipe(&stored, sizeof(stored));
+    return err == ESP_OK && nvs_commit(worker->nvs) == ESP_OK;
+}
+
+static bool load_session(worker_t *worker) {
+    stored_session_t stored = {0};
+    size_t size = sizeof(stored);
+    const esp_err_t err = nvs_get_blob(worker->nvs, CZ_NVS_KEY, &stored, &size);
+    bool valid = err == ESP_ERR_NVS_NOT_FOUND || (err == ESP_OK && size == sizeof(stored) &&
+        stored.version == CZ_NVS_VERSION && stored.integration[CLOUDZAO_TOKEN_MAX] == 0 &&
+        cloudzao_partner_record_valid(&stored.record));
+    if (valid && err == ESP_OK && !strcmp(stored.integration, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID))
+        worker->partner.record = stored.record;
+    cloudzao_partner_wipe(&stored, sizeof(stored));
+    return valid;
+}
+
+static int64_t current_utc(void *context) {
+    (void)context;
+    const time_t now = time(NULL);
+    return now > 0 && (uint64_t)now <= UINT32_MAX && app_time_sync_clock_valid((uint32_t)now) ? now : 0;
+}
+
+static bool pair_job(cz_job_t job) { return job == CZ_JOB_BIND || job == CZ_JOB_POLL; }
+
+static cz_error_t partner_request(void *context, cz_request_t operation, const cz_http_request_t *req,
+                                  cz_sink_t sink, void *sink_context) {
+    worker_t *worker = context;
+    return cloudzao_partner_request(&worker->partner, operation, req, sink, sink_context);
 }
 
 static void run(void *argument) {
@@ -356,21 +419,35 @@ static void run(void *argument) {
     network_lease_t lease = {0};
     cz_status_t result = {.error = stop(&worker)};
     char *json = NULL;
+    if (result.error == CZ_OK && !cloudzao_token_valid(CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID)) result.error = CZ_INTEGRATION;
+    if (result.error == CZ_OK && !current_utc(NULL)) result.error = CZ_CLOCK;
     if (result.error == CZ_OK && network_service_borrow_ready_wifi(&lease) != ESP_OK) result.error = CZ_WIFI;
-    if (result.error == CZ_OK && esp_read_mac(bytes, ESP_MAC_WIFI_STA) != ESP_OK) result.error = CZ_WIFI;
+    if (result.error == CZ_OK && pair_job(worker.job) && esp_read_mac(bytes, ESP_MAC_WIFI_STA) != ESP_OK) result.error = CZ_WIFI;
     if (result.error == CZ_OK) {
-        json = heap_caps_malloc(CLOUDZAO_JSON_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        worker.chunk = heap_caps_malloc(CLOUDZAO_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!json || !worker.chunk) result.error = CZ_RESOURCES;
+        worker.chunk = heap_caps_malloc(CLOUDZAO_CHUNK + CLOUDZAO_PARTNER_RESPONSE_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!pair_job(worker.job)) json = heap_caps_malloc(CLOUDZAO_JSON_MAX + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (!worker.chunk || (!pair_job(worker.job) && !json)) result.error = CZ_RESOURCES;
     }
+    if (result.error == CZ_OK && (nvs_open(CZ_NVS_NAMESPACE, NVS_READWRITE, &worker.nvs) != ESP_OK || !load_session(&worker)))
+        result.error = CZ_CREDENTIAL_STORAGE;
     if (result.error == CZ_OK) {
-        snprintf(mac, sizeof(mac), "%02x:%02x:%02x:%02x:%02x:%02x", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
-        cz_ops_t ops = {.context = &worker, .root = "/sdcard", .stop = stop, .request = request,
-                        .free_bytes = free_bytes, .book_added = book_added, .progress = progress,
-                        .row = row_changed, .stage = stage_changed, .record = record_result};
-        result = cloudzao_run(&ops, worker.job, &s_queue, s_worker_key, mac, esp_app_get_description()->version, json, worker.chunk);
+        const cz_ops_t raw = {.context = &worker, .stop = stop, .request = request, .now = current_utc};
+        worker.partner.raw = &raw;
+        worker.partner.response = (char *)worker.chunk + CLOUDZAO_CHUNK;
+        worker.partner.persist = persist_session;
+        if (pair_job(worker.job)) {
+            snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5]);
+            result = cloudzao_partner_pair(&worker.partner, worker.job == CZ_JOB_POLL, CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID,
+                                           mac, esp_app_get_description()->version);
+        } else {
+            const cz_ops_t ops = {.context = &worker, .root = "/sdcard", .stop = stop, .request = partner_request,
+                .now = current_utc, .free_bytes = free_bytes, .book_added = book_added, .progress = progress,
+                .row = row_changed, .stage = stage_changed, .record = record_result};
+            result = cloudzao_run(&ops, worker.job, &s_queue, json, worker.chunk);
+        }
     }
-    mbedtls_platform_zeroize(s_worker_key, sizeof(s_worker_key));
+    if (worker.nvs) nvs_close(worker.nvs);
+    cloudzao_partner_wipe(&worker.partner.record, sizeof(worker.partner.record));
     free(json);
     free(worker.chunk);
     network_service_release(&lease);
@@ -378,6 +455,7 @@ static void run(void *argument) {
     result.busy = false;
     portENTER_CRITICAL(&s_lock);
     if (worker.job == CZ_JOB_PREVIEW) {
+        if (result.error == CZ_SERVER) result.preview_http_error = worker.preview_http_error;
         if (result.error == CZ_OK && atomic_load(&s_cancel)) result.error = CZ_CANCELLED;
         s_queue_ready = result.error == CZ_OK;
     }
@@ -387,8 +465,8 @@ static void run(void *argument) {
     vTaskDelete(NULL);
 }
 
-cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *selection) {
-    if (!cloudzao_key_valid(key)) return CZ_AUTH;
+cz_error_t cloudzao_start(cz_job_t job, const cz_selection_t *selection) {
+    if (!pair_job(job) && job != CZ_JOB_PREVIEW && job != CZ_JOB_DOWNLOAD) return CZ_INVALID;
     if (job == CZ_JOB_DOWNLOAD && !media_ready()) return CZ_MEDIA;
     bool idle = false;
     if (!atomic_compare_exchange_strong(&s_busy, &idle, true)) return CZ_RESOURCES;
@@ -404,14 +482,17 @@ cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *s
     }
     memory_peak_token_t peak = 0;
     bool restore_queue = false;
+    const size_t json_size = pair_job(job) ? 0 : CLOUDZAO_JSON_MAX + 1;
+    const size_t chunk_size = CLOUDZAO_CHUNK + CLOUDZAO_PARTNER_RESPONSE_CAP;
     if (memory_peak_try_begin(MEMORY_PEAK_CLOUDZAO, &peak) != ESP_OK ||
         memory_peak_check((memory_peak_heap_t){.internal_free = CZ_STACK + 8 * 1024, .internal_block = CZ_STACK,
-            .psram_free = CLOUDZAO_JSON_MAX + CLOUDZAO_CHUNK + 64 * 1024, .psram_block = CLOUDZAO_JSON_MAX + 1}) != ESP_OK)
+            .psram_free = json_size + chunk_size + 64 * 1024,
+            .psram_block = json_size ? json_size : chunk_size}) != ESP_OK)
         goto failed;
     atomic_store(&s_cancel, false);
     atomic_store(&s_media_gone, false);
     s_job = job;
-    if (job != CZ_JOB_BIND) {
+    if (!pair_job(job)) {
         portENTER_CRITICAL(&s_lock);
         restore_queue = s_queue_ready;
         s_queue_ready = false;
@@ -421,11 +502,9 @@ cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *s
         }
         portEXIT_CRITICAL(&s_lock);
     }
-    memcpy(s_worker_key, key, strlen(key) + 1);
     progress(NULL, &(cz_status_t){.busy = true});
     if (xTaskCreate(run, "cloudzao", CZ_STACK, (void *)(uintptr_t)peak, 4, NULL) == pdPASS) return CZ_OK;
 failed:
-    mbedtls_platform_zeroize(s_worker_key, sizeof(s_worker_key));
     memory_peak_finish(peak);
     if (restore_queue && job == CZ_JOB_DOWNLOAD) {
         portENTER_CRITICAL(&s_lock);

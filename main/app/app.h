@@ -121,6 +121,8 @@ struct app_desc_s {
     bool defer_middle_short;
     /// 可选：按当前页面决定右下角菜单把手是否响应。/ Decide whether the bottom-right menu handle is active.
     bool (*menu_handle_enabled)(app_ctx_t* ctx);
+    /// 页内弹窗独占页面输入时暂停快捷栏与全局键，不影响电源键。/ A page modal suppresses quick settings and global keys, not the power key.
+    bool (*modal_input_owned)(app_ctx_t* ctx);
     /// 可选：当前确实显示主页面，允许本地测试优化底栏切页；阅读/子页面返回 false。
     /// Optional: true only for a main-tab view eligible for local transition testing; reader/subviews return false.
     bool (*main_page_visible)(app_ctx_t* ctx);

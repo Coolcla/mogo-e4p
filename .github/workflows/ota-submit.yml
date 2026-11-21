@@ -48,8 +48,8 @@ jobs:
         shell: bash
         run: |
           . "$IDF_PATH/export.sh"
-          idf.py --preview set-target esp32s31
-          idf.py --preview build
+          idf.py --preview -D MOGO_PUBLIC_RELEASE=ON set-target esp32s31
+          idf.py --preview -D MOGO_PUBLIC_RELEASE=ON build
           idf.py --preview size
       - name: Verify LGPL relinking inputs
         shell: bash

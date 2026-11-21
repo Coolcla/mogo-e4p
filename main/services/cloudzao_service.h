@@ -10,8 +10,12 @@
 
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
 #include "cloudzao_receive.h"
+/// 读取这版注意事项的本机确认状态，缺失或读失败视为未确认。/ Read this notice revision's local acknowledgement; missing or unreadable means unconfirmed.
+bool cloudzao_notice_acknowledged(void);
+/// 仅由确认按钮调用；提交成功才返回 true。/ Call only from the acknowledgement button; true on successful commit.
+bool cloudzao_acknowledge_notice(void);
 /// 启动单次操作；下载必须提供勾选，参数只在启动时复制。/ Start one job; download requires a selection, copied at start.
-cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *selection);
+cz_error_t cloudzao_start(cz_job_t job, const cz_selection_t *selection);
 /// 只暴露预览元数据，不暴露用于匹配的指纹。/ Expose preview metadata only, not matching fingerprints.
 bool cloudzao_offer(unsigned index, cz_row_t *out, cz_kind_t *kind);
 void cloudzao_discard_queue(void);

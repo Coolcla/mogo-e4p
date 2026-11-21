@@ -317,8 +317,9 @@ static bool global_key_action(app_reader_key_action_t action) {
            action == APP_READER_KEY_FRONTLIGHT;
 }
 
-static bool global_keys_allowed(const app_desc_t *current) {
-    return !current->holds_pmu && !usb_storage_active();
+static bool global_keys_allowed(app_ctx_t *ctx, const app_desc_t *current) {
+    return !current->holds_pmu && !usb_storage_active() &&
+        (!current->modal_input_owned || !current->modal_input_owned(ctx));
 }
 
 // 阅读页保留进度、返回来源和弹层处理；其他页面走同一个全局动作入口。
@@ -403,7 +404,7 @@ static void panel_key_press(app_ctx_t* ctx, const app_desc_t* current, ui_gestur
     if (*menu_pressed >= 0) menu_feedback(ctx, current, *menu_leaf, *menu_pressed, false, feedback);
     *menu_pressed = UI_MENU_HIT_NONE;
     if (key != UI_KEY_2 || ctx->touch->count != 1) hold->middle_pending = false;
-    if (!*menu_open && global_keys_allowed(current) && !uses_reader_keys(current)) {
+    if (!*menu_open && global_keys_allowed(ctx, current) && !uses_reader_keys(current)) {
         const app_reader_key_action_t action = app_settings_reader_key_action(key);
         if (key == UI_KEY_2 && (global_key_action(action) ||
                 global_key_action(app_settings_reader_hold_action()) ||
@@ -468,7 +469,7 @@ static void panel_key_hold(app_ctx_t* ctx, const app_desc_t* current, ui_gesture
                            const app_touch_t* touch, bool menu_open, panel_key_hold_t* hold) {
     if (hold->key < 0) return;
     if ((hold->main_page && !app_navigation_main_page_ready(ctx, current)) ||
-        (hold->global_middle && (!global_keys_allowed(current) || uses_reader_keys(current))) ||
+        (hold->global_middle && (!global_keys_allowed(ctx, current) || uses_reader_keys(current))) ||
         menu_open || ctx->request_app || ctx->request_menu || ctx->request_return || ctx->now_ms < hold->since_ms) {
         panel_key_cancel(hold);
         return;
@@ -605,7 +606,7 @@ static void up_key_cancel(up_key_state_t *state) {
 static app_redraw_t up_key_tick(app_ctx_t *ctx, const app_desc_t *current, up_key_state_t *state) {
     const bool reader = uses_reader_keys(current);
     const app_reader_key_action_t action = app_settings_reader_up_action();
-    if (!global_keys_allowed(current) || action == APP_READER_KEY_NONE ||
+    if (!global_keys_allowed(ctx, current) || action == APP_READER_KEY_NONE ||
         (!reader && !global_key_action(action))) {
         up_key_cancel(state);
         return APP_REDRAW_NONE;
@@ -1306,7 +1307,7 @@ void app_loop_run(const app_loop_config_t* config) {
             if (key_hold.middle_pending && !touch.touched &&
                 ctx.now_ms - key_hold.middle_ms > GLOBAL_MIDDLE_DOUBLE_MS) {
                 key_hold.middle_pending = false;
-                if (global_keys_allowed(current) && !uses_reader_keys(current))
+                if (global_keys_allowed(&ctx, current) && !uses_reader_keys(current))
                     present_page(&ctx, current, &gesture, global_middle_single(&ctx, current));
             }
             if (!ctx.request_app && !ctx.request_menu && !ctx.request_return) {

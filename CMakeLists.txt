@@ -15,6 +15,15 @@ else()
 endif()
 project(Read_Pico)
 
+# 公开构建不得内嵌本机 CloudZao 接入 ID。/ Public builds must not embed a local CloudZao integration ID.
+option(MOGO_PUBLIC_RELEASE "Build firmware for public distribution" OFF)
+if(MOGO_PUBLIC_RELEASE)
+    idf_build_get_config(cloudzao_integration_id CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID)
+    if(NOT "${cloudzao_integration_id}" STREQUAL "")
+        message(FATAL_ERROR "Public releases require an empty CloudZao integration ID")
+    endif()
+endif()
+
 # 中文：检查最终链接位置，防止升级 SDK 或改动链接布局后重现缓存关闭时取指崩溃。
 # English: Check final placement to catch cache-off instruction fetch regressions after SDK/layout changes.
 idf_build_get_property(cache_check_python PYTHON)

@@ -4,8 +4,8 @@
  *
  * 传书页负责两种浏览器接入模式生命周期、书源注入与状态展示；HTTP和文件接收属于独立组件。
  * Transfer page owns both browser modes, storage injection and status; the component receives files.
- * CloudZao 联调仅增加独立接收入口，不将云端客户端归为浏览器传书模式。
- * CloudZao testing only adds a separate receive entry, not a browser transfer mode.
+ * CloudZao 使用独立接收入口，不将云端客户端归为浏览器传书模式。
+ * CloudZao has a separate receive entry and is not a browser transfer mode.
  *
  * 冻结：按用户双模式要求提供热点与已有WiFi；离开传书时停服，配网后已连接的 STA 保持在线；深睡/断电会中断传输。
  * render只画快照；内置存储单文件上限由book_store提供，不格式化TF卡。
@@ -63,8 +63,8 @@
 #include "cloudzao_service.h"
 #include "app_transfer_mode.h"
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+#include "assets/cloudzao_download_qr.h"
 #include "assets/cloudzao_mark.h"
-#include "mbedtls/platform_util.h"
 #include <time.h>
 #endif
 
@@ -84,8 +84,18 @@ static size_t s_heap_before, s_internal_before;
 static EpdRect s_area;
 static bool s_qr_url, s_qr_ready;
 static char s_usb_message[96];
-static bool s_usb_requested, s_wifi_setup_requested, s_wifi_settings_only;
-static bool s_wifi_upload_requested, s_hotspot_requested, s_direct_entry, s_usb_entry;
+typedef enum {
+    TRANSFER_ENTRY_NONE,
+    TRANSFER_ENTRY_WIFI_SETUP,
+    TRANSFER_ENTRY_WIFI_UPLOAD,
+    TRANSFER_ENTRY_HOTSPOT,
+    TRANSFER_ENTRY_USB,
+#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
+    TRANSFER_ENTRY_CLOUDZAO,
+#endif
+} transfer_entry_t;
+static transfer_entry_t s_entry_requested, s_entry = TRANSFER_ENTRY_WIFI_SETUP;
+static bool s_wifi_settings_only, s_usb_entry;
 static bool s_usb_start_pending;
 static int64_t s_usb_retry_ms;
 static bool s_usb_host_connected;
@@ -144,22 +154,19 @@ static bool transfer_set_wallpaper(const char *path) {
 }
 
 void app_transfer_request_usb_start(void) {
-    s_usb_requested = true;
+    s_entry_requested = TRANSFER_ENTRY_USB;
 }
 
 void app_transfer_request_wifi_setup(void) {
-    s_wifi_setup_requested = true;
-    s_wifi_settings_only = true;
+    s_entry_requested = TRANSFER_ENTRY_WIFI_SETUP;
 }
 
 void app_transfer_request_wifi_upload(void) {
-    s_wifi_upload_requested = true;
-    s_wifi_settings_only = false;
+    s_entry_requested = TRANSFER_ENTRY_WIFI_UPLOAD;
 }
 
 void app_transfer_request_hotspot_start(void) {
-    s_hotspot_requested = true;
-    s_wifi_settings_only = false;
+    s_entry_requested = TRANSFER_ENTRY_HOTSPOT;
 }
 
 static void clear_qr(void) {
@@ -177,12 +184,11 @@ static void prepare_qr(void) {
         : ui_wifi_qr_prepare(s_status.ssid, WIFI_TRANSFER_PASSWORD);
 }
 
-typedef enum { TRANSFER_METHODS, TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD,
+typedef enum { TRANSFER_HOME, TRANSFER_NETWORKS, TRANSFER_PASSWORD,
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    TRANSFER_CLOUDZAO, TRANSFER_CLOUDZAO_KEY,
+    TRANSFER_CLOUDZAO,
 #endif
 } transfer_view_t;
-#define TRANSFER_METHOD_COUNT 2
 #define NETWORK_ROWS 6
 #define PASSWORD_MAX 64
 static transfer_view_t s_view;
@@ -193,7 +199,7 @@ static size_t s_saved_count;
 static bool s_show_saved, s_saved_detail;
 static char s_forget_ssid[33];
 static bool s_scan_pending, s_network_connect_pending, s_saved_configured, s_password_visible, s_forget_confirm;
-static char s_saved_ssid[33], s_password[PASSWORD_MAX + 1], s_network_message[96], s_method_message[96];
+static char s_saved_ssid[33], s_password[PASSWORD_MAX + 1], s_network_message[96];
 static ui_text_edit_t s_password_input;
 
 static esp_err_t s_scan_error;
@@ -209,47 +215,6 @@ static void transfer_header(uint8_t *fb, const char *title, const char *subtitle
     ui_text_vc(fb, 342, 107, 34, title, EPD_DRAW_ALIGN_CENTER, false);
     if (subtitle && subtitle[0]) ui_text(fb, 36, 153, 20, subtitle, EPD_DRAW_ALIGN_LEFT, false);
     if (subtitle && subtitle[0]) ui_hairline(fb, 190, 36, 612, UI_GRAY_LIGHT);
-}
-
-static EpdRect method_control_rect(int id) {
-    return (EpdRect){36, 224 + id * 112, 612, 112};
-}
-
-// S05：入口只负责选择传输方式，具体服务信息留给下一页。
-// S05 keeps method selection separate from the service details shown on the next page.
-static void draw_methods(uint8_t *fb) {
-    ui_clear_page(fb);
-    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, UI_GRAY_WHITE, fb);
-    transfer_header(fb, "Wifi/热点传书", NULL);
-    ui_text(fb, 42, 180, 21, "选择方式", EPD_DRAW_ALIGN_LEFT, false);
-    EpdRect card = {36, 224, 612, TRANSFER_METHOD_COUNT * 112};
-    ui_fill_round_rect(fb, card, 24, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, card, 24, 0x60);
-    ui_draw_round_rect(fb, (EpdRect){37, 225, 610, TRANSFER_METHOD_COUNT * 112 - 2}, 23, 0x60);
-    static const char *titles[] = {"WiFi传书", "热点传书"};
-    static const char *details[] = {
-        "与手机或电脑连接同一个无线网络",
-        "由墨水屏创建临时网络，离线也能传书",
-    };
-    for (int i = 0; i < TRANSFER_METHOD_COUNT; ++i) {
-        EpdRect row = method_control_rect(i);
-        if (s_pressed == i) ui_draw_pressed_round_rect(fb, row, 0);
-        if (i) ui_fill_rect_fast((EpdRect){68, row.y, 548, 2}, UI_GRAY_LIGHT, fb);
-        int cy = row.y + row.height / 2;
-        if (i == 0) ui_nav_wifi_icon(fb, 72, cy, 30, 0x6a);
-        else if (i == 1) ui_draw_icon(fb, 72, cy, 48, UI_ICON_RADIO_TOWER, 0x6a);
-        ui_text(fb, 112, row.y + 21, 27, titles[i], EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 112, row.y + 64, 19, details[i], EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_vc(fb, 617, cy, 29, "›", EPD_DRAW_ALIGN_CENTER, false);
-    }
-    if (s_method_message[0]) {
-        int y = 478;
-        ui_fill_round_rect(fb, (EpdRect){36, y, 612, 76}, 20, 0xd8);
-        ui_text_vc(fb, 342, y + 38, 20, s_method_message, EPD_DRAW_ALIGN_CENTER, false);
-    }
-    ui_text(fb, 42, 594, 19, "浏览器传书支持 EPUB、TXT、字体和图片文件。", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text(fb, 42, 634, 18, "传输完成后，新内容会自动出现在书架或字体列表。", EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 2);
 }
 
 /* ---- 设备端配网 / Device provisioning ---- */
@@ -466,16 +431,19 @@ static void draw_password(uint8_t* fb) {
 }
 
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-static char s_cloud_key[CLOUDZAO_KEY_MAX + 1], s_cloud_draft[CLOUDZAO_KEY_MAX + 1];
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-#include "cloudzao_local_relay.h"
-#endif
-static ui_text_edit_t s_cloud_editor;
 static cz_status_t s_cloud_status, s_cloud_bind_status;
-static bool s_cloud_bind_visible, s_cloud_requested, s_cloud_invalid_key, s_cloud_cancelling;
-static bool s_cloud_entry_requested;
+static bool s_cloud_requested, s_cloud_cancelling, s_cloud_poll_running;
+static int64_t s_cloud_poll_at;
 typedef enum { CLOUD_PANEL_TRANSFER, CLOUD_PANEL_HISTORY, CLOUD_PANEL_SETTINGS } cloud_panel_t;
 static cloud_panel_t s_cloud_panel;
+typedef enum { CLOUD_NOTICE_HIDDEN, CLOUD_NOTICE_FIRST_READ, CLOUD_NOTICE_REVIEW } cloud_notice_t;
+static cloud_notice_t s_cloud_notice;
+static bool s_cloud_notice_save_failed;
+
+static bool cloud_notice_input_owned(app_ctx_t *ctx) {
+    (void)ctx;
+    return s_view == TRANSFER_CLOUDZAO && s_cloud_notice != CLOUD_NOTICE_HIDDEN;
+}
 static unsigned s_cloud_batch_page, s_cloud_history_page;
 static bool s_cloud_batch;
 static unsigned s_cloud_offer_page, s_cloud_selectable, s_cloud_checked;
@@ -494,14 +462,7 @@ static void cloud_reset_history_actions(void) {
 }
 
 void app_transfer_request_cloudzao(void) {
-    s_cloud_entry_requested = true;
-    s_wifi_settings_only = false;
-}
-
-static void cloud_end_editor(void) {
-    ui_keyboard_end();
-    mbedtls_platform_zeroize(s_cloud_draft, sizeof(s_cloud_draft));
-    s_cloud_invalid_key = false;
+    s_entry_requested = TRANSFER_ENTRY_CLOUDZAO;
 }
 
 static void cloud_reset_selection(void) {
@@ -511,29 +472,40 @@ static void cloud_reset_selection(void) {
 }
 
 static void cloud_leave(void) {
-    if (s_view != TRANSFER_CLOUDZAO && s_view != TRANSFER_CLOUDZAO_KEY) return;
+    if (s_view != TRANSFER_CLOUDZAO) return;
     cloudzao_cancel();
     cloudzao_discard_queue();
     cloud_reset_selection();
     s_cloud_batch = false;
-    if (s_view == TRANSFER_CLOUDZAO_KEY) cloud_end_editor();
-    mbedtls_platform_zeroize(s_cloud_key, sizeof(s_cloud_key));
+    s_cloud_poll_at = 0;
+    s_cloud_poll_running = false;
     s_cloud_status = (cz_status_t){0};
     s_cloud_bind_status = (cz_status_t){0};
-    s_cloud_requested = s_cloud_cancelling = s_cloud_bind_visible = false;
+    s_cloud_requested = s_cloud_cancelling = false;
     s_cloud_batch_page = s_cloud_history_page = 0;
     s_cloud_panel = CLOUD_PANEL_TRANSFER;
+    s_cloud_notice = CLOUD_NOTICE_HIDDEN;
+    s_cloud_notice_save_failed = false;
     s_cloud_transfer = (cz_transfer_t){0};
     s_cloud_history = (cz_history_status_t){0};
     cloud_reset_history_actions();
     s_cloud_next_sample_ms = s_cloud_next_layout_ms = 0;
-    s_view = TRANSFER_METHODS;
+    s_view = TRANSFER_HOME;
 }
 
 static const char *cloud_error(cz_error_t error) {
     switch (error) {
-        case CZ_AUTH: return "请检查联调密钥";
-        case CZ_WIFI: return "请先在设置中连接 WiFi";
+        case CZ_AUTH: return "请在设置中绑定 CloudZao";
+        case CZ_REFRESH_REUSED: return "授权已失效，请重新绑定";
+        case CZ_INTEGRATION: return "请核对固件接入 ID";
+        case CZ_CLOCK: return "请先校准设备时间";
+        case CZ_SLOW_DOWN: return "请求过于频繁，请稍候";
+        case CZ_PAIR_EXPIRED: return "绑定码已失效，请重新获取";
+        case CZ_ACTIVATION_UNAVAILABLE: return "云造未返回绑定码，请检查小程序";
+        case CZ_CREDENTIAL_STORAGE: return "无法保存或读取本机授权";
+        case CZ_LINK_EXPIRED: return "下载链接已过期，请刷新列表";
+        case CZ_DELIVERY_MISSING: return "推送已变化，请刷新列表";
+        case CZ_WIFI: return "请先下拉快捷栏打开wifi";
         case CZ_MEDIA: return "请插入已挂载的 TF 卡";
         case CZ_TIMEOUT: return "接收超时，可再次接收";
         case CZ_CANCELLED: return "已取消";
@@ -547,13 +519,10 @@ static const char *cloud_error(cz_error_t error) {
     }
 }
 
-enum { CLOUD_BIND, CLOUD_RECEIVE, CLOUD_KEY };
+enum { CLOUD_BIND, CLOUD_RECEIVE };
 
 static EpdRect cloud_button(int id) {
     if (id == CLOUD_BIND) return (EpdRect){56, 480, 572, 72};
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    if (id == CLOUD_KEY) return (EpdRect){36, 598, 612, 90};
-#endif
     return (EpdRect){36, 282, 612, 72};
 }
 
@@ -580,7 +549,7 @@ static const char *cloud_result_detail(char *out, size_t cap) {
     if (s_cloud_status.error == CZ_CANCELLED) return "已经保存的文件会保留";
     if (s_cloud_status.error == CZ_SERVER) return "云造请求失败，可稍后再试";
     if (s_cloud_status.error) return cloud_error(s_cloud_status.error);
-    if (!s_cloud_requested) return s_cloud_key[0] ? "" : "请先在「设置」中填写联调密钥";
+    if (!s_cloud_requested) return "";
     if (s_cloud_status.item_error) {
         const bool ack = s_cloud_status.item_request == CZ_ACK;
         snprintf(out, cap, "%s：%s", ack ? "确认失败，文件已保存" : "下载或保存失败",
@@ -591,16 +560,6 @@ static const char *cloud_result_detail(char *out, size_t cap) {
     if (s_cloud_status.saved) return "已保存的文件可在 TF 卡中查看";
     return "在云造端推送文件后可再次接收";
 }
-
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-static void draw_cloud_test_key(uint8_t *fb, const char *subtitle, bool enabled) {
-    const EpdRect row = cloud_button(CLOUD_KEY);
-    ui_draw_round_rect(fb, row, 22, 0x90);
-    ui_text_box(fb, (EpdRect){56, row.y + 7, 540, 40}, 24, "设置联调密钥", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){56, row.y + 47, 540, 32}, 17, subtitle, EPD_DRAW_ALIGN_LEFT, false);
-    if (enabled) ui_draw_icon(fb, 612, row.y + 45, 26, UI_ICON_CHEVRON_RIGHT, 0x50);
-}
-#endif
 
 static EpdRect cloud_tab(int index) { return (EpdRect){36 + index * 204, 151, 204, 48}; }
 
@@ -795,7 +754,7 @@ static void draw_cloud_history_pager(uint8_t *fb, bool next) {
                 next ? "下一页" : "上一页", EPD_DRAW_ALIGN_CENTER, false);
 }
 
-static EpdRect cloud_history_clear_button(void) { return (EpdRect){520, 279, 128, 47}; }
+static EpdRect cloud_history_clear_button(void) { return (EpdRect){520, 220, 128, 58}; }
 
 static EpdRect cloud_history_confirm_button(bool confirm) {
     return (EpdRect){confirm ? 355 : 56, 690, 273, 72};
@@ -821,10 +780,18 @@ static void draw_cloud_history(uint8_t *fb) {
     const unsigned count = s_cloud_history.count;
     const bool busy = s_cloud_history.busy;
     const cz_error_t error = s_cloud_history.error;
-    ui_text_box(fb, (EpdRect){36, 217, 400, 65}, 39, "接收记录", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){36, 279, 464, 47}, 19,
-                s_cloud_history_clear_failed ? "清除失败，可重试" : "当前 TF 卡 · 最新在前",
-                EPD_DRAW_ALIGN_LEFT, false);
+    const bool show_actions = cloud_history_can_clear() && !s_cloud_history_confirm;
+    const char *detail = s_cloud_history_clear_failed ? "清除失败，可重试" : "";
+    char text[80];
+    ui_text_box(fb, (EpdRect){36, 217, 460, 65}, 39, "接收记录", EPD_DRAW_ALIGN_LEFT, false);
+    if (show_actions) {
+        const EpdRect clear = cloud_history_clear_button();
+        ui_draw_round_rect(fb, clear, 10, 0xc0);
+        ui_text_box(fb, clear, 20, "清除", EPD_DRAW_ALIGN_CENTER, false);
+        snprintf(text, sizeof(text), "%u 条%s%s", count, *detail ? " · " : "", detail);
+        detail = text;
+    }
+    ui_text_box(fb, (EpdRect){36, 279, 612, 47}, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
     if (s_cloud_history_confirm) {
         draw_cloud_history_confirmation(fb);
         return;
@@ -833,21 +800,14 @@ static void draw_cloud_history(uint8_t *fb) {
         const ui_icon_t icon = busy ? UI_ICON_CLOCK : error ? UI_ICON_FOLDER_OPEN : UI_ICON_LIST;
         const char *title = busy ? (s_cloud_history_clearing ? "正在清除记录" : "正在读取记录") :
             error ? "无法读取记录" : "还没有接收记录";
-        const char *detail = busy ? "" : error == CZ_STORAGE ? "请检查 TF 卡，再重新打开历史记录" :
+        const char *empty_detail = busy ? "" : error == CZ_STORAGE ? "请检查 TF 卡，再重新打开历史记录" :
             error ? cloud_error(error) : "接收文件后，结果会显示在这里";
-        ui_fill_round_rect_raw(fb, (EpdRect){292, 472, 100, 100}, 16, 0xe0);
         ui_draw_icon(fb, 342, 522, 56, icon, UI_GRAY_BLACK);
         ui_text_box(fb, (EpdRect){36, 602, 612, 57}, 31, title, EPD_DRAW_ALIGN_CENTER, false);
-        ui_text_box(fb, (EpdRect){36, 666, 612, 42}, 20, detail, EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_box(fb, (EpdRect){36, 666, 612, 42}, 20, empty_detail, EPD_DRAW_ALIGN_CENTER, false);
         return;
     }
 
-    char text[24];
-    snprintf(text, sizeof(text), "%u 条", count);
-    ui_text_box(fb, (EpdRect){472, 217, 176, 62}, 32, text, EPD_DRAW_ALIGN_RIGHT, false);
-    const EpdRect clear = cloud_history_clear_button();
-    ui_draw_round_rect(fb, clear, 10, 0xc0);
-    ui_text_box(fb, clear, 20, "清除", EPD_DRAW_ALIGN_CENTER, false);
     ui_fill_rect_fast((EpdRect){36, CLOUD_HISTORY_ROW_TOP - 2, 612, 2}, 0xd0, fb);
     const unsigned pages = (count + CLOUD_HISTORY_PAGE_ROWS - 1) / CLOUD_HISTORY_PAGE_ROWS;
     const unsigned page = s_cloud_history_page < pages ? s_cloud_history_page : pages - 1;
@@ -1039,10 +999,17 @@ static void draw_cloud_offer_empty(uint8_t *fb) {
     const char *title = busy ? (s_cloud_cancelling ? "正在取消" : "正在获取推送列表") :
         s_cloud_status.error == CZ_CANCELLED ? "已取消" : s_cloud_status.error ? "获取列表失败" :
         s_cloud_requested ? "暂无待下载推送" : "先查看推送";
+    char http_error[48];
     const char *detail = s_cloud_status.error == CZ_CANCELLED ? "可以重新获取列表" :
+        s_cloud_status.error == CZ_TIMEOUT ? "获取列表超时，可重试" :
         s_cloud_status.error ? cloud_error(s_cloud_status.error) : busy ? "" :
-        s_cloud_requested ? "在云造推送文件后，再获取列表" : "查看云造端推送的书籍、字体和图片";
-    ui_fill_round_rect_raw(fb, (EpdRect){281, 465, 122, 122}, 16, 0xe0);
+        s_cloud_requested ? "在云造推送文件后，再获取列表" : "查看CloudZao推送的书籍、字体和图片";
+    if (s_cloud_status.error == CZ_SERVER) {
+        if (s_cloud_status.preview_http_error) {
+            snprintf(http_error, sizeof(http_error), "云造服务返回 HTTP %u", (unsigned)s_cloud_status.preview_http_error);
+            detail = http_error;
+        } else detail = "连接或传输失败，可重试";
+    }
     ui_draw_icon(fb, 342, 526, 72, UI_ICON_FOLDER_INPUT, UI_GRAY_BLACK);
     ui_text_box(fb, (EpdRect){36, 613, 612, 56}, 32, title, EPD_DRAW_ALIGN_CENTER, false);
     ui_text_box(fb, (EpdRect){36, 673, 612, 51}, 22, detail, EPD_DRAW_ALIGN_CENTER, false);
@@ -1092,36 +1059,92 @@ static void draw_cloud_receiver(uint8_t *fb) {
 
 static const char *cloud_bind_title(void) {
     const cz_status_t *status = &s_cloud_bind_status;
-    if (!s_cloud_bind_visible) return "尚未检查绑定";
-    if (status->busy) return s_cloud_cancelling ? "正在取消" : "正在检查绑定";
-    if (status->error == CZ_CANCELLED) return "已取消";
-    if (status->error) return status->binding_probed ? "无法确认绑定状态" : "绑定请求失败";
+    if (s_cloud_cancelling) return "正在暂停";
+    if (status->busy) return "正在连接 CloudZao";
     if (status->code[0]) return "绑定码";
-    return status->binding_probed ? "已绑定" : "无法确认绑定状态";
+    if (status->authorized) return "授权可用";
+    if (status->error == CZ_CANCELLED) return "绑定已暂停";
+    if (status->error == CZ_AUTH || status->error == CZ_REFRESH_REUSED) return "需要重新授权";
+    if (status->error) return "暂时无法绑定";
+    return "绑定 CloudZao";
 }
 
 static const char *cloud_bind_detail(void) {
     const cz_status_t *status = &s_cloud_bind_status;
-    if (!s_cloud_bind_visible) return "首次绑定时，请在云造端输入六位绑定码";
-    if (status->busy) return s_cloud_cancelling ? "正在结束本次操作，请稍候" : "正在向云造检查绑定";
-    if (status->error == CZ_CANCELLED) return "可以重新检查绑定";
-    if (status->error == CZ_SERVER && status->binding_probed) return "请在云造端核对设备绑定，或稍后重试";
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-    if (status->error == CZ_AUTH) return "设备验证失败，请联系维护者";
-#endif
+    if (s_cloud_cancelling || status->busy) return "请稍候";
+    if (status->code[0]) return status->error == CZ_TIMEOUT ? "领取授权超时，正在重试" : "请在 CloudZao App 或 CloudZao 小程序输入此验证码";
+    if (status->authorized) return "可以接收推送，无需重新绑定";
+    if (status->error == CZ_CANCELLED) return "可继续使用未过期的绑定码";
+    if (status->error == CZ_TIMEOUT) return "绑定请求超时，可重试";
+    if (status->error == CZ_PAIR_EXPIRED) return "绑定会话已失效，请检查 App 绑定";
     if (status->error) return cloud_error(status->error);
-    if (status->code[0]) return "请在云造端输入此验证码";
-    return status->binding_probed ? "可直接接收推送，无需重新绑定" : "请在云造端核对设备绑定";
+    return "在CloudZao App或小程序中添加这台设备";
 }
 
 static bool cloud_bind_action_enabled(void) {
-    return !s_cloud_status.busy && !(s_cloud_bind_status.busy && s_cloud_cancelling);
+    return !s_cloud_status.busy && !s_cloud_cancelling;
+}
+
+static EpdRect cloud_notice_entry(void) { return (EpdRect){36, 606, 612, 76}; }
+
+static EpdRect cloud_notice_button(void) { return (EpdRect){80, 761, 524, 76}; }
+
+static void draw_cloud_notice(uint8_t *fb) {
+    const EpdRect card = {36, 242, 612, 632};
+    ui_fill_rect_fast((EpdRect){0, 64, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - 64}, 0xe0, fb);
+    ui_nav_status(fb);
+    ui_fill_round_rect(fb, card, 22, UI_GRAY_WHITE);
+    ui_draw_round_rect(fb, card, 22, 0x90);
+    ui_text_box(fb, (EpdRect){76, 270, 532, 56}, 36, "注意事项", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){76, 330, 532, 42}, 22, "截至 2026 年 11 月 21 日实测",
+                EPD_DRAW_ALIGN_CENTER, false);
+    static const char *const books[] = {
+        "CloudZao App 仅能上传并推送 TXT、EPUB 原文件。",
+        "AZW3、MOBI 会被强制转换为 .ebook。",
+        "mogo 暂不支持 .ebook，请使用 TXT 或 EPUB。",
+    };
+    static const char *const wallpapers[] = {
+        "CloudZao App 暂时无法推送壁纸。",
+        "请通过 CloudZao 网页端上传并推送。",
+    };
+    ui_text_box(fb, (EpdRect){76, 398, 532, 42}, 28, "书籍", EPD_DRAW_ALIGN_LEFT, false);
+    for (unsigned i = 0; i < sizeof(books) / sizeof(books[0]); ++i)
+        ui_text_box(fb, (EpdRect){76, 445 + 37 * (int)i, 532, 37}, 24,
+                    books[i], EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){76, 580, 532, 42}, 28, "壁纸", EPD_DRAW_ALIGN_LEFT, false);
+    for (unsigned i = 0; i < sizeof(wallpapers) / sizeof(wallpapers[0]); ++i)
+        ui_text_box(fb, (EpdRect){76, 627 + 37 * (int)i, 532, 37}, 24,
+                    wallpapers[i], EPD_DRAW_ALIGN_LEFT, false);
+    if (s_cloud_notice_save_failed)
+        ui_text_box(fb, (EpdRect){76, 711, 532, 40}, 22, "未能保存确认，请再试一次",
+                    EPD_DRAW_ALIGN_CENTER, false);
+    const EpdRect action = cloud_notice_button();
+    ui_fill_round_rect(fb, action, 18, UI_GRAY_BLACK);
+    ui_text_box(fb, action, 27, s_cloud_notice == CLOUD_NOTICE_FIRST_READ ? "我已了解" : "关闭",
+                EPD_DRAW_ALIGN_CENTER, true);
+}
+
+static void draw_cloud_app_download(uint8_t *fb) {
+    const EpdRect card = {36, 712, 612, 270};
+    const int pitch = 6, quiet = 4;
+    const int side = pitch * (CLOUDZAO_DOWNLOAD_QR_SIDE + 2 * quiet);
+    const EpdRect qr = {396, card.y + (card.height - side) / 2, side, side};
+    ui_draw_round_rect(fb, card, 18, 0x90);
+    ui_text_box(fb, (EpdRect){62, 773, 312, 58}, 29, "下载 CloudZao App", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){62, 838, 312, 38}, 22, "用手机扫描右侧二维码", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){62, 878, 312, 38}, 22, "打开官方下载页", EPD_DRAW_ALIGN_LEFT, false);
+    ui_fill_rect_fast(qr, UI_GRAY_WHITE, fb);
+    for (int y = 0; y < CLOUDZAO_DOWNLOAD_QR_SIDE; ++y)
+        for (int x = 0; x < CLOUDZAO_DOWNLOAD_QR_SIDE; ++x)
+            if (cloudzao_download_qr_rows[y] & (UINT32_C(1) << x))
+                ui_fill_rect_fast((EpdRect){qr.x + (quiet + x) * pitch, qr.y + (quiet + y) * pitch, pitch, pitch},
+                                  UI_GRAY_BLACK, fb);
 }
 
 static void draw_cloud_settings(uint8_t *fb) {
     const cz_status_t *bind = &s_cloud_bind_status;
     const bool receiving = s_cloud_status.busy;
-    const bool show_code = s_cloud_bind_visible && bind->code[0];
+    const bool show_code = bind->code[0] && !s_cloud_cancelling;
     const EpdRect card = {36, 282, 612, 290};
     ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "设备绑定", EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_round_rect(fb, card, 22, 0x90);
@@ -1132,18 +1155,20 @@ static void draw_cloud_settings(uint8_t *fb) {
                 cloud_bind_detail(), EPD_DRAW_ALIGN_CENTER, false);
 
     const EpdRect action = cloud_button(CLOUD_BIND);
-    const bool enabled = cloud_bind_action_enabled(), primary = enabled && !bind->busy;
-    const char *label = receiving ? "接收结束后可检查" : bind->busy ?
-        (s_cloud_cancelling ? "正在取消…" : "取消") :
-        s_cloud_bind_visible ? "重新检查绑定" : "检查绑定 / 获取绑定码";
+    const bool enabled = cloud_bind_action_enabled(), primary = enabled && !bind->busy && !show_code;
+    const char *label = receiving ? "接收结束后可操作" : s_cloud_cancelling ? "正在暂停…" :
+        bind->busy || show_code ? "暂停绑定" : bind->authorized ? "检查授权" :
+        bind->error == CZ_CANCELLED ? "继续绑定" : "绑定 / 查看授权";
     ui_fill_round_rect(fb, action, 18, primary ? UI_GRAY_BLACK : UI_GRAY_WHITE);
     if (!primary) ui_draw_round_rect(fb, action, 18, 0x50);
     ui_text_box(fb, (EpdRect){action.x + 18, action.y + 8, action.width - 36, action.height - 16}, 25,
                 label, EPD_DRAW_ALIGN_CENTER, primary);
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    draw_cloud_test_key(fb, receiving || bind->busy ? "当前操作结束后可设置" :
-                        s_cloud_key[0] ? "已设置 · 仅本次会话有效" : "未设置 · 仅本次会话有效", !receiving && !bind->busy);
-#endif
+
+    const EpdRect notice = cloud_notice_entry();
+    ui_draw_round_rect(fb, notice, 18, 0x90);
+    ui_text_box(fb, (EpdRect){56, notice.y, 480, notice.height}, 27, "注意事项", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){536, notice.y, 92, notice.height}, 21, "查看", EPD_DRAW_ALIGN_RIGHT, false);
+    draw_cloud_app_download(fb);
 }
 
 static void draw_cloud_header(uint8_t *fb) {
@@ -1166,50 +1191,25 @@ static void draw_cloud_header(uint8_t *fb) {
 
 static void draw_cloud(uint8_t *fb) {
     ui_clear_page(fb);
-    draw_cloud_header(fb);
-    if (s_view != TRANSFER_CLOUDZAO_KEY) {
-        cloud_tabs(fb);
-        if (s_cloud_panel == CLOUD_PANEL_TRANSFER) draw_cloud_receiver(fb);
-        else if (s_cloud_panel == CLOUD_PANEL_HISTORY) draw_cloud_history(fb);
-        else draw_cloud_settings(fb);
+    if (s_cloud_notice != CLOUD_NOTICE_HIDDEN) {
+        draw_cloud_notice(fb);
         return;
     }
-    ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, "联调密钥（仅本次会话）", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_input_draw(fb, &s_cloud_editor, password_control_rect(47), UI_PX_BODY, true, NULL);
-    if (s_cloud_invalid_key)
-        ui_text(fb, UI_MARGIN, 400, 22, "请输入不含空格的联调密钥", EPD_DRAW_ALIGN_LEFT, false);
-    provisioning_button(fb, password_control_rect(44), "取消", 44);
-    provisioning_button(fb, password_control_rect(46), "保存", 46);
-    ui_keyboard_draw(fb, 560);
-}
-
-static app_redraw_t cloud_key_paint(app_ctx_t *ctx, bool field) {
-    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, password_control_rect(47),
-        UI_PX_BODY, true, NULL, field);
-    s_area = update.area;
-    s_settle = update.layout || update.settle;
-    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
-}
-
-static app_redraw_t cloud_save_key(void) {
-    if (!cloudzao_key_valid(s_cloud_draft)) { s_cloud_invalid_key = true; return APP_REDRAW_PAGE; }
-    mbedtls_platform_zeroize(s_cloud_key, sizeof(s_cloud_key));
-    memcpy(s_cloud_key, s_cloud_draft, strlen(s_cloud_draft) + 1);
-    cloud_end_editor();
-    s_cloud_bind_status = (cz_status_t){0};
-    s_cloud_bind_visible = false;
-    cloudzao_discard_queue();
-    if (!s_cloud_batch) {
-        cloud_reset_selection();
-        s_cloud_requested = false;
-        s_cloud_status = (cz_status_t){0};
-    }
-    s_view = TRANSFER_CLOUDZAO;
-    return APP_REDRAW_PAGE;
+    draw_cloud_header(fb);
+    cloud_tabs(fb);
+    if (s_cloud_panel == CLOUD_PANEL_TRANSFER) draw_cloud_receiver(fb);
+    else if (s_cloud_panel == CLOUD_PANEL_HISTORY) draw_cloud_history(fb);
+    else draw_cloud_settings(fb);
 }
 
 static app_redraw_t cloud_switch_panel(cloud_panel_t panel) {
     if (s_cloud_panel == panel) return APP_REDRAW_NONE;
+    if (s_cloud_panel == CLOUD_PANEL_SETTINGS && (s_cloud_poll_running || s_cloud_bind_status.busy))
+        return APP_REDRAW_NONE;
+    if (s_cloud_panel == CLOUD_PANEL_SETTINGS) {
+        s_cloud_poll_at = 0;
+        if (s_cloud_bind_status.code[0]) s_cloud_bind_status = (cz_status_t){.error = CZ_CANCELLED};
+    }
     if (panel == CLOUD_PANEL_HISTORY) {
         if (s_cloud_status.busy || s_cloud_bind_status.busy) return APP_REDRAW_NONE;
         const cz_error_t error = cloudzao_start_history();
@@ -1231,7 +1231,7 @@ static app_redraw_t cloud_fetch_offers(void) {
     cloudzao_discard_queue();
     cloud_reset_selection();
     s_cloud_batch = false;
-    const cz_error_t error = cloudzao_start(CZ_JOB_PREVIEW, s_cloud_key, NULL);
+    const cz_error_t error = cloudzao_start(CZ_JOB_PREVIEW, NULL);
     s_cloud_requested = error == CZ_OK;
     s_cloud_status = (cz_status_t){.busy = s_cloud_requested, .error = error};
     s_cloud_cancelling = false;
@@ -1264,7 +1264,7 @@ static app_redraw_t cloud_inbox_gesture(app_ctx_t *ctx, const ui_gesture_event_t
     if (!count) return APP_REDRAW_NONE;
     if (cloud_tapped(ev, cloud_offer_submit())) {
         if (!s_cloud_checked) return APP_REDRAW_NONE;
-        const cz_error_t error = cloudzao_start(CZ_JOB_DOWNLOAD, s_cloud_key, &s_cloud_selection);
+        const cz_error_t error = cloudzao_start(CZ_JOB_DOWNLOAD, &s_cloud_selection);
         if (error != CZ_OK) { s_cloud_action_error = error; return cloud_select_paint(ctx); }
         s_cloud_batch = true;
         s_cloud_batch_page = 0;
@@ -1324,60 +1324,57 @@ static app_redraw_t cloud_history_clear_gesture(const ui_gesture_event_t *ev) {
 }
 
 static app_redraw_t cloud_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
-    bool editing = s_view == TRANSFER_CLOUDZAO_KEY;
-    int x = ev->x0, y = ev->y0;
-    if (editing && ev->type == UI_GESTURE_PRESS)
-        return ui_keyboard_press(x, y, 560, ctx->now_ms) ? cloud_key_paint(ctx, false) : APP_REDRAW_NONE;
-    bool feedback = editing && ui_keyboard_release();
-    if (!editing && (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R)) {
+    if (s_cloud_notice != CLOUD_NOTICE_HIDDEN) {
+        if (ev->type != UI_GESTURE_TAP || !cloud_tapped(ev, cloud_notice_button()))
+            return APP_REDRAW_NONE;
+        if (s_cloud_notice == CLOUD_NOTICE_FIRST_READ && !cloudzao_acknowledge_notice()) {
+            s_cloud_notice_save_failed = true;
+        } else {
+            s_cloud_notice = CLOUD_NOTICE_HIDDEN;
+            s_cloud_notice_save_failed = false;
+        }
+        return APP_REDRAW_PAGE;
+    }
+    const int y = ev->y0;
+    if (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R) {
         if (y < cloud_tab(CLOUD_PANEL_TRANSFER).y || y >= UI_NAV_TOP) return APP_REDRAW_NONE;
         const int panel = (int)s_cloud_panel + (ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
         if (panel < CLOUD_PANEL_TRANSFER || panel > CLOUD_PANEL_SETTINGS) return APP_REDRAW_NONE;
         return cloud_switch_panel((cloud_panel_t)panel);
     }
-    if (ev->type != UI_GESTURE_TAP) return feedback ? cloud_key_paint(ctx, false) : APP_REDRAW_NONE;
+    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
     if (cloud_tapped(ev, (EpdRect){22, 65, 90, 83})) {
-        if (editing) { cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE; }
         if (s_cloud_history_confirm) { s_cloud_history_confirm = false; return APP_REDRAW_PAGE; }
         cloud_leave();
-        ctx->request_return = true;
+        // CloudZao 只从文件管理进入；快捷设置可能已消耗通用返回记录。
+        // Files is the only CloudZao entry; quick settings may have consumed the generic return history.
+        ui_nav_request(ctx, 2);
         return APP_REDRAW_NONE;
-    }
-    if (editing) {
-        if (ui_rect_hit(password_control_rect(44), x, y)) {
-            cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE;
-        }
-        if (ui_rect_hit(password_control_rect(46), x, y)) return cloud_save_key();
-        if (ui_text_input_tap(&s_cloud_editor, password_control_rect(47), UI_PX_BODY, true, NULL, x, y))
-            return cloud_key_paint(ctx, true);
-        if (ui_keyboard_tap(x, y, 560, ctx->now_ms) == UI_KEYBOARD_DONE) return cloud_save_key();
-        return cloud_key_paint(ctx, false);
     }
     for (int panel = CLOUD_PANEL_TRANSFER; panel <= CLOUD_PANEL_SETTINGS; ++panel)
         if (cloud_tapped(ev, cloud_tab(panel))) return cloud_switch_panel((cloud_panel_t)panel);
     if (s_cloud_panel == CLOUD_PANEL_SETTINGS) {
+        if (cloud_tapped(ev, cloud_notice_entry())) {
+            s_cloud_notice = CLOUD_NOTICE_REVIEW;
+            return APP_REDRAW_PAGE;
+        }
         if (s_cloud_status.busy) return APP_REDRAW_NONE;
         if (cloud_tapped(ev, cloud_button(CLOUD_BIND))) {
             if (!cloud_bind_action_enabled()) return APP_REDRAW_NONE;
-            if (s_cloud_bind_status.busy) {
+            if (s_cloud_bind_status.busy || s_cloud_poll_running) {
                 cloudzao_cancel();
                 s_cloud_cancelling = true;
+                s_cloud_poll_at = 0;
+            } else if (s_cloud_poll_at) {
+                s_cloud_poll_at = 0;
+                s_cloud_bind_status = (cz_status_t){.error = CZ_CANCELLED};
             } else {
-                const cz_error_t result = cloudzao_start(CZ_JOB_BIND, s_cloud_key, NULL);
+                const cz_error_t result = cloudzao_start(CZ_JOB_BIND, NULL);
                 s_cloud_bind_status = (cz_status_t){.busy = result == CZ_OK, .error = result};
-                s_cloud_bind_visible = true;
                 s_cloud_cancelling = false;
             }
             return APP_REDRAW_PAGE;
         }
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-        if (!s_cloud_bind_status.busy && cloud_tapped(ev, cloud_button(CLOUD_KEY))) {
-            ui_text_edit_init(&s_cloud_editor, s_cloud_draft, sizeof(s_cloud_draft));
-            ui_keyboard_begin(&s_cloud_editor, true);
-            s_view = TRANSFER_CLOUDZAO_KEY;
-            return APP_REDRAW_PAGE;
-        }
-#endif
         return APP_REDRAW_NONE;
     }
     const bool history = s_cloud_panel == CLOUD_PANEL_HISTORY;
@@ -1399,9 +1396,14 @@ static app_redraw_t cloud_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) 
 
 static void cloud_before_lock(app_ctx_t *ctx) {
     (void)ctx;
-    if (s_view != TRANSFER_CLOUDZAO && s_view != TRANSFER_CLOUDZAO_KEY) return;
+    if (s_view != TRANSFER_CLOUDZAO) return;
+    const cloud_notice_t notice = s_cloud_notice;
+    const bool notice_save_failed = s_cloud_notice_save_failed;
     cloud_leave();
     s_view = TRANSFER_CLOUDZAO;
+    s_cloud_notice = notice;
+    s_cloud_notice_save_failed = notice_save_failed;
+    if (notice == CLOUD_NOTICE_REVIEW) s_cloud_panel = CLOUD_PANEL_SETTINGS;
 }
 #endif
 
@@ -1446,7 +1448,7 @@ static bool enter_networks(void) {
     return true;
 }
 
-static bool start_hotspot_service(void) {
+static void start_hotspot_service(void) {
     if (s_session_started && s_status.changed_count) s_any_changed = true;
     s_mode = WIFI_TRANSFER_MODE_AP;
     s_qr_url = false;
@@ -1455,8 +1457,6 @@ static bool start_hotspot_service(void) {
     s_status.mode = s_mode;
     s_start_pending = true;
     s_view = TRANSFER_HOME;
-    s_method_message[0] = 0;
-    return true;
 }
 
 // 提示页先呈现，下一轮才同步扫描；输入页不轮询已停服的传书状态。
@@ -1862,9 +1862,8 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         return;
     }
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) { draw_cloud(fb); return; }
+    if (s_view == TRANSFER_CLOUDZAO) { draw_cloud(fb); return; }
 #endif
-    if (s_view == TRANSFER_METHODS) { draw_methods(fb); return; }
     if (s_view == TRANSFER_NETWORKS) { draw_networks(fb); return; }
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
     ui_clear_page(fb);
@@ -1883,14 +1882,18 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
             s_start_pending || s_status.state == WIFI_TRANSFER_STARTING ? "正在连接已保存网络…" :
             s_status.wifi_configured ? "已保存，尚未连接" : "尚未选择 WiFi",
             EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_vc(fb, 605, 234, 20, s_status.network_ready ? "服务已开启" : "准备中", EPD_DRAW_ALIGN_RIGHT, false);
+    const bool stopped = !s_start_pending && s_status.state == WIFI_TRANSFER_STOPPED;
+    ui_text_vc(fb, 605, 234, 20, s_status.network_ready ? "服务已开启" : stopped ? "已停止" : "准备中",
+               EPD_DRAW_ALIGN_RIGHT, false);
     int url_px = UI_PX_CAPTION;
     while (url_px > 14 && ttf_text_width_px(url_px, s_status.url) > 560) --url_px;
     if (s_status.network_ready && s_qr_ready)
         ui_wifi_qr_draw(fb, (EpdRect){222, 330, 240, 240});
     else {
         ui_draw_round_rect(fb, (EpdRect){222, 330, 240, 240}, 8, 0xa0);
-        ui_text_vc(fb, 342, 450, 22, s_start_pending ? "正在生成二维码…" : "等待网络地址…", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 450, 22,
+                   stopped ? "网络已停止" : s_start_pending ? "正在生成二维码…" : "等待网络地址…",
+                   EPD_DRAW_ALIGN_CENTER, false);
     }
     if (s_mode == WIFI_TRANSFER_MODE_AP) {
         ui_text_vc(fb, 342, 583, 20,
@@ -1913,12 +1916,20 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_pressed == 2) ui_draw_pressed_round_rect(fb, back, UI_BTN_RADIUS);
     ui_draw_button(fb, back,
                    s_mode == WIFI_TRANSFER_MODE_AP && s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready
-                       ? "重试热点传书" : "停止传输服务", false);
+                       ? "重试热点传书" : stopped ? "返回" : "停止传输服务", false);
     ui_nav_draw(fb, 2);
 }
 
 static void on_enter(app_ctx_t* ctx) {
     (void)ctx;
+    // 导航返回仍打开原入口，但只在显式请求时启动上传或 USB 服务。
+    // History returns reopen the previous entry; only explicit requests start upload or USB services.
+    const bool requested = s_entry_requested != TRANSFER_ENTRY_NONE;
+    if (requested) s_entry = s_entry_requested;
+    s_entry_requested = TRANSFER_ENTRY_NONE;
+    s_wifi_settings_only = s_entry == TRANSFER_ENTRY_WIFI_SETUP;
+    s_usb_entry = s_entry == TRANSFER_ENTRY_USB;
+    s_mode = s_entry == TRANSFER_ENTRY_HOTSPOT ? WIFI_TRANSFER_MODE_AP : WIFI_TRANSFER_MODE_STA;
     display_set_bulk_io(true);
     s_media_lost = false;
     memset(&s_status, 0, sizeof(s_status));
@@ -1933,15 +1944,14 @@ static void on_enter(app_ctx_t* ctx) {
     s_usb_retry_ms = 0;
     s_usb_host_connected = false;
     s_usb_capacity_bytes = 0;
-    s_method_message[0] = 0;
-    s_view = TRANSFER_METHODS;
-    s_direct_entry = s_usb_requested || s_wifi_upload_requested || s_hotspot_requested;
-    s_usb_entry = s_usb_requested;
+    s_view = TRANSFER_HOME;
     s_forget_confirm = false;
     s_show_saved = s_saved_detail = false;
-    s_saved_count = s_network_page = 0;
-    s_forget_ssid[0] = 0;
+    s_saved_count = s_network_count = s_network_page = 0;
+    s_saved_ssid[0] = s_network_message[0] = s_forget_ssid[0] = 0;
+    s_saved_configured = false;
     s_scan_pending = false;
+    s_scan_error = ESP_OK;
     s_network_connect_pending = false;
     clear_password();
     s_session_started = false;
@@ -1953,56 +1963,49 @@ static void on_enter(app_ctx_t* ctx) {
     s_poll_ms = 0;
     s_free = 0;
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_cloud_entry_requested) {
-        s_cloud_entry_requested = false;
-        s_direct_entry = true;
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-        memcpy(s_cloud_key, CZ_RELAY_DEVICE_TOKEN, sizeof(CZ_RELAY_DEVICE_TOKEN));
-#endif
+    if (s_entry == TRANSFER_ENTRY_CLOUDZAO) {
         s_view = TRANSFER_CLOUDZAO;
+        s_cloud_notice = cloudzao_notice_acknowledged() ? CLOUD_NOTICE_HIDDEN : CLOUD_NOTICE_FIRST_READ;
+        s_cloud_notice_save_failed = false;
         return;
     }
 #endif
+    if (s_usb_entry) {
+        if (requested) {
+            board_sd_info_t usb_sd = {0};
+            if (board_sd_get_info(&usb_sd) == ESP_OK) s_usb_capacity_bytes = usb_sd.capacity_bytes;
+            s_usb_start_pending = true;
+            snprintf(s_usb_message, sizeof(s_usb_message), "正在卸载本机 TF 卡并启动 USB…");
+        }
+        return;
+    }
+    if (s_entry == TRANSFER_ENTRY_HOTSPOT) {
+        if (requested) start_hotspot_service();
+        return;
+    }
+
     wifi_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
-    if (s_usb_requested) {
-        board_sd_info_t usb_sd = {0};
-        if (board_sd_get_info(&usb_sd) == ESP_OK) s_usb_capacity_bytes = usb_sd.capacity_bytes;
-        s_usb_requested = false;
-        s_view = TRANSFER_HOME;
-        s_usb_start_pending = true;
-        snprintf(s_usb_message, sizeof(s_usb_message), "正在卸载本机 TF 卡并启动 USB…");
-    } else if (s_hotspot_requested) {
-        s_hotspot_requested = false;
-        if (!start_hotspot_service()) {
-            s_view = TRANSFER_HOME;
-            s_status.state = WIFI_TRANSFER_ERROR;
-            snprintf(s_method_message, sizeof(s_method_message), "传输正在结束，请稍后再试");
-        }
-    } else if (s_wifi_upload_requested) {
-        s_wifi_upload_requested = false;
-        // 先排定前台启动；准入后再由网络事务替换常驻会话。/ Queue foreground startup; replace the current session only after admission.
-        if (s_status.wifi_configured) queue_network_start(WIFI_TRANSFER_MODE_STA);
-        else if (!enter_networks()) {
-            s_view = TRANSFER_NETWORKS;
-            s_scan_pending = false;
-            snprintf(s_network_message, sizeof(s_network_message), "网络正在结束，请稍后再试");
-        }
-    } else if (s_wifi_setup_requested) {
-        s_wifi_setup_requested = false;
+    if (!s_wifi_settings_only && s_status.wifi_configured) {
+        // 先排定前台启动；准入后再由网络事务替换常驻会话。
+        // Queue foreground startup; replace the current session only after admission.
+        if (requested) queue_network_start(WIFI_TRANSFER_MODE_STA);
+        return;
+    }
+
+    s_view = TRANSFER_NETWORKS;
+    if (s_wifi_settings_only) {
         wifi_transfer_get_status(&s_status);
         if (s_status.network_ready && s_status.mode == WIFI_TRANSFER_MODE_STA) {
             s_session_started = true;
-            s_view = TRANSFER_NETWORKS;
             s_saved_configured = s_status.wifi_configured;
             snprintf(s_saved_ssid, sizeof(s_saved_ssid), "%s", s_status.wifi_ssid);
-            s_network_page = 0;
             refresh_saved_networks();
             snprintf(s_network_message, sizeof(s_network_message), "连接成功");
-        } else {
-            (void)enter_networks();
+            return;
         }
-    } else {
-        s_wifi_settings_only = false;
+    }
+    if (!enter_networks()) {
+        snprintf(s_network_message, sizeof(s_network_message), "网络正在结束，请稍后再试");
     }
 }
 
@@ -2037,7 +2040,7 @@ static bool stop_wifi_for_provisioning(void) {
 static void transfer_on_media_lost(app_ctx_t* ctx) {
     (void)ctx;
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) {
+    if (s_view == TRANSFER_CLOUDZAO) {
         if (s_cloud_panel == CLOUD_PANEL_HISTORY) {
             cloud_reset_history_actions();
             s_cloud_history = (cz_history_status_t){.error = CZ_MEDIA};
@@ -2045,12 +2048,15 @@ static void transfer_on_media_lost(app_ctx_t* ctx) {
         return;
     }
 #endif
-    if (s_owned_session ? !s_owned_session_uses_sd : s_root.is_flash) return;
+    // 配网不依赖 TF 卡，也不能因拔卡取消输入或网络连接。
+    // Provisioning does not depend on the TF card; media loss must not cancel input or networking.
+    if (s_view != TRANSFER_HOME || s_usb_entry) return;
+    if (s_owned_session ? !s_owned_session_uses_sd : !s_start_pending || s_root.is_flash) return;
     const bool stopped = network_service_stop_owned_wifi(s_owned_session, true);
     if (!stopped) network_service_drop_owned_wifi(s_owned_session, true);
     stop_session();
+    s_status = (wifi_transfer_status_t){.mode = s_mode};
     s_start_pending = s_scan_pending = s_network_connect_pending = false;
-    s_view = s_direct_entry ? TRANSFER_HOME : TRANSFER_METHODS;
     clear_password();
     s_pressed = -1;
     s_free = 0;
@@ -2081,7 +2087,6 @@ static void transfer_on_exit(app_ctx_t* ctx) {
     stop_session();
     s_wifi_settings_only = false;
     s_usb_entry = false;
-    s_direct_entry = false;
     display_set_bulk_io(false);
     if (s_any_changed) book_store_notify_changed();
     ESP_LOGI(TAG, "leave keep_sta=%d heap before=%u after=%u internal_before=%u internal_after=%u",
@@ -2092,8 +2097,8 @@ static void transfer_on_exit(app_ctx_t* ctx) {
 
 static app_redraw_t on_tick(app_ctx_t* ctx) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_view == TRANSFER_CLOUDZAO_KEY) return APP_REDRAW_NONE;
     if (s_view == TRANSFER_CLOUDZAO) {
+        if (s_cloud_notice == CLOUD_NOTICE_FIRST_READ) return APP_REDRAW_NONE;
         if (s_cloud_panel == CLOUD_PANEL_HISTORY) {
             if (!s_cloud_history.busy) return APP_REDRAW_NONE;
             const cz_history_status_t history = cloudzao_history_status();
@@ -2107,11 +2112,25 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
             }
             return APP_REDRAW_PAGE;
         }
-        if (s_cloud_bind_status.busy) {
-            const cz_status_t status = cloudzao_status();
+        if (s_cloud_bind_status.busy || s_cloud_poll_running) {
+            cz_status_t status = cloudzao_status();
             if (status.busy) return APP_REDRAW_NONE;
+            if (s_cloud_cancelling) status = (cz_status_t){.error = CZ_CANCELLED};
+            const bool same_waiting_card = s_cloud_poll_running && status.code[0] &&
+                !strcmp(status.code, s_cloud_bind_status.code) &&
+                (status.error == CZ_TIMEOUT) == (s_cloud_bind_status.error == CZ_TIMEOUT);
             s_cloud_bind_status = status;
+            s_cloud_poll_running = false;
             s_cloud_cancelling = false;
+            s_cloud_poll_at = status.poll_after_s ? ctx->now_ms + (int64_t)status.poll_after_s * 1000 : 0;
+            return same_waiting_card ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
+        }
+        if (s_cloud_panel == CLOUD_PANEL_SETTINGS && s_cloud_poll_at && ctx->now_ms >= s_cloud_poll_at) {
+            const cz_error_t error = cloudzao_start(CZ_JOB_POLL, NULL);
+            if (error == CZ_RESOURCES) { s_cloud_poll_at = ctx->now_ms + 2000; return APP_REDRAW_NONE; }
+            s_cloud_poll_at = 0;
+            if (error == CZ_OK) { s_cloud_poll_running = true; return APP_REDRAW_NONE; }
+            s_cloud_bind_status = (cz_status_t){.error = error};
             return APP_REDRAW_PAGE;
         }
         if (!s_cloud_status.busy) return APP_REDRAW_NONE;
@@ -2119,6 +2138,9 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (!s_cloud_batch) {
             if (status.busy) return APP_REDRAW_NONE;
             s_cloud_status = status;
+            if (status.error == CZ_OK) s_cloud_bind_status = (cz_status_t){.authorized = true};
+            else if (status.error == CZ_AUTH || status.error == CZ_REFRESH_REUSED)
+                s_cloud_bind_status = (cz_status_t){.error = status.error};
             s_cloud_cancelling = false;
             const unsigned count = cloud_offer_count();
             for (unsigned i = 0; i < count; ++i) {
@@ -2131,7 +2153,11 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (!status.busy || s_cloud_panel != CLOUD_PANEL_TRANSFER) {
             s_cloud_status = status;
             s_cloud_transfer = transfer;
-            if (!status.busy) s_cloud_cancelling = false;
+            if (!status.busy) {
+                if (status.error == CZ_AUTH || status.error == CZ_REFRESH_REUSED)
+                    s_cloud_bind_status = (cz_status_t){.error = status.error};
+                s_cloud_cancelling = false;
+            }
             return status.busy ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
         }
 
@@ -2216,7 +2242,6 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         return APP_REDRAW_PAGE;
     }
     if (usb_storage_active()) return APP_REDRAW_NONE;
-    if (s_view == TRANSFER_METHODS) return APP_REDRAW_NONE;
     if (s_view != TRANSFER_HOME) return network_ui_tick(ctx);
     if (s_start_pending) {
         s_start_pending = false;
@@ -2244,7 +2269,9 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         ESP_LOGI(TAG, "start root=%s result=%s", s_root.path, esp_err_to_name(err));
         return APP_REDRAW_PAGE;
     }
-    if (ctx->consumed || ctx->now_ms - s_poll_ms < 2000) return APP_REDRAW_NONE;
+    // 返回已停止的传书页时，不把系统中其他 WiFi 会话显示成传书服务。
+    // A restored, stopped upload page must not show an unrelated WiFi session as an upload service.
+    if (!s_owned_session || ctx->consumed || ctx->now_ms - s_poll_ms < 2000) return APP_REDRAW_NONE;
     s_poll_ms = ctx->now_ms;
     wifi_transfer_service_poll();
     wifi_transfer_status_t next = {0};
@@ -2288,11 +2315,6 @@ static int hit_control(uint16_t x, uint16_t y) {
     return ui_rect_hit(control_rect(2), x, y) ? 2 : -1;
 }
 
-static int hit_method(uint16_t x, uint16_t y) {
-    for (int i = 0; i < TRANSFER_METHOD_COUNT; ++i) if (ui_rect_hit(method_control_rect(i), x, y)) return i;
-    return -1;
-}
-
 static app_redraw_t stop_usb_for_navigation(app_ctx_t *ctx, bool home) {
     s_usb_start_pending = false;
     if (usb_storage_active()) {
@@ -2304,43 +2326,13 @@ static app_redraw_t stop_usb_for_navigation(app_ctx_t *ctx, bool home) {
         s_any_changed = true;
     }
     if (home) ui_nav_request(ctx, 0);
-    else if (s_direct_entry) ctx->request_return = true;
-    else s_view = TRANSFER_METHODS;
-    return ctx->request_return || home ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
-}
-
-static app_redraw_t method_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
-    int old = s_pressed;
-    int origin = hit_method(ev->x0, ev->y0);
-    s_pressed = ev->type == UI_GESTURE_PRESS ? origin : -1;
-    if (ev->type == UI_GESTURE_TAP && old >= 0 && old == origin && hit_method(ev->x, ev->y) == origin) {
-        if (origin == 0) {
-            if (s_status.wifi_configured) {
-                if (stop_upload_if_idle()) {
-                    queue_network_start(WIFI_TRANSFER_MODE_STA);
-                    s_method_message[0] = 0;
-                    return APP_REDRAW_PAGE;
-                }
-            } else if (enter_networks()) return APP_REDRAW_PAGE;
-            snprintf(s_method_message, sizeof(s_method_message), "传输正在结束，请稍后再试");
-        } else if (origin == 1) {
-            if (start_hotspot_service()) return APP_REDRAW_PAGE;
-            snprintf(s_method_message, sizeof(s_method_message), "传输正在结束，请稍后再试");
-        }
-        return APP_REDRAW_PAGE;
-    }
-    if (old == s_pressed) return APP_REDRAW_NONE;
-    // 按下反馈只刷新单行；整页刷新会取消尚未松手的手势，导致入口无法点击。
-    // Refresh only the pressed row; a page redraw cancels the active gesture before its tap.
-    render(ctx, ctx->fb);
-    s_area = method_control_rect(old >= 0 ? old : s_pressed);
-    s_settle = false;
-    return APP_REDRAW_AREA;
+    else ctx->request_return = true;
+    return APP_REDRAW_NONE;
 }
 
 static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) return cloud_gesture(ctx, ev);
+    if (s_view == TRANSFER_CLOUDZAO) return cloud_gesture(ctx, ev);
 #endif
     if (s_status.state == WIFI_TRANSFER_UPLOADING) return APP_REDRAW_NONE;
     if (ev->type == UI_GESTURE_TAP && s_view != TRANSFER_PASSWORD && !usb_storage_active()) {
@@ -2358,20 +2350,11 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
         if (s_view == TRANSFER_NETWORKS) {
             if (s_forget_confirm) { s_forget_confirm = false; s_network_message[0] = 0; return APP_REDRAW_PAGE; }
             if (s_saved_detail) { s_saved_detail = false; s_network_message[0] = 0; return APP_REDRAW_PAGE; }
-            if (s_wifi_settings_only) { ctx->request_return = true; return APP_REDRAW_NONE; }
-            if (s_direct_entry) { ctx->request_return = true; return APP_REDRAW_NONE; }
-            s_view = TRANSFER_METHODS; return APP_REDRAW_PAGE;
         }
-        if (s_view == TRANSFER_HOME) {
-            if (!stop_upload_if_idle()) return APP_REDRAW_NONE;
-            if (s_direct_entry) { ctx->request_return = true; return APP_REDRAW_NONE; }
-            s_view = TRANSFER_METHODS;
-            return APP_REDRAW_PAGE;
-        }
+        if (s_view == TRANSFER_HOME && !stop_upload_if_idle()) return APP_REDRAW_NONE;
         ctx->request_return = true;
         return APP_REDRAW_NONE;
     }
-    if (s_view == TRANSFER_METHODS) return method_gesture(ctx, ev);
     if (s_view != TRANSFER_HOME) return provisioning_gesture(ctx, ev);
     int old = s_pressed;
     int origin = hit_control(ev->x0, ev->y0);
@@ -2391,14 +2374,15 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
             return APP_REDRAW_NONE;
         }
         if (origin == 2) {
-            if (s_mode == WIFI_TRANSFER_MODE_AP && s_status.state == WIFI_TRANSFER_ERROR &&
-                !s_status.network_ready && start_hotspot_service()) return APP_REDRAW_PAGE;
+            if (s_mode == WIFI_TRANSFER_MODE_AP && s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready) {
+                start_hotspot_service();
+                return APP_REDRAW_PAGE;
+            }
             // 即使没有切页历史也先停服，取消尚未执行的启动请求。
             // Stop even without navigation history and cancel a queued start.
             if (!stop_upload_if_idle()) return APP_REDRAW_NONE;
-            if (s_direct_entry) { ctx->request_return = true; return APP_REDRAW_NONE; }
-            s_view = TRANSFER_METHODS;
-            return APP_REDRAW_PAGE;
+            ctx->request_return = true;
+            return APP_REDRAW_NONE;
         }
     }
     if (s_pressed == old) return APP_REDRAW_NONE;
@@ -2410,17 +2394,18 @@ static app_redraw_t on_gesture(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
 
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    if (s_view == TRANSFER_CLOUDZAO_KEY && key != UI_KEY_2) {
-        cloud_end_editor(); s_view = TRANSFER_CLOUDZAO; return APP_REDRAW_PAGE;
-    }
-    if (s_view == TRANSFER_CLOUDZAO || s_view == TRANSFER_CLOUDZAO_KEY) {
+    if (s_view == TRANSFER_CLOUDZAO) {
+        if (s_cloud_notice == CLOUD_NOTICE_FIRST_READ) return APP_REDRAW_NONE;
+        if (s_cloud_notice == CLOUD_NOTICE_REVIEW) {
+            s_cloud_notice = CLOUD_NOTICE_HIDDEN;
+            return APP_REDRAW_PAGE;
+        }
         if (s_cloud_history_confirm && key != UI_KEY_2) {
             s_cloud_history_confirm = false;
             return APP_REDRAW_PAGE;
         }
         cloud_leave();
-        if (key == UI_KEY_2) ui_nav_request(ctx, 0);
-        else ctx->request_return = true;
+        ui_nav_request(ctx, key == UI_KEY_2 ? 0 : 2);
         return APP_REDRAW_NONE;
     }
 #endif
@@ -2431,12 +2416,6 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (s_view == TRANSFER_NETWORKS) {
         if (s_forget_confirm) { s_forget_confirm = false; s_network_message[0] = 0; return APP_REDRAW_PAGE; }
         if (s_saved_detail) { s_saved_detail = false; s_network_message[0] = 0; return APP_REDRAW_PAGE; }
-        if (s_wifi_settings_only || s_direct_entry) { ctx->request_return = true; return APP_REDRAW_NONE; }
-        s_view = TRANSFER_METHODS; return APP_REDRAW_PAGE;
-    }
-    if (s_view == TRANSFER_HOME) {
-        if (s_direct_entry) { ctx->request_return = true; return APP_REDRAW_NONE; }
-        s_view = TRANSFER_METHODS; return APP_REDRAW_PAGE;
     }
     ctx->request_return = true;
     return APP_REDRAW_NONE;
@@ -2473,6 +2452,7 @@ static bool transfer_menu_handle_enabled(app_ctx_t* ctx) {
 const app_desc_t app_transfer = {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
     .on_before_lock = cloud_before_lock,
+    .modal_input_owned = cloud_notice_input_owned,
 #endif
     .on_media_lost = transfer_on_media_lost,
     .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传", .enter_full = false,

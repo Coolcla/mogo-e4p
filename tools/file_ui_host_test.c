@@ -52,20 +52,20 @@ static void interaction(app_ctx_t *ctx) {
     gesture(ctx,UI_GESTURE_LONG_PRESS,120,574);
     assert(s_view==FILE_VIEW_ACTIONS && !strcmp(s_selected.name,s_files[7].name));
     fixture(true);
-#ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    assert(home_transfer_count()==4);
-    render(ctx,ctx->fb);
-    const EpdRect cloud=home_transfer_rect(3);
-    const int left=cloud.x+cloud.width/2-CLOUDZAO_BADGE_SIZE/2;
-    const int top=cloud.y+28-CLOUDZAO_BADGE_SIZE/2;
-    unsigned shades=0;
-    for(int y=top;y<top+CLOUDZAO_BADGE_SIZE;++y)
-        for(int x=left;x<left+CLOUDZAO_BADGE_SIZE;++x)
-            shades|=1u<<ui_read_pixel(ctx->fb,x,y);
-    assert(shades==0xffffu);
-#else
-    assert(home_transfer_count()==3);
-#endif
+    if (CONFIG_MOGO_CLOUDZAO_INTEGRATION_ID[0]) {
+        assert(home_transfer_count()==4);
+        render(ctx,ctx->fb);
+        const EpdRect cloud=home_transfer_rect(3);
+        const int left=cloud.x+cloud.width/2-CLOUDZAO_BADGE_SIZE/2;
+        const int top=cloud.y+28-CLOUDZAO_BADGE_SIZE/2;
+        unsigned shades=0;
+        for(int y=top;y<top+CLOUDZAO_BADGE_SIZE;++y)
+            for(int x=left;x<left+CLOUDZAO_BADGE_SIZE;++x)
+                shades|=1u<<ui_read_pixel(ctx->fb,x,y);
+        assert(shades==0xffffu);
+    } else {
+        assert(home_transfer_count()==3);
+    }
     for(int i=0;i<home_transfer_count();++i) {
         route=-1;ctx->request_app=NULL;
         EpdRect r=home_transfer_rect(i);

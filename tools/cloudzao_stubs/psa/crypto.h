@@ -18,7 +18,7 @@ typedef SHA256_CTX psa_hash_operation_t;
 #define PSA_HASH_OPERATION_INIT {0}
 #define PSA_SUCCESS 0
 #define PSA_ALG_SHA_256 1
-static inline int psa_crypto_init(void) { return PSA_SUCCESS; }
+int psa_crypto_init(void);
 static inline int psa_hash_setup(psa_hash_operation_t *hash, int alg) { return alg == PSA_ALG_SHA_256 && CZ_SHA_INIT(hash) ? 0 : -1; }
 static inline int psa_hash_update(psa_hash_operation_t *hash, const void *data, size_t size) { return CZ_SHA_UPDATE(hash, data, size) ? 0 : -1; }
 static inline int psa_hash_finish(psa_hash_operation_t *hash, uint8_t *out, size_t cap, size_t *size) {

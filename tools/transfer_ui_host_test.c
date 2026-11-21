@@ -41,9 +41,18 @@ static unsigned test_history_first, test_history_drawn;
 static cz_status_t test_cloud_status;
 static cz_history_status_t test_history_status;
 static cz_transfer_t test_transfer_status;
+static bool test_notice_acknowledged = true, test_notice_save_error;
+static unsigned test_notice_writes;
 
-cz_error_t cloudzao_start(cz_job_t job, const char *key, const cz_selection_t *selection) {
-    assert(!strcmp(key, "test-key"));
+bool cloudzao_notice_acknowledged(void) { return test_notice_acknowledged; }
+bool cloudzao_acknowledge_notice(void) {
+    ++test_notice_writes;
+    if (test_notice_save_error) return false;
+    test_notice_acknowledged = true;
+    return true;
+}
+
+cz_error_t cloudzao_start(cz_job_t job, const cz_selection_t *selection) {
     assert((job == CZ_JOB_DOWNLOAD) == (selection != NULL));
     if (test_cloud_start_error) return test_cloud_start_error;
     test_cloud_job = job;
@@ -91,19 +100,18 @@ static void observe_cloud_text(const char *text) {
     if (!strcmp(text, "设置联调密钥")) test_key_setting_drawn = true;
 }
 
-static void assert_cloud_settings_text(app_ctx_t *ctx, const char *text) {
-    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS);
+static void assert_cloud_text(app_ctx_t *ctx, const char *text) {
     test_expected_cloud_text = text;
     test_cloud_text_drawn = test_key_setting_drawn = false;
     test_observe_text = observe_cloud_text;
     draw_cloud(ctx->fb);
     test_observe_text = NULL;
-    assert(test_cloud_text_drawn);
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-    assert(!test_key_setting_drawn);
-#else
-    assert(test_key_setting_drawn);
-#endif
+    assert(test_cloud_text_drawn && !test_key_setting_drawn);
+}
+
+static void assert_cloud_settings_text(app_ctx_t *ctx, const char *text) {
+    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS);
+    assert_cloud_text(ctx, text);
 }
 
 static unsigned test_mark_black, test_mark_edge;
@@ -124,23 +132,31 @@ static void cloud_header_regression(app_ctx_t *ctx) {
 
 static void cloud_back_regression(app_ctx_t *ctx) {
     const EpdRect back = {36, 79, 50, 50};
-    for (int i = CLOUD_PANEL_TRANSFER; i <= CLOUD_PANEL_SETTINGS; ++i) {
-        for (int key = 0; key < 3; ++key) {
-            app_transfer_request_cloudzao();
-            on_enter(ctx);
-            strcpy(s_cloud_key, "test-key");
-            tap(ctx, cloud_tab(i));
-            assert(s_cloud_panel == (cloud_panel_t)i && !ctx->request_return);
-            if (i == CLOUD_PANEL_SETTINGS) tap(ctx, cloud_button(CLOUD_BIND));
-            if (i == CLOUD_PANEL_TRANSFER) tap(ctx, cloud_offer_fetch());
-            const unsigned cancels = test_cloud_cancels;
-            if (!key) tap(ctx, back);
-            else assert(on_key(ctx, key == 1 ? UI_KEY_1 : UI_KEY_3) == APP_REDRAW_NONE);
-            assert(ctx->request_return && !ctx->request_app && s_view == TRANSFER_METHODS);
-            assert(test_cloud_cancels == cancels + 1 && !s_cloud_key[0]);
-            assert(!s_cloud_bind_status.busy && !s_cloud_history.busy && !s_cloud_status.busy);
-            transfer_on_exit(ctx);
-            ctx->request_return = false;
+    for (int resumed = 0; resumed <= 1; ++resumed) {
+        for (int i = CLOUD_PANEL_TRANSFER; i <= CLOUD_PANEL_SETTINGS; ++i) {
+            for (int key = 0; key <= 3; ++key) {
+                app_transfer_request_cloudzao();
+                on_enter(ctx);
+                // 模拟从快捷设置返回，CloudZao 重入时没有新的入口请求。
+                // Model returning from quick settings: CloudZao reenters without a new entry request.
+                if (resumed) {
+                    transfer_on_exit(ctx);
+                    on_enter(ctx);
+                }
+                tap(ctx, cloud_tab(i));
+                assert(s_cloud_panel == (cloud_panel_t)i && !ctx->request_return);
+                if (i == CLOUD_PANEL_SETTINGS) tap(ctx, cloud_button(CLOUD_BIND));
+                if (i == CLOUD_PANEL_TRANSFER) tap(ctx, cloud_offer_fetch());
+                const unsigned cancels = test_cloud_cancels;
+                test_nav_index = -1;
+                if (!key) tap(ctx, back);
+                else assert(on_key(ctx, UI_KEY_1 + key - 1) == APP_REDRAW_NONE);
+                assert(test_nav_index == (key == 2 ? 0 : 2) && !ctx->request_return && s_view != TRANSFER_CLOUDZAO);
+                assert(test_cloud_cancels == cancels + 1 && !s_cloud_bind_status.code[0] && !s_cloud_poll_at);
+                assert(!s_cloud_bind_status.busy && !s_cloud_history.busy && !s_cloud_status.busy);
+                transfer_on_exit(ctx);
+                test_nav_index = -1;
+            }
         }
     }
 }
@@ -148,10 +164,13 @@ static void cloud_back_regression(app_ctx_t *ctx) {
 static void cloud_direct_entry_regression(app_ctx_t *ctx) {
     app_transfer_request_cloudzao();
     on_enter(ctx);
-    assert(s_view == TRANSFER_CLOUDZAO && s_direct_entry && !s_cloud_entry_requested);
+    assert(s_view == TRANSFER_CLOUDZAO && s_entry_requested == TRANSFER_ENTRY_NONE);
     assert(!s_start_pending && !s_scan_pending && !s_usb_start_pending);
     assert(!test_cloud_starts && on_tick(ctx) == APP_REDRAW_NONE);
-    strcpy(s_cloud_key, "test-key");
+    assert_cloud_text(ctx, "查看CloudZao推送的书籍、字体和图片");
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    assert_cloud_settings_text(ctx, "在CloudZao App或小程序中添加这台设备");
+    tap(ctx, cloud_tab(CLOUD_PANEL_TRANSFER));
     const EpdRect receive = cloud_button(CLOUD_RECEIVE);
     const EpdRect fetch = cloud_offer_fetch();
     const EpdRect download = cloud_offer_submit();
@@ -266,11 +285,9 @@ static void cloud_direct_entry_regression(app_ctx_t *ctx) {
 
     tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
     assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && !test_cloud_cancels);
-    assert_cloud_settings_text(ctx, "接收结束后可检查");
+    assert_cloud_settings_text(ctx, "下载 CloudZao App");
+    assert_cloud_settings_text(ctx, "接收结束后可操作");
     tap(ctx, cloud_button(CLOUD_BIND));
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    tap(ctx, cloud_button(CLOUD_KEY));
-#endif
     assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
     test_cloud_status.pending = 0;
     ctx->now_ms += 1000;
@@ -286,47 +303,77 @@ static void cloud_direct_entry_regression(app_ctx_t *ctx) {
     test_cloud_status.error = CZ_CANCELLED;
     assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_result_title(), "已取消"));
 
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    tap(ctx, cloud_button(CLOUD_KEY));
-    assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
-#endif
     tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
-    assert_cloud_settings_text(ctx, "尚未检查绑定");
-    assert_cloud_settings_text(ctx, "检查绑定 / 获取绑定码");
-#ifdef MOGO_CLOUDZAO_LOCAL_RELAY
-    tap(ctx, (EpdRect){36, 598, 612, 90});
-    assert(test_cloud_starts == 2 && s_view == TRANSFER_CLOUDZAO);
-#endif
+    assert_cloud_settings_text(ctx, "授权可用");
+    assert_cloud_settings_text(ctx, "检查授权");
     tap(ctx, cloud_button(CLOUD_BIND));
     assert(test_cloud_starts == 3 && test_cloud_job == CZ_JOB_BIND && s_cloud_bind_status.busy && !s_cloud_status.busy);
-    test_cloud_status = (cz_status_t){.code="001234"};
+    test_cloud_status = (cz_status_t){.code="001234", .poll_after_s=5};
     assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "绑定码"));
     assert_cloud_settings_text(ctx, "001234");
     assert(s_cloud_transfer.rows == 8 && s_cloud_status.error == CZ_CANCELLED);
+    ctx->now_ms = s_cloud_poll_at - 1;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && !s_cloud_poll_running);
+    ++ctx->now_ms;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running && test_cloud_job == CZ_JOB_POLL);
+    test_cloud_status.error = CZ_PAIR_PENDING;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && !s_cloud_poll_running && s_cloud_poll_at > ctx->now_ms);
+    ctx->now_ms = s_cloud_poll_at;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running);
+    test_cloud_status.error = CZ_TIMEOUT;
+    test_cloud_status.poll_after_s = 10;
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_cloud_poll_at == ctx->now_ms + 10000);
+    assert_cloud_settings_text(ctx, "领取授权超时，正在重试");
+    assert_cloud_settings_text(ctx, "001234");
+    ctx->now_ms = s_cloud_poll_at - 1;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && !s_cloud_poll_running);
+    ++ctx->now_ms;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running && test_cloud_job == CZ_JOB_POLL);
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_at == ctx->now_ms + 10000);
+    ctx->now_ms = s_cloud_poll_at;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running);
+    test_cloud_status.error = CZ_PAIR_PENDING;
+    test_cloud_status.poll_after_s = 5;
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_cloud_poll_at == ctx->now_ms + 5000);
+    assert_cloud_settings_text(ctx, "请在 CloudZao App 或 CloudZao 小程序输入此验证码");
+    ctx->now_ms = s_cloud_poll_at;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running);
+    test_cloud_status = (cz_status_t){.authorized=true};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !s_cloud_poll_at);
+    assert_cloud_settings_text(ctx, "授权可用");
+    assert_cloud_settings_text(ctx, "可以接收推送，无需重新绑定");
     tap(ctx, cloud_button(CLOUD_BIND));
-    test_cloud_status = (cz_status_t){.binding_probed=true};
-    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "已绑定"));
-    assert_cloud_settings_text(ctx, "已绑定");
-    assert_cloud_settings_text(ctx, "可直接接收推送，无需重新绑定");
-    tap(ctx, cloud_button(CLOUD_BIND));
-    test_cloud_status = (cz_status_t){.binding_probed=true, .error=CZ_SERVER};
-    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "无法确认绑定状态"));
+    test_cloud_status = (cz_status_t){.error=CZ_ACTIVATION_UNAVAILABLE};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "暂时无法绑定") && !s_cloud_poll_at);
     tap(ctx, cloud_button(CLOUD_BIND));
     test_cloud_status = (cz_status_t){.error=CZ_WIFI};
-    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "绑定请求失败"));
-    assert(!strcmp(cloud_bind_detail(), "请先在设置中连接 WiFi"));
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !strcmp(cloud_bind_title(), "暂时无法绑定"));
+    assert(!strcmp(cloud_bind_detail(), "请先下拉快捷栏打开wifi"));
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.error=CZ_TIMEOUT};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !s_cloud_poll_at);
+    assert_cloud_settings_text(ctx, "绑定请求超时，可重试");
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.code = "012345", .poll_after_s = 5};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    ctx->now_ms = s_cloud_poll_at;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running);
+    test_cloud_status = (cz_status_t){.error = CZ_TIMEOUT, .code = "012345", .poll_after_s = 10};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    const unsigned starts_before_pause = test_cloud_starts;
+    tap(ctx, cloud_button(CLOUD_BIND));
+    ctx->now_ms += 10000;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && test_cloud_starts == starts_before_pause && !s_cloud_poll_at);
+    assert_cloud_settings_text(ctx, "绑定已暂停");
+    tap(ctx, cloud_button(CLOUD_BIND));
+    test_cloud_status = (cz_status_t){.error = CZ_PAIR_PENDING, .code = "012345", .poll_after_s = 5};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE);
+    ctx->now_ms = s_cloud_poll_at;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && s_cloud_poll_running);
+    test_cloud_status = (cz_status_t){.error = CZ_PAIR_EXPIRED};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !s_cloud_poll_at);
+    assert_cloud_settings_text(ctx, "绑定会话已失效，请检查 App 绑定");
     assert(s_cloud_transfer.rows == 8 && s_cloud_status.error == CZ_CANCELLED);
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    tap(ctx, cloud_button(CLOUD_KEY));
-    assert(s_view == TRANSFER_CLOUDZAO_KEY);
-    tap(ctx, (EpdRect){36, 79, 50, 50});
-    assert(s_view == TRANSFER_CLOUDZAO && s_cloud_panel == CLOUD_PANEL_SETTINGS && !ctx->request_return);
-    tap(ctx, cloud_button(CLOUD_KEY));
-    assert(s_view == TRANSFER_CLOUDZAO_KEY);
-    strcpy(s_cloud_draft, "test-key");
-    assert(cloud_save_key() == APP_REDRAW_PAGE && s_view == TRANSFER_CLOUDZAO);
-    assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && !s_cloud_bind_visible && s_cloud_transfer.rows == 8);
-#endif
     tap(ctx, cloud_tab(CLOUD_PANEL_HISTORY));
     assert(test_history_reads == 1 && s_cloud_panel == CLOUD_PANEL_HISTORY && s_cloud_history.busy);
     test_history_status.count = 3;
@@ -334,23 +381,28 @@ static void cloud_direct_entry_regression(app_ctx_t *ctx) {
     app_transfer.on_media_lost(ctx);
     assert(s_cloud_history.error == CZ_MEDIA && !s_cloud_history.count);
     tap(ctx, (EpdRect){36, 79, 50, 50});
-    assert(ctx->request_return && test_cloud_cancels == 2 && !s_cloud_key[0]);
+    assert(test_nav_index == 2 && !ctx->request_return && test_cloud_cancels == 2 &&
+           !s_cloud_bind_status.code[0] && !s_cloud_poll_at);
     transfer_on_exit(ctx);
 
-    ctx->request_return = false;
+    test_nav_index = -1;
     app_transfer_request_cloudzao();
     on_enter(ctx);
-    strcpy(s_cloud_key, "test-key");
+    s_cloud_panel = CLOUD_PANEL_SETTINGS;
+    s_cloud_bind_status = (cz_status_t){.error = CZ_TIMEOUT, .code = "012345", .poll_after_s = 10};
+    s_cloud_poll_at = ctx->now_ms + 10000;
     app_transfer.on_before_lock(ctx);
     assert(!ctx->request_return && s_view == TRANSFER_CLOUDZAO && test_cloud_cancels == 3);
-    assert(!s_cloud_key[0] && !s_cloud_requested && !s_cloud_status.busy);
-    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_NONE && ctx->request_return);
+    assert(!s_cloud_bind_status.code[0] && !s_cloud_poll_at && !s_cloud_requested && !s_cloud_status.busy);
+    const unsigned starts_before_unlock = test_cloud_starts;
+    ctx->now_ms += 10000;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && test_cloud_starts == starts_before_unlock);
+    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_NONE && test_nav_index == 2 && !ctx->request_return);
     transfer_on_exit(ctx);
-    ctx->request_return = false;
+    test_nav_index = -1;
     cloud_back_regression(ctx);
     app_transfer_request_cloudzao();
     on_enter(ctx);
-    strcpy(s_cloud_key, "test-key");
     tap(ctx, fetch);
     test_cloud_status = (cz_status_t){.busy = true};
     tap(ctx, fetch);
@@ -358,8 +410,22 @@ static void cloud_direct_entry_regression(app_ctx_t *ctx) {
     test_cloud_status = (cz_status_t){.error = CZ_CANCELLED};
     assert(on_tick(ctx) == APP_REDRAW_PAGE && !s_cloud_cancelling && !cloud_offer_count());
     tap(ctx, fetch);
+    test_cloud_status = (cz_status_t){.error = CZ_SERVER, .preview_http_error = 503};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !cloud_offer_count());
+    assert_cloud_text(ctx, "获取列表失败");
+    assert_cloud_text(ctx, "云造服务返回 HTTP 503");
+    tap(ctx, fetch);
+    test_cloud_status = (cz_status_t){.error = CZ_SERVER};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !cloud_offer_count());
+    assert_cloud_text(ctx, "连接或传输失败，可重试");
+    tap(ctx, fetch);
+    test_cloud_status = (cz_status_t){.error = CZ_TIMEOUT};
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && !cloud_offer_count());
+    assert_cloud_text(ctx, "获取列表超时，可重试");
+    tap(ctx, fetch);
     test_cloud_status = (cz_status_t){0};
     assert(on_tick(ctx) == APP_REDRAW_PAGE && !cloud_offer_count());
+    assert_cloud_text(ctx, "暂无待下载推送");
     tap(ctx, fetch);
     test_offer_rows = 4;
     test_cloud_status = (cz_status_t){.total = 4};
@@ -369,8 +435,12 @@ static void cloud_direct_entry_regression(app_ctx_t *ctx) {
     tap(ctx, refresh);
     assert(test_cloud_job == CZ_JOB_PREVIEW && s_cloud_status.busy && !s_cloud_checked && !test_offer_rows);
     transfer_on_exit(ctx);
+    unsigned starts = test_cloud_starts;
     on_enter(ctx);
-    assert(s_view == TRANSFER_METHODS && !s_direct_entry);
+    assert(s_view == TRANSFER_CLOUDZAO && s_cloud_panel == CLOUD_PANEL_TRANSFER);
+    assert(!s_start_pending && !s_scan_pending && !s_usb_start_pending);
+    assert(on_tick(ctx) == APP_REDRAW_NONE && test_cloud_starts == starts);
+    transfer_on_exit(ctx);
     puts("CloudZao queue preview, selection, progress, cancellation, binding, back and lock: PASS");
 }
 
@@ -379,6 +449,71 @@ static app_redraw_t cloud_swipe(app_ctx_t *ctx, ui_gesture_type_t type, uint16_t
     const ui_gesture_event_t swipe = {.type = type, .x0 = left ? 550 : 135,
                                      .x = left ? 135 : 550, .y0 = y, .y = y};
     return on_gesture(ctx, &swipe);
+}
+
+static void cloud_notice_regression(app_ctx_t *ctx) {
+    test_notice_acknowledged = false;
+    const unsigned starts = test_cloud_starts, reads = test_history_reads;
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    assert(s_cloud_notice == CLOUD_NOTICE_FIRST_READ && app_transfer.modal_input_owned(ctx));
+    assert_cloud_text(ctx, "我已了解");
+    assert_cloud_text(ctx, "截至 2026 年 11 月 21 日实测");
+    assert_cloud_text(ctx, "CloudZao App 仅能上传并推送 TXT、EPUB 原文件。");
+    assert_cloud_text(ctx, "AZW3、MOBI 会被强制转换为 .ebook。");
+    assert_cloud_text(ctx, "请通过 CloudZao 网页端上传并推送。");
+
+    tap(ctx, (EpdRect){22, 65, 90, 83});
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    tap(ctx, cloud_tab(CLOUD_PANEL_HISTORY));
+    tap(ctx, cloud_button(CLOUD_BIND));
+    tap(ctx, cloud_button(CLOUD_RECEIVE));
+    const EpdRect action = cloud_notice_button();
+    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_L, action.y + 2) == APP_REDRAW_NONE);
+    const ui_gesture_event_t release_inside = {.type = UI_GESTURE_TAP, .x0 = action.x - 1, .y0 = action.y + 2,
+                                               .x = action.x + 2, .y = action.y + 2};
+    assert(on_gesture(ctx, &release_inside) == APP_REDRAW_NONE);
+    for (int key = UI_KEY_1; key <= UI_KEY_3; ++key) assert(on_key(ctx, key) == APP_REDRAW_NONE);
+    assert(on_tick(ctx) == APP_REDRAW_NONE);
+    transfer_on_media_lost(ctx);
+    cloud_before_lock(ctx);
+    assert(s_view == TRANSFER_CLOUDZAO && s_cloud_notice == CLOUD_NOTICE_FIRST_READ);
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && !test_notice_writes && !test_notice_acknowledged);
+    assert(test_cloud_starts == starts && test_history_reads == reads && !ctx->request_return && !ctx->request_app);
+
+    test_notice_save_error = true;
+    tap(ctx, action);
+    assert(s_cloud_notice == CLOUD_NOTICE_FIRST_READ && test_notice_writes == 1 && !test_notice_acknowledged);
+    assert_cloud_text(ctx, "未能保存确认，请再试一次");
+    transfer_on_exit(ctx);
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    assert(s_cloud_notice == CLOUD_NOTICE_FIRST_READ);
+
+    test_notice_save_error = false;
+    tap(ctx, action);
+    assert(s_cloud_notice == CLOUD_NOTICE_HIDDEN && !app_transfer.modal_input_owned(ctx));
+    assert(s_cloud_panel == CLOUD_PANEL_TRANSFER && test_notice_acknowledged && test_notice_writes == 2);
+    transfer_on_exit(ctx);
+    // 重新进入只读持久化状态；页面状态已由离开清除。/ Reentry reads only the persisted state after exit clears page state.
+    app_transfer_request_cloudzao();
+    on_enter(ctx);
+    assert(s_cloud_notice == CLOUD_NOTICE_HIDDEN);
+    tap(ctx, cloud_tab(CLOUD_PANEL_SETTINGS));
+    assert_cloud_text(ctx, "注意事项");
+    tap(ctx, cloud_notice_entry());
+    assert(s_cloud_notice == CLOUD_NOTICE_REVIEW && app_transfer.modal_input_owned(ctx));
+    assert_cloud_text(ctx, "截至 2026 年 11 月 21 日实测");
+    assert_cloud_text(ctx, "mogo 暂不支持 .ebook，请使用 TXT 或 EPUB。");
+    assert_cloud_text(ctx, "CloudZao App 暂时无法推送壁纸。");
+    assert_cloud_text(ctx, "关闭");
+    tap(ctx, action);
+    assert(s_cloud_notice == CLOUD_NOTICE_HIDDEN && s_cloud_panel == CLOUD_PANEL_SETTINGS);
+    tap(ctx, cloud_notice_entry());
+    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_PAGE);
+    assert(s_cloud_notice == CLOUD_NOTICE_HIDDEN && s_cloud_panel == CLOUD_PANEL_SETTINGS);
+    assert(test_notice_writes == 2 && !ctx->request_return && !ctx->request_app);
+    transfer_on_exit(ctx);
 }
 
 static void cloud_swipe_regression(app_ctx_t *ctx) {
@@ -408,13 +543,6 @@ static void cloud_swipe_regression(app_ctx_t *ctx) {
     assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_NONE);
     assert(s_cloud_panel == CLOUD_PANEL_SETTINGS && test_history_reads == reads + 1);
     s_cloud_bind_status.busy = false;
-#ifndef MOGO_CLOUDZAO_LOCAL_RELAY
-    tap(ctx, cloud_button(CLOUD_KEY));
-    assert(s_view == TRANSFER_CLOUDZAO_KEY);
-    assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_NONE);
-    assert(s_view == TRANSFER_CLOUDZAO_KEY && s_cloud_panel == CLOUD_PANEL_SETTINGS);
-    tap(ctx, password_control_rect(44));
-#endif
     assert(cloud_swipe(ctx, UI_GESTURE_SWIPE_R, body_y) == APP_REDRAW_PAGE);
     assert(s_cloud_panel == CLOUD_PANEL_HISTORY && test_history_reads == reads + 2);
     test_history_status = (cz_history_status_t){0};
@@ -489,6 +617,9 @@ static void cloud_history_clear_regression(app_ctx_t *ctx) {
     assert(on_tick(ctx) == APP_REDRAW_PAGE);
     tap(ctx, cloud_pager(true, true));
     assert_history_text(ctx, "清除");
+    tap(ctx, (EpdRect){520, 279, 128, 47});
+    tap(ctx, (EpdRect){36, 279, 464, 47});
+    assert(!s_cloud_history_confirm && !test_history_clears);
     tap(ctx, clear);
     assert(s_cloud_history_confirm && !test_history_clears);
     assert_history_text(ctx, "仅清除当前 TF 卡的接收记录");
@@ -525,7 +656,7 @@ static void cloud_history_clear_regression(app_ctx_t *ctx) {
     test_history_clear_start_error = CZ_RESOURCES;
     tap(ctx, clear);
     tap(ctx, confirm);
-    assert_history_text(ctx, "清除失败，可重试");
+    assert_history_text(ctx, "8 条 · 清除失败，可重试");
     assert(test_history_clears == 1 && !s_cloud_history.busy && s_cloud_history.count == 8);
     test_history_clear_start_error = CZ_OK;
     tap(ctx, clear);
@@ -537,7 +668,7 @@ static void cloud_history_clear_regression(app_ctx_t *ctx) {
     test_history_status = (cz_history_status_t){.count = 8, .error = CZ_STORAGE};
     assert(on_tick(ctx) == APP_REDRAW_PAGE);
     test_history_drawn = 0;
-    assert_history_text(ctx, "清除失败，可重试");
+    assert_history_text(ctx, "8 条 · 清除失败，可重试");
     assert(test_history_drawn == 2 && s_cloud_history_page == 1);
     tap(ctx, clear);
     tap(ctx, confirm);
@@ -556,10 +687,10 @@ static void qr_regression(app_ctx_t* ctx) {
     test_status = (wifi_transfer_status_t){.mode=WIFI_TRANSFER_MODE_AP,.state=WIFI_TRANSFER_READY,.network_ready=true};
     strcpy(test_status.ssid,"ReadPico-test");
     strcpy(test_status.url,"http://192.168.4.1");
-    s_mode = WIFI_TRANSFER_MODE_AP;
+    app_transfer_request_hotspot_start();
     on_enter(ctx);
-    s_view = TRANSFER_HOME;
     s_qr_url = true;
+    assert(on_tick(ctx) == APP_REDRAW_PAGE && s_owned_session);
     ctx->now_ms += 3000;
     on_tick(ctx);
     assert(s_qr_ready && s_qr_url && !strcmp(test_qr_payload,test_status.url));
@@ -742,7 +873,76 @@ static void multi_network_regression(app_ctx_t *ctx) {
     tap(ctx, network_control_rect(1)); assert(s_view == TRANSFER_PASSWORD);
     clear_password();
     test_multi_profiles = false; s_wifi_settings_only = false;
-    s_view = TRANSFER_METHODS;
+    s_view = TRANSFER_NETWORKS;
+}
+
+static void transfer_entry_regression(app_ctx_t *ctx) {
+    const EpdRect back = {36, 79, 50, 50};
+    app_transfer_request_wifi_setup();
+    on_enter(ctx);
+    assert(s_wifi_settings_only && s_view == TRANSFER_NETWORKS && s_scan_pending);
+
+    // TF 失效不能打断扫描或清除正在编辑的密码。
+    // Media loss must not interrupt scanning or erase a password being edited.
+    transfer_on_media_lost(ctx);
+    assert(s_view == TRANSFER_NETWORKS && s_scan_pending && !s_media_lost);
+    network_ui_tick(ctx);
+    tap(ctx, network_control_rect(0));
+    assert(s_view == TRANSFER_PASSWORD);
+    tap(ctx, (EpdRect){24,740,30,30});
+    assert(strlen(s_password) == 1);
+    transfer_on_media_lost(ctx);
+    assert(s_view == TRANSFER_PASSWORD && strlen(s_password) == 1);
+    tap(ctx, back);
+    assert(s_view == TRANSFER_NETWORKS && !s_password[0] && !ctx->request_return);
+
+    // 快捷栏先提交重进请求，再退出旧页；返回历史则没有新请求。
+    // Quick re-entry queues before exiting; history return has no new request.
+    app_transfer_request_wifi_setup();
+    transfer_on_exit(ctx);
+    on_enter(ctx);
+    assert(s_wifi_settings_only && s_entry_requested == TRANSFER_ENTRY_NONE);
+    tap(ctx, back);
+    assert(ctx->request_return && s_view == TRANSFER_NETWORKS);
+    transfer_on_exit(ctx);
+    ctx->request_return = false;
+    on_enter(ctx);
+    assert(s_wifi_settings_only && s_view == TRANSFER_NETWORKS && !s_start_pending);
+    assert(on_key(ctx, UI_KEY_1) == APP_REDRAW_NONE && ctx->request_return);
+    transfer_on_exit(ctx);
+    ctx->request_return = false;
+
+    // 恢复热点页不能重启服务或复用无关 STA 的地址和二维码。
+    // Restoring Hotspot must neither restart it nor reuse an unrelated STA's URL or QR.
+    app_transfer_request_hotspot_start();
+    on_enter(ctx);
+    assert(s_start_pending);
+    transfer_on_exit(ctx);
+    test_wifi_running = true;
+    test_status = (wifi_transfer_status_t){.state=WIFI_TRANSFER_READY,.network_ready=true,
+        .network_only=true,.mode=WIFI_TRANSFER_MODE_STA,.session_id=999};
+    strcpy(test_status.url, "http://192.0.2.1");
+    const int stops = test_stop_count;
+    on_enter(ctx);
+    assert(s_view == TRANSFER_HOME && s_mode == WIFI_TRANSFER_MODE_AP && !s_start_pending);
+    ctx->now_ms += 3000;
+    assert(on_tick(ctx) == APP_REDRAW_NONE && !s_status.network_ready && !s_qr_ready);
+    transfer_on_media_lost(ctx);
+    assert(!s_media_lost && s_view == TRANSFER_HOME);
+    transfer_on_exit(ctx);
+    app_transfer_request_wifi_setup();
+    on_enter(ctx);
+    assert(s_wifi_settings_only && s_view == TRANSFER_NETWORKS && s_status.network_ready);
+    app_transfer_request_wifi_setup();
+    transfer_on_exit(ctx);
+    on_enter(ctx);
+    assert(s_wifi_settings_only && !s_scan_pending && s_status.network_ready);
+    transfer_on_media_lost(ctx);
+    transfer_on_exit(ctx);
+    assert(test_stop_count == stops && test_wifi_running && test_status.network_ready);
+    test_wifi_running = false;
+    test_status = (wifi_transfer_status_t){0};
+    ctx->now_ms = 0;
 }
 
 int main(void) {
@@ -762,38 +962,28 @@ int main(void) {
     cloud_swipe_regression(&ctx);
     cloud_history_regression(&ctx);
     cloud_history_clear_regression(&ctx);
+    cloud_notice_regression(&ctx);
 #endif
-    on_enter(&ctx);
-    assert(s_view == TRANSFER_METHODS && !s_wifi_settings_only && !s_start_pending);
-    on_tick(&ctx);
-    assert(test_qr_encodes == 0);
     qr_regression(&ctx);
     test_configured = true;
+    app_transfer_request_wifi_upload();
     on_enter(&ctx);
-    tap(&ctx, method_control_rect(0));
     assert(s_view == TRANSFER_HOME && s_start_pending && !s_scan_pending);
     assert(s_mode == WIFI_TRANSFER_MODE_STA);
     on_tick(&ctx);
     tap(&ctx, control_rect(2));
-    assert(s_view == TRANSFER_METHODS && !s_start_pending);
+    assert(s_view == TRANSFER_HOME && !s_start_pending && ctx.request_return);
+    transfer_on_exit(&ctx);
+    ctx.request_return = false;
     test_configured = false;
-    on_enter(&ctx);
-    ui_gesture_event_t cancelled = {.type=UI_GESTURE_PRESS, .x0=50, .y0=350, .x=50, .y=350};
-    assert(on_gesture(&ctx, &cancelled) == APP_REDRAW_AREA);
-    cancelled.type = UI_GESTURE_CANCEL;
-    assert(on_gesture(&ctx, &cancelled) == APP_REDRAW_AREA);
-    assert(s_view == TRANSFER_METHODS && !s_start_pending && s_pressed == -1);
     for (int i = 44; i < 48; ++i) {
         EpdRect r = password_control_rect(i);
         assert(r.x >= 0 && r.x + r.width <= UI_LOCK_WIDTH);
         assert(r.y >= 0 && r.y + r.height <= UI_LOCK_HEIGHT);
     }
+    app_transfer_request_wifi_upload();
     on_enter(&ctx);
-    test_busy = true;
-    const int stops_at_chooser = test_stop_count;
-    tap(&ctx, method_control_rect(0));
-    assert(s_view == TRANSFER_NETWORKS && s_scan_pending && test_stop_count == stops_at_chooser);
-    test_busy = false;
+    assert(s_view == TRANSFER_NETWORKS && s_scan_pending && !s_start_pending);
     network_ui_tick(&ctx);
     assert(s_network_count == 8 && !s_scan_pending);
     test_configured = s_saved_configured = true;
@@ -888,9 +1078,11 @@ int main(void) {
     int stops_before = test_stop_count;
     tap(&ctx, control_rect(2));
     assert(test_stop_count == stops_before && !s_start_pending);
-    assert(s_view == TRANSFER_METHODS && !ctx.request_return && ctx.request_app == NULL);
+    assert(s_view == TRANSFER_HOME && ctx.request_return && ctx.request_app == NULL);
+    transfer_on_exit(&ctx);
+    ctx.request_return = false;
+    app_transfer_request_hotspot_start();
     on_enter(&ctx);
-    tap(&ctx, method_control_rect(1));
     on_tick(&ctx);
     test_busy = true;
     stops_before = test_stop_count;
@@ -906,43 +1098,35 @@ int main(void) {
     s_session_started = true;
     transfer_on_exit(&ctx);
     assert(test_store_changes == 1);
+    app_transfer_request_hotspot_start();
     on_enter(&ctx);
-    tap(&ctx, method_control_rect(1));
     on_tick(&ctx);
     s_root.is_flash = false;
     s_free = 123456;
+    test_status.state = WIFI_TRANSFER_UPLOADING;
+    test_status.network_ready = true;
     stops_before = test_stop_count;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
     assert(s_media_lost && !s_free && !s_qr_ready && !s_root.path[0]);
-    assert(!s_start_pending && !s_session_started && s_view == TRANSFER_METHODS);
+    assert(!s_start_pending && !s_session_started && s_view == TRANSFER_HOME);
+    assert(s_status.state == WIFI_TRANSFER_STOPPED && !s_status.network_ready);
     s_root.is_flash = true;
     app_transfer.on_media_lost(&ctx);
     assert(test_stop_count == stops_before + 1);
-    // 仅进入方式选择、退场或拔卡都不能拆掉并不属于本页的联网 STA。
-    // The chooser and its exit/media hook cannot tear down an unrelated STA.
-    on_enter(&ctx);
-    test_wifi_running = true;
-    test_status = (wifi_transfer_status_t){.state=WIFI_TRANSFER_READY,.network_ready=true,
-        .network_only=true,.mode=WIFI_TRANSFER_MODE_STA,.session_id=999};
-    s_root.is_flash = false;
-    stops_before = test_stop_count;
-    app_transfer.on_media_lost(&ctx);
     transfer_on_exit(&ctx);
-    assert(test_stop_count == stops_before && test_wifi_running && test_status.network_ready);
-    test_wifi_running = false;
     test_status = (wifi_transfer_status_t){0};
     ctx.request_return = false;
     test_configured = true;
     app_transfer_request_wifi_upload();
     on_enter(&ctx);
-    assert(s_direct_entry && s_view == TRANSFER_HOME && s_start_pending);
+    assert(s_view == TRANSFER_HOME && s_start_pending);
     tap(&ctx, control_rect(2));
     assert(ctx.request_return && s_view == TRANSFER_HOME);
     ctx.request_return = false;
     app_transfer_request_hotspot_start();
     on_enter(&ctx);
-    assert(s_direct_entry && s_view == TRANSFER_HOME && s_start_pending);
+    assert(s_view == TRANSFER_HOME && s_start_pending);
     tap(&ctx, control_rect(2));
     assert(ctx.request_return && s_view == TRANSFER_HOME);
     ctx.request_return = false;
@@ -950,7 +1134,7 @@ int main(void) {
     on_enter(&ctx);
     assert(s_usb_start_pending && !test_usb_active);
     assert(on_tick(&ctx) == APP_REDRAW_PAGE);
-    assert(s_direct_entry && s_usb_entry && s_view == TRANSFER_HOME && test_usb_active);
+    assert(s_usb_entry && s_view == TRANSFER_HOME && test_usb_active);
     test_usb_stop_error = ESP_FAIL;
     tap(&ctx, (EpdRect){36, 79, 50, 50});
     assert(test_usb_active && !ctx.request_return && s_view == TRANSFER_HOME);
@@ -959,10 +1143,19 @@ int main(void) {
     test_usb_stop_error = ESP_OK;
     tap(&ctx, control_rect(2));
     assert(ctx.request_return && !test_usb_active);
+    transfer_on_exit(&ctx);
+    ctx.request_return = false;
+    on_enter(&ctx);
+    assert(s_usb_entry && !s_usb_start_pending);
+    assert(on_tick(&ctx) == APP_REDRAW_NONE && !test_usb_active);
+    transfer_on_exit(&ctx);
+    app_transfer_request_wifi_upload();
+    on_enter(&ctx);
     enter_networks();
     test_scan_count = 8; test_scan_error = ESP_OK;
     network_ui_tick(&ctx);
     wifi_recovery_regression(&ctx);
     multi_network_regression(&ctx);
+    transfer_entry_regression(&ctx);
     puts("transfer_ui_host_test: PASS");
 }

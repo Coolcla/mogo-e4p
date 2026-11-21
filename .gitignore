@@ -63,6 +63,8 @@ tools/buzzer_score_wav
 flasher_args.json # Generated in build directory
 sdkconfig.old
 sdkconfig
+# 本机 CloudZao 接入配置 / Local CloudZao integration configuration
+/sdkconfig.cloudzao.local*
 
 # ESP-IDF dependencies
 # For older versions or manual component management

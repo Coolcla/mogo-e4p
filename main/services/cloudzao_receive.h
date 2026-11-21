@@ -10,16 +10,19 @@
 #define CLOUDZAO_JSON_MAX (128u * 1024u)
 #define CLOUDZAO_CHUNK (8u * 1024u)
 #define CLOUDZAO_URL_MAX 4096u
-#define CLOUDZAO_KEY_MAX 128u
+#define CLOUDZAO_TOKEN_MAX 256u
+#define CLOUDZAO_DELIVERY_ID_MAX 96u
 #define CLOUDZAO_NAME_MAX 120u
 #define CLOUDZAO_LIST_ROWS 128u
 #define CLOUDZAO_HISTORY_ROWS 32u
 
-typedef enum { CZ_BIND, CZ_LIST, CZ_DOWNLOAD, CZ_ACK } cz_request_t;
-typedef enum { CZ_JOB_BIND, CZ_JOB_PREVIEW, CZ_JOB_DOWNLOAD } cz_job_t;
+typedef enum { CZ_BIND, CZ_EXCHANGE, CZ_REFRESH, CZ_LIST, CZ_DOWNLOAD, CZ_ACK } cz_request_t;
+typedef enum { CZ_JOB_BIND, CZ_JOB_POLL, CZ_JOB_PREVIEW, CZ_JOB_DOWNLOAD } cz_job_t;
 typedef enum {
     CZ_OK, CZ_INVALID, CZ_AUTH, CZ_SERVER, CZ_TIMEOUT, CZ_WIFI,
-    CZ_MEDIA, CZ_CANCELLED, CZ_RESOURCES, CZ_STORAGE, CZ_CONFLICT, CZ_DIGEST
+    CZ_MEDIA, CZ_CANCELLED, CZ_RESOURCES, CZ_STORAGE, CZ_CONFLICT, CZ_DIGEST,
+    CZ_PAIR_PENDING, CZ_SLOW_DOWN, CZ_PAIR_EXPIRED, CZ_ACTIVATION_UNAVAILABLE,
+    CZ_REFRESH_REUSED, CZ_INTEGRATION, CZ_DELIVERY_MISSING, CZ_CLOCK, CZ_CREDENTIAL_STORAGE, CZ_LINK_EXPIRED
 } cz_error_t;
 
 typedef enum {
@@ -61,17 +64,21 @@ typedef struct {
     bool busy;
     cz_error_t error, item_error;
     cz_request_t item_request; ///< 最后一个单项错误所属操作。/ Operation of the last per-item error.
+    uint16_t preview_http_error; ///< 清单请求或预览续期的异常 HTTP 状态，零表示未取得异常状态码。/ Unexpected HTTP status during preview or its refresh; zero when unavailable.
     unsigned total, processed, saved, pending, skipped, failed, unavailable;
     char code[7];
-    bool binding_probed; ///< 无验证码时尝试验证；仅 error 为 CZ_OK 时确认绑定。/ Probed without a code; only CZ_OK confirms binding.
+    bool authorized;
+    uint32_t poll_after_s;
 } cz_status_t;
 
 typedef bool (*cz_sink_t)(void *context, const void *bytes, size_t length);
 typedef struct {
     const char *url;          ///< 仅用于文件请求。/ Only supplied to a file request.
-    const char *body;         ///< 绑定和确认的 JSON。/ JSON for binding and acknowledgement.
-    const char *key, *mac;    ///< 文件请求始终传 NULL。/ Always NULL for a file request.
+    const char *body;         ///< 配对或换令牌的 JSON。/ JSON for pairing or token operations.
+    const char *token;        ///< 仅清单和确认请求使用。/ List and acknowledgement only.
+    const char *delivery_id; ///< 仅确认请求使用。/ Acknowledgement only.
     size_t limit;            ///< 允许接收的最大字节数。/ Maximum allowed response bytes.
+    bool *maybe_sent;        ///< 刷新仅在确定未发送时保留旧令牌。/ Keep old credentials only when refresh was certainly unsent.
 } cz_http_request_t;
 typedef struct {
     void *context;
@@ -79,6 +86,7 @@ typedef struct {
     cz_error_t (*stop)(void *context);
     cz_error_t (*request)(void *context, cz_request_t operation, const cz_http_request_t *request,
                           cz_sink_t sink, void *sink_context);
+    int64_t (*now)(void *context);
     uint64_t (*free_bytes)(void *context);
     void (*book_added)(void *context);
     void (*progress)(void *context, const cz_status_t *status);
@@ -89,20 +97,23 @@ typedef struct {
 } cz_ops_t;
 
 /// 预览填充队列，下载只匹配该队列里勾选的项目；不缓存网络响应。/ Preview fills the queue; download matches only its checked items. No response is retained.
-cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, const char *key, const char *mac,
-                         const char *version, char *json, unsigned char *chunk);
+cz_status_t cloudzao_run(const cz_ops_t *ops, cz_job_t job, cz_queue_t *queue, char *json, unsigned char *chunk);
 /// 检查 ASCII 请求头值，防止截断或注入。/ Validate an ASCII credential without truncation or header injection.
-bool cloudzao_key_valid(const char *key);
+bool cloudzao_token_valid(const char *token);
+bool cloudzao_delivery_id_valid(const char *id);
+struct cJSON;
+/// 缓冲区末尾必须已补 NUL。/ The caller must NUL-terminate the buffer.
+struct cJSON *cloudzao_json_parse(const char *json, size_t used);
 /// 校验可显示、可保存的单个 UTF-8 文件名。/ Validate a single UTF-8 filename for display and storage.
 bool cloudzao_name_valid(const char *name);
 
 typedef struct {
     const char *host, *path;
-    size_t host_len;
+    size_t host_len, encoded_len; ///< 原始主机字节数和编码后请求目标字节数 / Raw host and encoded request-target byte counts
 } cz_download_target_t;
 
 /// 判断下载主机是否在 OSS 信任范围内；调用方仍需校验目标。/ Identify OSS trust scope; callers must still validate the target.
 bool cloudzao_oss_host(const char *host, size_t length);
 
-/// 解析仅以 TLS 请求的目标；路径和查询不改写。/ Parse a TLS-only target without rewriting its path or query.
+/// 验证 TLS 下载目标，计算仅对 OSS 路径裸 UTF-8 编码后的长度。/ Validate a TLS download target and size the encoding of raw UTF-8 in OSS paths only.
 bool cloudzao_download_target(const char *url, cz_download_target_t *target);

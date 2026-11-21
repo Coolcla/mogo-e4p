@@ -73,18 +73,12 @@ def main():
             subprocess.run(compiler + flags + ["-I" + path for path in includes] + sources +
                            ["-lm", "-o", str(binary)], cwd=ROOT, env=env, check=True)
             subprocess.run([str(binary)], cwd=ROOT, env=env, check=True)
-        (work / "mbedtls").mkdir()
-        (work / "mbedtls/platform_util.h").write_text(
-            "#include <stddef.h>\nstatic inline void mbedtls_platform_zeroize(void *p, size_t n) {"
-            " volatile unsigned char *b = p; while (n--) *b++ = 0; }\n")
         sources, includes = cases["ui"]
-        (work / "cloudzao_local_relay.h").write_text('#define CZ_RELAY_DEVICE_TOKEN "test-key"\n')
-        for name, extra in (("ui-cloudzao", []), ("ui-cloudzao-relay", ["-DMOGO_CLOUDZAO_LOCAL_RELAY=1"])):
-            binary = work / name
-            subprocess.run(compiler + flags + ["-DCONFIG_MOGO_CLOUDZAO_TRANSFER=1", "-I" + str(work)] + extra +
-                           ["-I" + path for path in includes] + sources + ["-lm", "-o", str(binary)],
-                           cwd=ROOT, env=env, check=True)
-            subprocess.run([str(binary)], cwd=ROOT, env=env, check=True)
+        binary = work / "ui-cloudzao"
+        subprocess.run(compiler + flags + ["-DCONFIG_MOGO_CLOUDZAO_TRANSFER=1"] +
+                       ["-I" + path for path in includes] + sources + ["-lm", "-o", str(binary)],
+                       cwd=ROOT, env=env, check=True)
+        subprocess.run([str(binary)], cwd=ROOT, env=env, check=True)
         subprocess.run([sys.executable, "tools/test_transfer_wifi_forget.py"], cwd=ROOT, env=env, check=True)
 
 

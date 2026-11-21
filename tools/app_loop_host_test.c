@@ -458,6 +458,7 @@ static app_redraw_t gesture(app_ctx_t*c,const ui_gesture_event_t*e) {
     if(e->type==UI_GESTURE_PRESS&&home_on_touch)c->request_return=true;
     return response;
 }
+static bool page_modal_visible(app_ctx_t *ctx) { (void)ctx; return true; }
 static app_redraw_t key(app_ctx_t*c,int k) {keys[k]++;if(home_on_key)c->request_return=true;return APP_REDRAW_NONE;}
 static app_redraw_t tick(app_ctx_t*c) {
     ticks++;tick_consumed[step]=c->consumed;
@@ -1393,6 +1394,14 @@ int main(void) {
     up_key_action=APP_READER_KEY_REFRESH;up_key_steps[3]=true;
     for(unsigned i=0;i<7;++i)add(0,0,0,0);
     run();assert(fulls==1);
+    reset();first.owns_keys=true;first.modal_input_owned=page_modal_visible;time_step=100000;fl_ready=true;
+    key_actions[UI_KEY_1]=APP_READER_KEY_HOME;
+    key_actions[UI_KEY_2]=APP_READER_KEY_REFRESH;
+    key_actions[UI_KEY_3]=APP_READER_KEY_FRONTLIGHT;
+    up_key_action=APP_READER_KEY_REFRESH;up_key_steps[3]=true;
+    add(0,0,0,0);add(80,1500,1,0);add(0,0,0,0);add(240,1500,1,0);
+    add(0,0,0,0);add(400,1500,1,0);add(0,0,0,0);run();
+    assert(enters==1&&fulls==1&&!fl_applies&&keys[UI_KEY_1]==1&&keys[UI_KEY_2]==1&&keys[UI_KEY_3]==1);
     puts("PASS: global key mappings on ordinary pages, double-click suppression, native fallback, and reader/PMU ownership");
     puts("app_loop: 50 scheduler scenarios passed, including automatic lock, save callback, input reset and busy guards");
     return 0;
