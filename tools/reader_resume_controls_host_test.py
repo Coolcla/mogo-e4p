@@ -19,6 +19,8 @@ typedef struct {int x,y,width,height;} EpdRect;
 typedef struct {int64_t now_ms;int leaf;bool user_activity;} app_ctx_t;
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE} app_redraw_t;
 enum {READING,TOC,SHELF,READER_PANEL_NONE,READER_PANEL_TOOLS};
+#define READER_WIDTH 684
+#define READER_HEIGHT 1216
 #define BOOK_TOC_ROWS 7
 #define BOOK_MARGIN_MIN 0
 #define BOOK_MARGIN_MAX 96

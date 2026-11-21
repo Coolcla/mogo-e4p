@@ -16,8 +16,9 @@ def function(path, name):
 
 
 shelf = r'''
-#define READER_WIDTH 684
-#define READER_HEIGHT 1216
+static int reader_width = 684, reader_height = 1216;
+#define READER_WIDTH reader_width
+#define READER_HEIGHT reader_height
 #include <assert.h>
 #include <stdbool.h>
 static bool reader_orientation_sync(void){return false;}
@@ -403,6 +404,23 @@ int main(void){
    app_redraw_t redraw=turn_page(&ctx,1);trace_count=0;present(&ctx,redraw);
    assert(trace_route[0]==(policy?LOCAL_FULL:WATER));
  }
+ // 同一水波纹设置下，左右横屏都只生成普通翻页，回竖屏立即恢复动画。
+ // A single saved ripple setting produces ordinary turns in either landscape and restores portrait ripple.
+ test_full_pages=0;test_effect=1;
+ for(int orientation=0;orientation<4;++orientation){
+   bool landscape=orientation%2!=0;
+   reader_width=landscape?1216:684;reader_height=landscape?684:1216;
+   const int dir=orientation<2?1:-1;
+   s_page=dir>0?0:1;trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));
+   app_redraw_t redraw=turn_page(&ctx,dir);
+   assert(redraw==APP_REDRAW_AREA&&s_reader_turn_pending&&s_water_turn_pending==!landscape);
+   int sets=test_tick_sets;trace_count=0;
+   assert(present(&ctx,redraw)&&test_tick_sets==sets+(landscape?0:2));
+   if(landscape)assert(trace_route[0]==DIFF&&trace_wave[0]==E0470_SOFT_TEXTTURN_WAVEFORM);
+   else assert(trace_route[0]==WATER);
+   assert(test_effect==1);
+ }
+ reader_width=684;reader_height=1216;
  test_full_pages=0;test_effect=0;s_page=0;test_types[0][0]=1;test_image.gray=NULL;
  trace_count=0;present(&ctx,paint_reading(&ctx,MODE_GL16));assert(!s_reader_text_frame);
  assert(turn_page(&ctx,1)==APP_REDRAW_AREA&&!s_reader_turn_pending);
@@ -684,8 +702,14 @@ from run_reader_baseline import toolchain
 shelf = position_state(page=0) + shelf
 with tempfile.TemporaryDirectory() as folder:
     env, _ = toolchain(Path(folder))
-    units = (("status", status),) if "--status-only" in sys.argv else (("nav-modes", navigation),) if "--nav-only" in sys.argv else (
-        ("shelf", shelf), ("status", status), ("nav-modes", navigation), ("image-bw", image_bw))
+    if "--reader-only" in sys.argv:
+        units = (("shelf", shelf),)
+    elif "--status-only" in sys.argv:
+        units = (("status", status),)
+    elif "--nav-only" in sys.argv:
+        units = (("nav-modes", navigation),)
+    else:
+        units = (("shelf", shelf), ("status", status), ("nav-modes", navigation), ("image-bw", image_bw))
     for name, unit in units:
         source, binary = Path(folder) / (name + ".c"), Path(folder) / name
         source.write_text(unit)

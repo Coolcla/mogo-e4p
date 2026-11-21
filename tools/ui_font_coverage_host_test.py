@@ -80,6 +80,8 @@ last = source.index("static void draw_font_picker(", first)
 # diagrams. Dynamic book text and user font names intentionally use other paths.
 section = source[first:last] + (root / "main/ui/ui_reader_settings.c").read_text(encoding="utf-8") + (root / "main/ui/ui_reader_tap_grid.c").read_text(encoding="utf-8")
 labels = re.findall(r'"([^"\n]*)"', section)
+labels.append(ast.literal_eval(re.search(r'^static const char s_landscape_turn_notice\[\] = (".+");$',
+                                         source, re.M).group(1)))
 # 本地快刷细点阵说明也必须使用完整系统字形。/ The local fine-dot mode explanation also needs complete system glyphs.
 settings = (root / "main/apps/app_device_settings.c").read_text()
 first = settings.index("if (s_page == SETTINGS_MAIN_REFRESH) {")

@@ -559,6 +559,7 @@ static int s_reader_preview_px, s_reader_preview_margin[MARGIN_COUNT], s_reader_
 static int s_reader_preview_tracking;
 static uint32_t s_recent_days[30];
 static bool s_recent_days_valid;
+static const char s_landscape_turn_notice[] = "横屏阅读\n仅支持普通翻页";
 static char s_reader_notice[128];
 static int64_t s_reader_notice_until;
 static int s_bookmark_page;
@@ -4110,6 +4111,7 @@ static void free_book(void) {
     (void)app_reading_journal_flush();
     e0470_page_turn_release();
     s_water_turn_pending = false;
+    s_reader_notice[0] = 0;
     s_reader_turn_pending = s_reader_text_frame = s_reader_stable_frame = false;
     pending_progress_t* pending = pending_find(s_reader_session.book.path);
     if (pending && !pending->dirty) pending_discard(s_reader_session.book.path);
@@ -5260,7 +5262,8 @@ static app_redraw_t turn_page(app_ctx_t* ctx, int dir) {
         .from_text = from_text_frame, .from_stable = from_stable_frame,
         .images = book_layout_page_image_count(s_reader_session.position.page) != 0,
         .background = app_settings_book_background_path()[0] != 0,
-        .cleanup = s_reader_cleanup, .water_effect = app_settings_reader_turn_effect() == 1,
+        .cleanup = s_reader_cleanup,
+        .water_effect = READER_WIDTH <= READER_HEIGHT && app_settings_reader_turn_effect() == 1,
         .chapter_changed = s_reader_session.position.chapter != prior_chapter,
     };
     reader_turn_effects_t effects = reader_turn_effects(&frame);
@@ -5337,6 +5340,16 @@ static bool reader_orientation_apply(display_orientation_t next) {
     s_reader_footer_strong = s_water_turn_pending = s_reader_turn_pending = false;
     s_shake_gate = (book_shake_gate_t){0};
     if (!ok) s_orientation_retry_ms = esp_timer_get_time() / 1000 + 2000;
+    else if (READER_WIDTH <= READER_HEIGHT) {
+        if (!strcmp(s_reader_notice, s_landscape_turn_notice)) s_reader_notice[0] = 0;
+    } else if (s_view == READING && s_text &&
+               (s_orientation.locked == DISPLAY_ORIENTATION_PORTRAIT ||
+                s_orientation.locked == DISPLAY_ORIENTATION_INVERTED)) {
+        // 仅提示进入横屏；暂用系统竖屏后回到会话方向不重复提示。
+        // Notify on entering landscape, not when restoring it after temporary system portrait.
+        copy_text(s_reader_notice, sizeof(s_reader_notice), s_landscape_turn_notice);
+        s_reader_notice_until = esp_timer_get_time() / 1000 + 3000;
+    }
     return ok || !restored;
 }
 

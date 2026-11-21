@@ -459,6 +459,17 @@ static app_redraw_t tick(app_ctx_t*c) {
     if(home_on_tick){c->request_return=true;home_on_tick=false;}
     return full_tick ? APP_REDRAW_FULL : APP_REDRAW_NONE;
 }
+// 模拟采样事务先开始、主循环读队列后才发布，再与抬手帧一起回放。
+// Model a sample that starts before the loop polls, publishes afterwards, and replays with the lift.
+static app_redraw_t queue_touch_lift(app_ctx_t *c) {
+    (void)c;
+    if (step == sample_count - 2) {
+        const int64_t now = esp_timer_get_time() / 1000;
+        touch_sampler_test_push(now - 1, 550, 950, 1);
+        touch_sampler_test_push(now + 5, 0, 0, 0);
+    }
+    return APP_REDRAW_NONE;
+}
 static app_redraw_t consume_power(app_ctx_t*c) {(void)c;lock_due=false;return APP_REDRAW_DONE;}
 static void reset(void) {
     screen_disabled=false;
@@ -1212,6 +1223,17 @@ int main(void) {
     run();assert(!idle_locks);
     touch_sampler_test_enable(false);
     puts("touch replay: the timestamp stays full width across the 49.7-day wrap and never fakes an idle timeout");
+    // 实时取新帧或复用按下帧时都不能把手势时间推到积压样本之后。
+    // Neither a fresh nor a reused live press may advance gesture time past a buffered sample.
+    for (int reuse = 0; reuse <= 1; ++reuse) {
+        reset();first.on_gesture=gesture;first.on_tick=queue_touch_lift;
+        touch_sampler_test_enable(true);
+        touch_sampler_test_push(5,550,950,1);
+        for (int i = 0; i < 2 + reuse; ++i) add(0,0,0,0);
+        run();
+        assert(events[UI_GESTURE_PRESS]==1 && events[UI_GESTURE_CANCEL]==0 && events[UI_GESTURE_TAP]==1);
+        touch_sampler_test_enable(false);
+    }
     // 反馈必须早于页面保存/后台收尾；下一页与自动休眠不显示主动锁屏徽标。
     // Acknowledgement precedes saves/joins; consumed page turns and idle sleep omit it.
     for(int policy=0;policy<3;++policy){

@@ -115,7 +115,11 @@ enum {MARGIN_LEFT,MARGIN_RIGHT,MARGIN_TOP,MARGIN_BOTTOM,MARGIN_COUNT};
 enum {READING,SHELF,TOC};
 enum {READER_PANEL_NONE,READER_PANEL_TOOLS,READER_PANEL_SETTINGS};
 typedef struct {int unused;} book_shake_gate_t;
-typedef struct {void *acc;uint8_t *fb;} app_ctx_t;
+typedef struct {void *acc;uint8_t *fb;int64_t now_ms;} app_ctx_t;
+typedef enum {APP_REDRAW_NONE, APP_REDRAW_PAGE} app_redraw_t;
+static char s_reader_notice[128];
+static int64_t s_reader_notice_until;
+static void copy_text(char *out, size_t size, const char *text){snprintf(out,size,"%s",text);}
 static reader_session_t s_reader_session;
 static reader_orientation_t s_orientation;
 static display_orientation_t direction;
@@ -164,10 +168,11 @@ static reader_dims_ctx_t s_reader_dims_ctx;
 static void reader_bind_chapter(void){s_text=s_reader_session.content.utf8;}
 static void app_font_activate_system(void){}
 '''
+layout += re.search(r'^static const char s_landscape_turn_notice\[\] = .+;$', BOOK.read_text(), re.M).group(0) + "\n"
 for name in ("reader_footer_height", "reader_area", "body_rect_for_tracking", "body_rect",
              "reader_status_area", "progress_rect", "reader_tools_area", "reader_page_offset",
              "free_book", "reader_reflow_build", "reader_orientation_apply", "reader_orientation_portrait",
-             "reader_orientation_sync", "rotation_available", "rotation_enabled", "on_rotation_toggle", "on_system_overlay"):
+             "reader_orientation_sync", "reader_notice_tick", "rotation_available", "rotation_enabled", "on_rotation_toggle", "on_system_overlay"):
     layout += function(name, BOOK) + "\n"
 layout += r'''
 static char text[24001];
@@ -189,20 +194,26 @@ int main(void){
   book_layout_set_vertical(vertical);s_chrome_visible[0]=s_chrome_visible[1]=!full;statusbar=status;
   for(int d=1;d<=4;++d){
    display_orientation_t next=(display_orientation_t)(d%4);assert(reader_orientation_apply(next));s_orientation.locked=next;
+   bool landscape=next==DISPLAY_ORIENTATION_LEFT||next==DISPLAY_ORIENTATION_RIGHT;
+   assert(landscape?(!strcmp(s_reader_notice,s_landscape_turn_notice)&&s_reader_notice_until==126000):!s_reader_notice[0]);
    assert(!locks&&reader_page_offset(s_reader_session.position.page)==anchor);
    size_t page=s_reader_session.position.page;assert(book_layout_page_start_offset(page)<=anchor&&book_layout_page_start_offset(page+1)>anchor);
    in_screen(body_rect());in_screen(reader_area());if(status||!full)in_screen(reader_status_area());if(!full)in_screen(progress_rect());in_screen(reader_tools_area());
    if(next){int before=rendered;on_system_overlay(&ctx);assert(direction==0&&rendered==before+1&&s_orientation.locked==next&&s_orientation.automatic);
-    assert(reader_orientation_sync()&&direction==next&&reader_page_offset(s_reader_session.position.page)==anchor);}
+    assert(reader_orientation_sync()&&direction==next&&reader_page_offset(s_reader_session.position.page)==anchor);
+    assert(!s_reader_notice[0]);}
   }
  }
  s_chrome_visible[0]=s_chrome_visible[1]=true;statusbar=true;book_layout_set_vertical(false);
  assert(reader_orientation_apply(DISPLAY_ORIENTATION_RIGHT));s_orientation.locked=DISPLAY_ORIENTATION_RIGHT;
+ assert(strstr(s_reader_notice,"仅支持普通翻页"));
+ ctx.now_ms=s_reader_notice_until-1;assert(reader_notice_tick(&ctx)==APP_REDRAW_NONE&&s_reader_notice[0]);
+ ++ctx.now_ms;assert(reader_notice_tick(&ctx)==APP_REDRAW_PAGE&&!s_reader_notice[0]);
  on_rotation_toggle(&ctx);assert(!s_orientation.automatic&&s_orientation.locked==DISPLAY_ORIENTATION_RIGHT);
  s_reader_panel=READER_PANEL_SETTINGS;assert(!rotation_available(&ctx)&&reader_orientation_sync()&&direction==0);
  s_reader_panel=READER_PANEL_NONE;assert(reader_orientation_sync()&&direction==1);
  int before=saves;fail_mask=1;build_attempt=0;
- assert(!reader_orientation_apply(DISPLAY_ORIENTATION_LEFT));assert(direction==1&&saves==before&&!locks);
+ assert(!reader_orientation_apply(DISPLAY_ORIENTATION_LEFT));assert(direction==1&&saves==before&&!locks&&!s_reader_notice[0]);
  assert(reader_page_offset(s_reader_session.position.page)==anchor&&s_orientation_retry_ms==125000);
  // 竖屏目标失败但原布局恢复：系统入口仍必须清理到竖屏；双失败也不能留下无效借用。
  // If portrait fails but the old layout restores, the system boundary still closes in portrait; double failures must also release invalid borrows.
@@ -210,9 +221,9 @@ int main(void){
  open_book();s_orientation.automatic=true;fail_mask=3;build_attempt=0;
  assert(reader_orientation_apply(DISPLAY_ORIENTATION_RIGHT));assert(direction==0&&s_view==SHELF&&!s_text&&!s_reader_session.layout_owned&&!s_orientation.automatic);
  fail_mask=0;open_book();assert(reader_orientation_apply(DISPLAY_ORIENTATION_LEFT));s_orientation.automatic=true;
- free_book();assert(direction==0&&!s_text&&!s_reader_session.layout_owned&&!s_orientation.automatic&&!s_orientation_retry_ms&&!locks);
+ free_book();assert(direction==0&&!s_text&&!s_reader_session.layout_owned&&!s_orientation.automatic&&!s_orientation_retry_ms&&!locks&&!s_reader_notice[0]);
  assert(invalidates>10&&releases>10&&prepared>10&&saves>10);
- puts("PASS: real reader/session/paginator preserve text anchors through four orientations, chrome bounds, system round trips, manual lock, rollback, double failure and close cleanup");
+ puts("PASS: real reader/session/paginator preserve text anchors through four orientations, chrome bounds, system round trips, manual lock, landscape notice/timeout, rollback, double failure and close cleanup");
 }
 '''
 

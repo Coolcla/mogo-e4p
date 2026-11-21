@@ -197,6 +197,26 @@ int main(void) {
         assert(!out.status_updated && out.footer_updated == (failure > 1));
         assert(tick == 13579 && count == outputs + (water ? 2u : 0u));
     }
+    // 横屏忽略残留的动画，普通正文与插图均保留原路径和扫描节拍。
+    // Landscape ignores a stale animation and keeps ordinary text/image paths and pacing.
+    for (int dir = E0470_TURN_LTR; dir <= E0470_TURN_RTL; ++dir) {
+        r = reset(); r.screen_area = (EpdRect){0, 0, 1216, 684};
+        r.water_dir = (e0470_turn_dir_t)dir;
+        r.water_turn_pending = r.water_effect = true;
+        out = reader_present_output(&hl, &r);
+        assert(out.error == EPD_DRAW_SUCCESS && count == 1 && tick == 13579);
+        expect(0, DIFF, &text, MODE_GL16, r.area);
+        r.image_gray_refresh = r.image_page = true;
+        count = outputs = 0;
+        out = reader_present_output(&hl, &r);
+        assert(out.error == EPD_DRAW_SUCCESS && count == 1 && tick == 13579);
+        expect(0, AREA, &E0470_FULL_WAVEFORM, MODE_GC16, r.body_area);
+        r.refresh = READER_PRESENT_PAGE;
+        count = outputs = 0;
+        out = reader_present_output(&hl, &r);
+        assert(out.error == EPD_DRAW_SUCCESS && count == 1 && tick == 13579);
+        expect(0, WHOLE, &E0470_FULL_WAVEFORM, MODE_GC16, none);
+    }
     // 插图正文也优先输出，保留原完整灰阶或插图差分出口。
     // Illustration bodies also present first while retaining full-gray or image-differential output.
     for (int bg = 0; bg < 2; ++bg) for (int water = 0; water < 2; ++water)

@@ -1130,6 +1130,9 @@ void app_loop_run(const app_loop_config_t* config) {
                 }
             }
         }
+        // 单帧与回放共用采样时钟，否则迟到帧会被误判为时间倒退并取消点按。
+        // Share the sample clock across live and replay frames so late samples cannot cancel a tap as a clock rollback.
+        if (!replayed) ctx.now_ms = sample_ms;
         app_input_dispatch_gesture_frame(&ctx, current, &gesture, err,
                                power_input_owned || quick_input_owned || menu_open, present_page);
 

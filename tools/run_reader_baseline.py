@@ -102,6 +102,8 @@ SUITES = {
     "battery_filter": [sys.executable, "tools/test_pmu_soc_filter.py"],
     "battery_calibration": [sys.executable, "tools/battery_calibration_host_test.py"],
     "battery_calibration_ui": [sys.executable, "tools/battery_calibration_ui_host_test.py"],
+    "reader_notice": [sys.executable, "tools/reader_notice_ui_host_test.py"],
+    "reader_feedback": [sys.executable, "tools/ui_refresh_feedback_host_test.py", "--reader-only"],
     "status_power": [sys.executable, "tools/ui_refresh_feedback_host_test.py", "--status-only"],
     "nav_layout": [sys.executable, "tools/ui_refresh_feedback_host_test.py", "--nav-only"],
     "quick_pixels": [sys.executable, "tools/quick_layer_raster_host_test.py"],

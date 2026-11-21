@@ -12,7 +12,7 @@ python3 tools/run_reader_baseline.py perf prefetch background
 python3 tools/run_reader_baseline.py shelf management
 python3 tools/run_reader_baseline.py session chapter open images book
 python3 tools/run_reader_baseline.py controls
-python3 tools/run_reader_baseline.py present
+python3 tools/run_reader_baseline.py present reader_feedback display
 ```
 
 ## 阅读背景加载 / Reading-background loading
@@ -93,6 +93,9 @@ Page observation allocates nothing, performs no storage IO and retains no text b
 
 `prefetch` 编译完整的预绘模块，使用真实线程和受控行边界验证推屏期间借用、停止交还、部分页续画、代次失效、内存/任务创建失败及重复释放。页面负责输入优先级和插图排除；预绘模块在 `end` 返回前借用稳定的字体、章节与布局，调用方随后才能替换资源。
 `prefetch` compiles the complete prefetch module with real threads and controlled row boundaries, checking presentation-time borrowing, stop/handoff, partial-page continuation, generation invalidation, allocation/task failures and repeated release. The page owns input priority and illustration exclusions; fonts, chapter and layout remain stable until `end` returns, before callers replace resources.
+
+横屏普通翻页仍与下一页预绘重叠；不会为水波纹额外生成扫描帧。`reader_feedback` 和 `present` 核对横屏正文/插图输出及回竖屏效果恢复，宿主不测实际连翻时延或光学效果。
+Ordinary landscape turns still overlap next-page prerendering and generate no additional ripple scan frames. `reader_feedback` and `present` check landscape text/image output and restored portrait effects, not hardware latency or optical quality.
 
 `storage` 编译真实的 `storage_jobs_quiesce`，覆盖封面先于头像、失败短路和每项独立超时；同时运行 S31 USB 四线总线/模拟开关、退出失败重试、文件页格式化/重挂门控、主机下电恢复，以及真实封面与头像工作队列测试。USB、文件页与睡眠共用这一交还入口；阅读预绘、传输、OTA 和介质状态仍由原调用边界负责。
 `storage` compiles the real `storage_jobs_quiesce`, checking cover-before-avatar ordering, failure short-circuiting and independent per-job timeouts. It also runs S31 USB four-bit bus/switch and teardown-retry checks, file-page format/remount guards, host power-down recovery, and real cover/avatar worker tests. USB, files and sleep share this handoff; reader prefetch, transfers, OTA and media state remain owned by their existing caller boundaries.

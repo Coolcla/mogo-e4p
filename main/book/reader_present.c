@@ -24,6 +24,11 @@ reader_present_result_t reader_present_output(EpdiyHighlevelState *hl,
     // unchanged pixels that dilation brings along are not pushed through a white-black trip
     // that draws a thin outline.
     const unsigned frame_flags = request->image_page ? DISPLAY_REFRESH_IMAGE : DISPLAY_REFRESH_DEFAULT;
+    // 横屏仅用普通翻页，不改保存的效果；忽略换向前排队的动画。
+    // Landscape uses ordinary turns without changing the saved effect; ignore a queued pre-rotation animation.
+    const bool portrait = request->screen_area.width <= request->screen_area.height;
+    const bool water_effect = portrait && request->water_effect;
+    const bool water_turn = portrait && request->water_turn_pending;
     if (!request->reading && request->prior_reader &&
         (request->refresh == READER_PRESENT_PAGE || request->refresh == READER_PRESENT_FULL)) {
         // 同页退出正文回书架也请求完整48相，清掉阅读文字残影。
@@ -40,7 +45,7 @@ reader_present_result_t reader_present_output(EpdiyHighlevelState *hl,
     else if (request->image_gray_refresh && request->refresh == READER_PRESENT_AREA && !request->cleanup && request->prior_reader) {
         // 灰阶只驱动正文，避免每张插图都把整屏先清白再闪回。
         // Drive the grayscale body from the current frame instead of clearing the whole screen to white.
-        err = request->water_effect
+        err = water_effect
             ? display_refresh_area(hl, DISPLAY_REFRESH_READER_BODY, request->body_area, frame_flags)
             : display_refresh_area(hl, DISPLAY_REFRESH_READER_IMAGE, request->body_area, DISPLAY_REFRESH_DEFAULT);
     }
@@ -50,7 +55,7 @@ reader_present_result_t reader_present_output(EpdiyHighlevelState *hl,
         // An illustration on an explicitly full first frame still needs a white-baseline commit:
         // the image AUTO differential leaves unchanged home-page rows out of the dirty map.
         err = update_display_reader_image_gray(hl);
-    else if (request->image_gray_refresh) err = request->water_effect &&
+    else if (request->image_gray_refresh) err = water_effect &&
         request->refresh != READER_PRESENT_FULL && !request->cleanup
         // 换章那一帧走整屏差分，表的选择与正文带差分一致。
         // The chapter-change frame diffs the whole screen and takes the same table.
@@ -84,17 +89,17 @@ reader_present_result_t reader_present_output(EpdiyHighlevelState *hl,
     else if (request->refresh == READER_PRESENT_AREA) {
         // 快档每次显式设置并在推屏后恢复，不能把阅读节拍带入主页水波纹。
         // Explicitly select fast pacing per turn and restore afterward, without leaking reader timing into main-page ripple.
-        const int prior_tick = request->water_turn_pending ? e0470_page_turn_tick_us() : 0;
-        if (request->water_turn_pending) e0470_page_turn_set_tick_us(E0470_TURN_FAST_TICK_US);
+        const int prior_tick = water_turn ? e0470_page_turn_tick_us() : 0;
+        if (water_turn) e0470_page_turn_set_tick_us(E0470_TURN_FAST_TICK_US);
         // 翻页动画独立于页脚显隐。/ The turn effect is independent of footer visibility.
-        err = request->water_turn_pending
+        err = water_turn
             ? update_display_water_turn(hl, request->area, request->water_dir)
             // 正文翻页只驱动变化像素；设置面板等局部绘制保留原路径。
             // Text turns drive changed pixels only; other local UI keeps its path.
             : request->turn_pending && request->mode == MODE_GL16
                 ? display_refresh_area(hl, DISPLAY_REFRESH_READER_TEXT, request->area, DISPLAY_REFRESH_DEFAULT)
                 : display_refresh_area(hl, DISPLAY_REFRESH_READER_LAYOUT, request->area, request->mode == MODE_DU ? DISPLAY_REFRESH_QUICK : DISPLAY_REFRESH_DEFAULT);
-        if (request->water_turn_pending) e0470_page_turn_set_tick_us(prior_tick);
+        if (water_turn) e0470_page_turn_set_tick_us(prior_tick);
 
     }
     // 关闭阅读设置等面板时，被白底盖过的字已经多走了一轮「擦白 → 推黑」，比没被盖过的

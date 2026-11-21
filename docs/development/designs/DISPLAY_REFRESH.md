@@ -104,6 +104,9 @@ FOLLOW DU and capsule drag select FAST; other outputs retain FULL. These are tim
 OTA/display 递归互斥、供电检查、成功后提交 back buffer、失败后重建真实基准、欠载降频恢复继续由原物理出口负责。新策略不绕过这些出口，不提前确认一帧成功。
 Existing physical exits retain recursive OTA/display exclusion, power checks, success-only back-buffer commits, baseline reconstruction after failures and underrun frequency fallback. Policy never bypasses these exits or confirms success early.
 
+横屏阅读固定使用普通翻页，丢弃换向前等待输出的水波纹请求；保留普通正文、阅读背景、插图以及周期/手动全刷出口。效果设置不写回，竖屏阅读重新使用所选效果；主页水波纹与板级扫描时钟策略不变。
+Landscape reading always uses ordinary turns and discards any queued pre-rotation ripple. Ordinary text, reading backgrounds, illustrations and periodic/manual cleanups keep their existing paths. Do not rewrite the preference: portrait uses the selected effect again, and main-page ripple and board clock policy are unchanged.
+
 ## 维护与验证 / Maintenance and verification
 
 新增场景先增加意图/属性和固定期望测试，再迁移调用方。新增波形登记来源、用途、基底、构造器回退与实屏依据。产品层禁止直接引用表、派生 getter 或带波形参数的原始出口，也禁止包含内部策略/目录头；工厂 VCOM 路径保留原有低层例外。
