@@ -122,6 +122,7 @@ int tinyusb_driver_uninstall(void){assert(!borrowed&&!connected);if(usb_error)re
 int tinyusb_msc_uninstall_driver(void){assert(!borrowed&&!driver);if(msc_error)return msc_error;msc=false;return ESP_OK;}
 bool tud_mounted(void){return connected;}
 void tud_disconnect(void){assert(driver);connected=false;}
+bool home_library_quiesce(unsigned t){assert(t==2000);return true;}
 bool book_cover_jobs_quiesce(unsigned t){assert(t==2000);++cover_calls;return cover_ok;}
 bool ui_avatar_quiesce(unsigned t){assert(t==2000);++avatar_calls;return avatar_ok;}
 static int collage_invalidations;

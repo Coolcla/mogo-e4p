@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+- 天气可在空闲设置等主页面借用现有网络静默更新，正常周期延长到十小时（需平台配套）；阅读与待机继续避让。/ Refresh weather quietly on idle root pages over an existing connection, with a ten-hour normal interval when supported by the platform. Reading and standby still take priority.
+- 退出阅读回首页时，迷你书库改为后台整理，天气自动刷新让切页优先；阅读时间、手账和进度保存不变。/ Refresh the mini library in the background and give navigation priority over automatic weather updates when returning Home. Reading time, journal and progress saving are unchanged.
 - 横屏阅读固定使用普通翻页，切入横屏时短暂提示；转回竖屏自动恢复原选项，主页水波纹不变。/ Use ordinary turns in landscape reading and show a brief notice on entry. Portrait restores the selected effect; main-page ripple is unchanged.
 - 修复实时触摸切换到积压帧回放时，误取消有效点按的问题。/ Fix valid taps being canceled when live touch processing switches to buffered replay.
 - TF 配置备份扩展到 v48：补齐书封取景、书架书名、前光、自动对时和自动升级、天气、阅读手账和书库分类；保存全部已存 WiFi，恢复时合并，超过八组会在写入前提示。/ TF backup v48 adds cover framing, shelf captions, frontlight, automatic time/update checks, weather, journal and shelf categories. It saves all WiFi profiles and rejects over-capacity merges before writing.

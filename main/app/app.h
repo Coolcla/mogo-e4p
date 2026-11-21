@@ -69,6 +69,8 @@ typedef struct {
     /// 输入适配器借用的设备上下文，页面不得释放。/ Borrowed input context; pages must not free it.
     void *touch_context;
     int64_t now_ms;
+    /// 主循环给页面轮询的最近输入时刻。/ Latest input timestamp supplied to page polling.
+    int64_t last_input_ms;
     /// 去抖后的触摸快照：空槽已清零，抬手后保留最后一次坐标。
     /// / Debounced touch: empty slots cleared; last coords kept after lift.
     const app_touch_t* touch;

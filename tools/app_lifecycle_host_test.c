@@ -53,6 +53,7 @@ void pico_ota_auto_cancel(void) { event('U'); }
 bool pico_online_busy(void) { event('O'); return ota; }
 bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms) { assert(timeout_ms==2000 || timeout_ms == 250); event('G'); return images_ok; }
+bool home_library_quiesce(unsigned timeout){assert(timeout==2000||timeout==250);return true;}
 bool book_cover_jobs_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('C'); return cover_ok; }
 bool ui_avatar_quiesce(unsigned timeout_ms) { assert(timeout_ms == 2000 || timeout_ms == 250); event('A'); return avatar_ok; }
 bool network_service_pause_for_sleep(void) { event('W'); return transfer_ok; }

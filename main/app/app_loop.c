@@ -86,6 +86,7 @@
 #include "frontlight.h"
 #include "time_service.h"
 #include "weather_service.h"
+#include "home_components.h"
 #include "ota_auto.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
@@ -670,6 +671,7 @@ void app_loop_run(const app_loop_config_t* config) {
     int64_t last_font_retry_ms = 0;
     int64_t last_media_poll_ms = 0;
     int64_t last_network_poll_ms = 0;
+    int64_t last_weather_poll_ms = 0;
     int64_t last_input_ms = esp_timer_get_time() / 1000;
     uint32_t last_ble_input = ble_pt_input_serial();
     unsigned idle_minutes = app_settings_auto_lock_minutes();
@@ -1313,6 +1315,7 @@ void app_loop_run(const app_loop_config_t* config) {
             }
         }
         if (!power_dialog_open && !app_quick_layer_is_open() && !quick_input_owned && !ui_click_feedback_active() && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
+            ctx.last_input_ms = ctx.user_activity || touch.touched ? ctx.now_ms : last_input_ms;
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) key_hold.key = -1;
             present_page(&ctx, current, &gesture, redraw);
@@ -1401,6 +1404,21 @@ void app_loop_run(const app_loop_config_t* config) {
                 app_navigation_capture_reader_return(current);
                 ctx.request_app = &app_device_settings;
             }
+        }
+        // 非天气主页面只静默更新缓存；切页、独占页面及系统覆盖层让路，不等待天气联网退出。
+        // Non-weather root pages update only the cache; yield to navigation, exclusive pages and overlays without joining weather.
+        extern const app_desc_t app_book;
+        const bool weather_background_safe = !just_transitioned && !power_dialog_open && !menu_open &&
+            !app_quick_layer_is_open() && !quick_input_owned && !ctx.request_app && !ctx.request_menu &&
+            !ctx.request_return && !usb_storage_active() && !transfer_busy && !pico_online_busy() &&
+            !current->holds_pmu && !ble_pt_connected() && current != &app_transfer && current != &app_book &&
+            current != app_home_page() && app_navigation_main_page_ready(&ctx, current);
+        if (!weather_background_safe) app_weather_background_pause();
+        else if (!ctx.consumed && !touch.touched && !ui_click_feedback_active() &&
+                 ctx.now_ms - last_input_ms >= 10000 && ctx.now_ms - last_weather_poll_ms >= 1000) {
+            last_weather_poll_ms = ctx.now_ms;
+            if (app_home_has_widget(APP_HOME_WIDGET_WEATHER)) app_weather_background_poll();
+            else app_weather_background_pause();
         }
         if (!power_dialog_open && (ctx.request_return || ctx.request_app || ctx.request_menu)) {
             if (ui_click_feedback_release(ctx.fb, &click_area))

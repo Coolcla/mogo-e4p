@@ -315,7 +315,33 @@ static void cloudzao_borrows_only_connected_sta(void) {
     wifi = (wifi_transfer_status_t){0};
 }
 
+static void quiet_weather_ready_only(void) {
+    network_lease_t lease;
+    reset(NETWORK_ROUTE_AUTO, NETWORK_AUTO_WIFI_FIRST);
+    assert(network_service_acquire(NETWORK_USE_WEATHER_BACKGROUND, &lease) != ESP_OK && !lease.active);
+    assert(!wifi_starts && !cell_starts);
+    wifi = (wifi_transfer_status_t){.owns_radio=true,.state=WIFI_TRANSFER_READY,
+        .mode=WIFI_TRANSFER_MODE_STA,.network_ready=true};
+    assert(network_service_acquire(NETWORK_USE_WEATHER_BACKGROUND, &lease) != ESP_OK);
+    wifi.network_only = true;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_BACKGROUND, &lease) == ESP_OK && !lease.owns_wifi);
+    assert(network_service_wait_ready(&lease, 30000) && default_netif == &wifi_marker);
+    wifi.network_ready = false;
+    assert(!network_service_wait_ready(&lease, 30000) && !wifi_starts && !cell_starts && now_us == 0);
+    network_service_release(&lease);
+    assert(!wifi_stops);
+    reset(NETWORK_ROUTE_WIFI, NETWORK_AUTO_WIFI_FIRST);
+    cellular.ready = true;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_BACKGROUND, &lease) != ESP_OK);
+    s_route = NETWORK_ROUTE_AUTO;
+    assert(network_service_acquire(NETWORK_USE_WEATHER_BACKGROUND, &lease) == ESP_OK && !lease.owns_cellular);
+    assert(network_service_wait_ready(&lease, 30000) && default_netif == &cell_marker);
+    network_service_release(&lease);
+    assert(!wifi_starts && !cell_starts && !cell_stops);
+}
+
 int main(void) {
+    quiet_weather_ready_only();
     cloudzao_borrows_only_connected_sta();
     manual_weather_cellular();
     network_lease_t lease;

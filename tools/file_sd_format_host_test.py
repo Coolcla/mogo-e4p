@@ -25,6 +25,7 @@ typedef int esp_err_t;
 static bool cloud_ok=true,cover_ok=true,avatar_ok=true;
 static bool cloudzao_quiesce(unsigned ms){assert(ms==2000);return cloud_ok;}
 static int cover_calls,avatar_calls,remounts;
+static bool home_library_quiesce(unsigned ms){assert(ms==2000);return true;}
 static bool book_cover_jobs_quiesce(unsigned ms){assert(ms==2000);++cover_calls;return cover_ok;}
 bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}

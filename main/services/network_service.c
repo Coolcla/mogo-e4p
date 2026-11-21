@@ -166,7 +166,18 @@ static esp_err_t acquire_bearer(network_bearer_t bearer, network_use_t use, netw
     network_status_t status;
     network_service_get_status(&status);
     esp_err_t error = ESP_ERR_NOT_FOUND;
-    if (bearer == NETWORK_BEARER_WIFI) {
+    if (use == NETWORK_USE_WEATHER_BACKGROUND) {
+        // 静默刷新只借用当前路由的就绪承载，不启动或切换无线。/ Quiet refresh only borrows the selected ready bearer; never start or switch radios.
+        wifi_transfer_status_t wifi = {0};
+        wifi_transfer_get_status(&wifi);
+        bearer = status.active_bearer;
+        if (s_switch.target != NETWORK_BEARER_NONE)
+            error = MEMORY_PEAK_BUSY;
+        else if (bearer == NETWORK_BEARER_WIFI && wifi.network_only && !atomic_load(&s_cellular_leases))
+            error = ESP_OK;
+        else if (bearer == NETWORK_BEARER_CELLULAR && !wifi.owns_radio && !atomic_load(&s_wifi_leases))
+            error = ESP_OK;
+    } else if (bearer == NETWORK_BEARER_WIFI) {
         cellular_service_status_t cellular;
         cellular_service_get_status(&cellular);
         memory_peak_token_t peak = 0;
@@ -646,6 +657,7 @@ network_auto_priority_t network_service_auto_priority(void) { return s_priority;
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     if (!lease) return ESP_ERR_INVALID_ARG;
     *lease = (network_lease_t){0};
+    if (use == NETWORK_USE_WEATHER_BACKGROUND) return acquire_bearer(NETWORK_BEARER_NONE, use, lease);
     network_status_t status;
     network_service_get_status(&status);
     network_bearer_t first = resolve_ready_bearer(&status);
@@ -687,6 +699,12 @@ bool network_service_wait_ready(network_lease_t *lease, uint32_t timeout_ms) {
 bool network_service_wait_ready_cancelable(network_lease_t *lease, uint32_t timeout_ms,
                                            bool (*cancelled)(void)) {
     if (!lease || !lease->active) return false;
+    if (lease->use == NETWORK_USE_WEATHER_BACKGROUND) {
+        network_status_t status;
+        network_service_get_status(&status);
+        return (!cancelled || !cancelled()) && status.active_bearer == lease->bearer &&
+            select_bearer_netif(lease->bearer);
+    }
     const int64_t deadline = esp_timer_get_time() + (int64_t)timeout_ms * 1000;
     for (unsigned attempt = 0; attempt < 2 && lease->active; ++attempt) {
         bool failed = false;

@@ -55,6 +55,7 @@ static uint8_t config[2], output[2];
 static int step, fault, clears;
 static bool buzzer, acc_on, transfer_ok = true, cellular_ok = true, ota;
 static bool cover_ok = true, avatar_ok = true;
+static bool home_library_quiesce(unsigned ms){assert(ms==2000);return true;}
 static bool book_cover_jobs_quiesce(unsigned ms) { assert(ms == 2000); return cover_ok; }
 static bool shutdown_wallpaper_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}
 bool lock_images_quiesce(unsigned timeout_ms){(void)timeout_ms;return true;}

@@ -66,6 +66,8 @@ static bool duplicate_date,cancel_forecast_read,incomplete_forecast;
 static int64_t forecast_progress_us;
 static unsigned char prefs_bytes[1024],cache_bytes[2048];
 static size_t prefs_size,cache_size;
+static unsigned worker_cache_writes;
+static bool cancel_before_lock;
 static pmu_snapshot_t battery={80};
 struct FakeHttp {
     const char *body,*date;size_t size,at;int status;char payload[WEATHER_BODY_LIMIT+1];
@@ -96,10 +98,14 @@ int xTaskCreate(void(*f)(void*),const char*n,unsigned stack,void*a,unsigned p,vo
 void vTaskDelete(void *p){(void)p;}
 void vTaskDelay(unsigned ms){monotonic+=(int64_t)ms*1000;if(cancel_connect)app_weather_cancel();}
 int64_t esp_timer_get_time(void){return monotonic;}
-bool epd_flash_begin(void){assert(!worker&&!flash);if(fail_flash)return false;flash=true;return true;}
+bool epd_flash_begin(void){
+    assert(!flash);if(fail_flash)return false;
+    if(worker&&cancel_before_lock)app_weather_cancel();
+    flash=true;return true;
+}
 void epd_flash_end(void){assert(flash);flash=false;}
 esp_err_t nvs_open(const char *ns,int mode,nvs_handle_t *h){
-    assert(!strcmp(ns,"kiiko_weather"));if(mode==NVS_READWRITE)assert(flash&&!worker);*h=1;return ESP_OK;
+    assert(!strcmp(ns,"kiiko_weather"));if(mode==NVS_READWRITE)assert(flash);*h=1;return ESP_OK;
 }
 void nvs_close(nvs_handle_t h){assert(h==1);}
 esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *out,size_t *size){
@@ -108,12 +114,13 @@ esp_err_t nvs_get_blob(nvs_handle_t h,const char *key,void *out,size_t *size){
     if(!n||*size<n)return ESP_ERR_NVS_NOT_FOUND;memcpy(out,p,n);*size=n;return ESP_OK;
 }
 esp_err_t nvs_set_blob(nvs_handle_t h,const char *key,const void *v,size_t n){
-    assert(h==1&&flash&&!worker);++ns_writes;
+    assert(h==1&&flash);++ns_writes;
+    if(worker){assert(!strcmp(key,"cache"));++worker_cache_writes;}
     if(!strcmp(key,"prefs")){assert(n<=sizeof(prefs_bytes));memcpy(prefs_bytes,v,n);prefs_size=n;}
     else{assert(!strcmp(key,"cache")&&n<=sizeof(cache_bytes));memcpy(cache_bytes,v,n);cache_size=n;}return ESP_OK;
 }
-esp_err_t nvs_erase_key(nvs_handle_t h,const char *key){assert(h==1&&flash&&!worker&&!strcmp(key,"cache"));cache_size=0;return ESP_OK;}
-esp_err_t nvs_commit(nvs_handle_t h){assert(h==1&&flash&&!worker);return ESP_OK;}
+esp_err_t nvs_erase_key(nvs_handle_t h,const char *key){assert(h==1&&flash&&!strcmp(key,"cache"));cache_size=0;return ESP_OK;}
+esp_err_t nvs_commit(nvs_handle_t h){assert(h==1&&flash);return ESP_OK;}
 bool pico_online_busy(void){return ota_busy;}
 bool ble_pt_connected(void){return ble_connected;}
 bool app_time_service_busy(void){return time_busy;}
@@ -314,7 +321,7 @@ static void weather_clocks(void) {
     monotonic+=1000000;assert(app_weather_poll(false));
     assert(weather_day_for(&s_view.forecast,app_weather_now(),false)->humidity==82);
     assert(!weather_day_for(&s_view.forecast,app_weather_now(),true));
-    monotonic+=WEATHER_RETRY_US;assert(app_weather_poll(true)&&pending);app_weather_cancel_join();
+    monotonic+=WEATHER_RETRY_US;assert(!app_weather_poll(true)&&pending);app_weather_cancel_join();
     free(midnight);forecast_override=NULL;
     unsigned writes=ns_writes;weather_cache_t cache;
     memcpy(&cache,cache_bytes,sizeof(cache));wall_time=cache.forecast.fetched-121;monotonic=0;
@@ -337,6 +344,18 @@ int main(void) {
     assert(s_view.has_city&&s_view.has_forecast&&auto_calls==1&&forecast_calls==1&&starts==stops);
     assert(cache_size&&prefs_size&&!flash);
     assert(app_weather_set_enabled(true));
+    // 有可用预报时自动刷新不重画加载态，回收结果也不落盘。
+    // A scheduled refresh with a usable forecast does not repaint loading or save on collection.
+    unsigned before_worker=worker_cache_writes, before_revision=s_view.revision;
+    assert(request_page(APP_WEATHER_FETCH,NULL,0,false)&&pending&&s_view.state==APP_WEATHER_READY);
+    assert(s_view.revision==before_revision);
+    run_worker();assert(worker_cache_writes==before_worker+1);
+    unsigned auto_writes=ns_writes;
+    assert(app_weather_poll(false)&&ns_writes==auto_writes);
+    assert(request_page(APP_WEATHER_FETCH,NULL,0,false)&&pending);
+    cancel_before_lock=true;run_worker();cancel_before_lock=false;
+    app_weather_poll(false);assert(ns_writes==auto_writes&&worker_cache_writes==before_worker+1);
+    request(APP_WEATHER_FETCH,NULL);
     const time_t base_time=wall_time;
     weather_forecast_t original_forecast=s_view.forecast;
     unsigned writes_before=ns_writes;
@@ -347,7 +366,7 @@ int main(void) {
     weather_preferences_t stored;memcpy(&stored,prefs_bytes,sizeof(stored));
     assert(stored.schema==3&&!stored.auto_refresh&&stored.has_city&&stored.enabled);
     s_view=(app_weather_view_t){0};s_loaded=false;app_weather_init();assert(!s_view.auto_refresh&&s_view.has_forecast);
-    wall_time=original_forecast.fetched+WEATHER_REFRESH_SECONDS;monotonic+=WEATHER_RETRY_US+1;
+    wall_time=original_forecast.fetched+WEATHER_MAX_AGE_SECONDS;monotonic+=WEATHER_RETRY_US+1;
     app_weather_poll(true);assert(!pending);
     wall_time=base_time;request(APP_WEATHER_FETCH,NULL);assert(!s_view.auto_refresh&&s_view.has_forecast);
     weather_location_t selected=s_view.city;
@@ -363,7 +382,9 @@ int main(void) {
     s_view=(app_weather_view_t){0};s_loaded=false;app_weather_init();assert(s_view.auto_refresh&&s_view.has_forecast);
     wall_time=original_forecast.fetched+3601;monotonic+=WEATHER_RETRY_US+1;
     app_weather_poll(true);assert(!pending);
-    wall_time=original_forecast.fetched+WEATHER_REFRESH_SECONDS-1;app_weather_poll(true);assert(!pending);
+    s_view.forecast.serve = original_forecast.fetched + WEATHER_MAX_AGE_SECONDS;
+    wall_time=original_forecast.fetched+6*3600;app_weather_poll(true);assert(!pending);
+    wall_time=original_forecast.fetched+WEATHER_MAX_AGE_SECONDS-1;app_weather_poll(true);assert(!pending);
     wall_time++;app_weather_poll(false);assert(!pending);
     app_weather_poll(true);assert(pending);
     scenario=3;run_worker();app_weather_poll(true);assert(!pending&&s_view.state==APP_WEATHER_UNAVAILABLE);
@@ -624,6 +645,28 @@ int main(void) {
     app_weather_poll(true); assert(pending);
     run_worker(); app_weather_poll(false);
     assert(weather_last_use == NETWORK_USE_WEATHER);
+    weather_test_cellular=false;
+    clock_setup(base_time);
+    network_state=WIFI_TRANSFER_STOPPED;
+    unsigned radio_starts=starts, radio_stops=stops, nvs_before=ns_writes;
+    app_weather_background_poll();assert(!pending && starts==radio_starts);
+    network_state=WIFI_TRANSFER_READY;
+    s_view.has_city=false;
+    app_weather_background_poll();assert(!pending);
+    s_view.has_city=true;s_view.auto_refresh=false;
+    app_weather_background_poll();assert(!pending);
+    s_view.auto_refresh=true;
+    unsigned revision=s_view.revision;
+    app_weather_background_poll();assert(pending && s_view.revision==revision);
+    app_weather_background_pause();assert(pending && atomic_load(&s_cancel));
+    run_worker();app_weather_background_pause();assert(!s_pending && ns_writes==nvs_before);
+    monotonic+=WEATHER_RETRY_US;
+    app_weather_background_poll();assert(pending);
+    run_worker();assert(ns_writes==nvs_before+1);
+    app_weather_background_poll();assert(!s_pending && s_view.has_forecast && ns_writes==nvs_before+1);
+    assert(weather_last_use==NETWORK_USE_WEATHER_BACKGROUND && starts==radio_starts && stops==radio_stops);
+    network_state=WIFI_TRANSFER_STOPPED;
+    puts("PASS: quiet weather only borrows ready links, skips unset cities and disabled refresh, cancels without joining, and collects without main-loop writes");
     puts("PASS: active BLE blocks manual and automatic weather without borrowing a bearer; standalone 4G works");
-    puts("PASS: weather proxy session, six-hour boundary, shorter expiry, midnight, toggle persistence, city-ID fetch, paginated search, no device relabeling, owned cleanup, cancellation, NVS main-only and resource guards");
+    puts("PASS: weather proxy session, ten-hour boundary, shorter expiry, midnight, toggle persistence, city-ID fetch, paginated search, no device relabeling, owned cleanup, cancellation, guarded background cache writes, UI-owned preferences and resource guards");
 }

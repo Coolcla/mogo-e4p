@@ -7,7 +7,7 @@
 #include <limits.h>
 #include <stdio.h>
 
-static bool shutdown_ok, image_ok, cover_ok, avatar_ok;
+static bool shutdown_ok, image_ok, cover_ok, avatar_ok, library_ok;
 static unsigned expected_timeout, calls;
 
 bool shutdown_wallpaper_quiesce(unsigned timeout_ms) {
@@ -28,6 +28,11 @@ bool ui_avatar_quiesce(unsigned timeout_ms) {
     return avatar_ok;
 }
 
+bool home_library_quiesce(unsigned timeout_ms) {
+    assert(timeout_ms == expected_timeout && calls++ == 4);
+    return library_ok;
+}
+
 int main(void) {
     const unsigned timeouts[] = {0, 1, 2000, UINT_MAX};
     for (unsigned i = 0; i < sizeof(timeouts) / sizeof(timeouts[0]); ++i) {
@@ -35,15 +40,17 @@ int main(void) {
         for(unsigned shutdown=0;shutdown<2;++shutdown)
         for(unsigned image=0;image<2;++image)
         for (unsigned cover = 0; cover < 2; ++cover) {
-            for (unsigned avatar = 0; avatar < 2; ++avatar) {
+            for (unsigned avatar = 0; avatar < 2; ++avatar)
+            for (unsigned library = 0; library < 2; ++library) {
                 shutdown_ok=shutdown;image_ok=image;
                 cover_ok = cover;
                 avatar_ok = avatar;
+                library_ok = library;
                 calls = 0;
-                assert(storage_jobs_quiesce(expected_timeout) == (shutdown_ok && image_ok && cover_ok && avatar_ok));
-                assert(calls == (!shutdown_ok?1u:!image_ok?2u:cover_ok?4u:3u));
+                assert(storage_jobs_quiesce(expected_timeout) == (shutdown_ok && image_ok && cover_ok && avatar_ok && library_ok));
+                assert(calls == (!shutdown_ok?1u:!image_ok?2u:!cover_ok?3u:avatar_ok?5u:4u));
             }
         }
     }
-    puts("PASS: shutdown art and lock images before cover and avatar, short-circuit failure, repeated handoffs and per-job timeout propagation");
+    puts("PASS: shutdown art and lock images before cover, avatar and mini-library, short-circuit failure, repeated handoffs and per-job timeout propagation");
 }

@@ -50,6 +50,12 @@ bool pmu_battery_charging(const pmu_snapshot_t *);
 extern bool weather_test_cellular;
 extern unsigned weather_regular_acquires;
 extern network_use_t weather_last_use;
+void network_service_get_status(network_status_t *out) {
+    wifi_transfer_status_t wifi = {0};
+    wifi_transfer_get_status(&wifi);
+    *out = (network_status_t){.active_bearer = weather_test_cellular ? NETWORK_BEARER_CELLULAR :
+        wifi.network_ready && wifi.mode == WIFI_TRANSFER_MODE_STA ? NETWORK_BEARER_WIFI : NETWORK_BEARER_NONE};
+}
 esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     weather_last_use = use;
     ++weather_regular_acquires;
@@ -63,7 +69,7 @@ esp_err_t network_service_acquire(network_use_t use, network_lease_t *lease) {
     if (status.mode == WIFI_TRANSFER_MODE_STA && status.network_ready) {
         lease->bearer = NETWORK_BEARER_WIFI; lease->active = true; return ESP_OK;
     }
-    if (status.state != WIFI_TRANSFER_STOPPED) return ESP_ERR_NOT_FOUND;
+    if (use == NETWORK_USE_WEATHER_BACKGROUND || status.state != WIFI_TRANSFER_STOPPED) return ESP_ERR_NOT_FOUND;
     char ssid[33] = {0}; bool configured = false;
     if (wifi_transfer_get_saved_wifi(ssid, &configured) != ESP_OK || !configured)
         return ESP_ERR_NOT_FOUND;

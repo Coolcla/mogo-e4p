@@ -3,6 +3,7 @@
  * English: Run the real loop with deterministic touch and task-delay exit.
  */
 #include "app_loop.h"
+#include "home_components.h"
 #include "platform/s31_input.h"
 #include "ui_gesture.h"
 #include "ui_menu.h"
@@ -471,7 +472,11 @@ static app_redraw_t queue_touch_lift(app_ctx_t *c) {
     return APP_REDRAW_NONE;
 }
 static app_redraw_t consume_power(app_ctx_t*c) {(void)c;lock_due=false;return APP_REDRAW_DONE;}
+static unsigned weather_background_polls, weather_background_cancels;
+static bool weather_widget_enabled, weather_background_pending;
 static void reset(void) {
+    weather_background_polls=weather_background_cancels=0;
+    weather_widget_enabled=weather_background_pending=false;
     screen_disabled=false;
     key_sampling=key_sampler_started=false;key_sampler_starts=key_sampler_enables=0;
 #ifdef POWER_KEY_SAMPLER_USB_TEST
@@ -789,7 +794,25 @@ static void test_auto_lock_network_sessions(void) {
     puts("PASS: network-only WiFi preserves 1/5/10-minute reader/page lock deadlines; file sessions and OTA remain protected");
 }
 
+static app_redraw_t weather_leave_on_tick(app_ctx_t *ctx) {
+    if (weather_background_pending) ctx->request_app = &app_book;
+    return APP_REDRAW_NONE;
+}
 int main(void) {
+    for (int policy=0;policy<5;++policy) {
+        reset();enable_main_tabs();time_step=1000000;
+        weather_widget_enabled=policy!=3;
+        start_second=policy!=1;start_book=policy==2;
+        if (policy==4) transfer_status=(wifi_transfer_status_t){.state=WIFI_TRANSFER_READY};
+        for(int i=0;i<15;++i)add(0,0,0,0);
+        run();assert((weather_background_polls>0)==(policy==0));
+    }
+    reset();enable_main_tabs();start_second=weather_widget_enabled=true;time_step=1000000;
+    second.on_tick=weather_leave_on_tick;
+    for(int i=0;i<15;++i)add(0,0,0,0);
+    run();assert(weather_background_polls==1 && weather_background_cancels==1);
+
+
     test_auto_lock_network_sessions();
     test_panel_key_replay();
     test_screen_touch_lock();
@@ -1379,6 +1402,11 @@ uint32_t ble_pt_input_serial(void){return 0;}
 
 void crash_note_log(void){}
 
+void app_weather_background_poll(void) { ++weather_background_polls; weather_background_pending = true; }
+void app_weather_background_pause(void) {
+    if (weather_background_pending) { ++weather_background_cancels; weather_background_pending = false; }
+}
+bool app_home_has_widget(app_home_widget_t widget) { return weather_widget_enabled && widget == APP_HOME_WIDGET_WEATHER; }
 void app_time_service_poll(bool idle) { (void)idle; }
 void app_time_service_cancel(void) {}
 void pico_ota_auto_poll(bool idle) { (void)idle; }
@@ -1392,6 +1420,7 @@ bool app_device_settings_offer_update(bool already_in_settings) { (void)already_
 void rp_boot_mark(const char *name) { (void)name; }
 
 void ui_avatar_invalidate(void) {}
+bool home_library_quiesce(unsigned timeout){(void)timeout;return true;}
 bool book_cover_jobs_quiesce(unsigned timeout){(void)timeout;return true;}
 void book_lock_collage_invalidate(void) {}
 
