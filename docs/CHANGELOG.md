@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+## v1.1.8 · 2026-11-22
+
 - CloudZao 暂未获取到绑定码时提示：若设备已绑定，先在 CloudZao App 或小程序解绑再试。/ If CloudZao cannot issue a pairing code, the device suggests unlinking it in the CloudZao app or mini-program if already linked.
 
 ## v1.1.7 · 2026-11-21

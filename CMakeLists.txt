@@ -11,7 +11,7 @@ idf_build_set_property(MINIMAL_BUILD ON)
 if(DEFINED ENV{PICO_PROJECT_VER} AND NOT "$ENV{PICO_PROJECT_VER}" STREQUAL "")
     set(PROJECT_VER "$ENV{PICO_PROJECT_VER}")
 else()
-    set(PROJECT_VER "1.1.7")
+    set(PROJECT_VER "1.1.8")
 endif()
 # 仅正式发布构建允许注入 CloudZao 接入 ID。/ Only release builds may inject the CloudZao integration ID.
 option(MOGO_PUBLIC_RELEASE "Build firmware for public distribution" OFF)
