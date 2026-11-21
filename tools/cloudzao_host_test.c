@@ -266,6 +266,15 @@ static void framing(void) {
     assert(!cloudzao_wire_feed(&response, redirect, strlen(redirect)) && !received && response.error == CZ_SERVER);
     cloudzao_wire_begin(&response, CZ_LIST, 3, count, &received);
     assert(cloudzao_wire_feed(&response, unauthorized, strlen(unauthorized)) && response.done && response.error == CZ_AUTH);
+    const char *other_conflict = "HTTP/1.1 409 Conflict\r\nContent-Length: 2\r\n\r\n{}";
+    cloudzao_wire_begin(&response, CZ_BIND, 0, NULL, NULL);
+    assert(cloudzao_wire_feed(&response, other_conflict, strlen(other_conflict)) && response.done && response.error == CZ_SERVER);
+    const char *activation_error = "{\"error\":\"activation_unavailable\"}";
+    char conflict[128];
+    snprintf(conflict, sizeof(conflict), "HTTP/1.1 409 Conflict\r\nContent-Length: %zu\r\n\r\n%s",
+             strlen(activation_error), activation_error);
+    cloudzao_wire_begin(&response, CZ_EXCHANGE, 0, NULL, NULL);
+    assert(cloudzao_wire_feed(&response, conflict, strlen(conflict)) && response.done && response.error == CZ_SERVER);
     cloudzao_wire_begin(&response, CZ_DOWNLOAD, 3, count, &received);
     assert(cloudzao_wire_feed(&response, content, strlen(content) - 1) && !response.done);
     assert(!cloudzao_wire_feed(&response, "", 0));

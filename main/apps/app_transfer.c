@@ -501,7 +501,7 @@ static const char *cloud_error(cz_error_t error) {
         case CZ_CLOCK: return "请先校准设备时间";
         case CZ_SLOW_DOWN: return "请求过于频繁，请稍候";
         case CZ_PAIR_EXPIRED: return "绑定码已失效，请重新获取";
-        case CZ_ACTIVATION_UNAVAILABLE: return "云造未返回绑定码，请检查小程序";
+        case CZ_ACTIVATION_UNAVAILABLE: return "暂未获取到绑定码";
         case CZ_CREDENTIAL_STORAGE: return "无法保存或读取本机授权";
         case CZ_LINK_EXPIRED: return "下载链接已过期，请刷新列表";
         case CZ_DELIVERY_MISSING: return "推送已变化，请刷新列表";
@@ -1065,6 +1065,7 @@ static const char *cloud_bind_title(void) {
     if (status->authorized) return "授权可用";
     if (status->error == CZ_CANCELLED) return "绑定已暂停";
     if (status->error == CZ_AUTH || status->error == CZ_REFRESH_REUSED) return "需要重新授权";
+    if (status->error == CZ_ACTIVATION_UNAVAILABLE) return cloud_error(status->error);
     if (status->error) return "暂时无法绑定";
     return "绑定 CloudZao";
 }
@@ -1145,14 +1146,23 @@ static void draw_cloud_settings(uint8_t *fb) {
     const cz_status_t *bind = &s_cloud_bind_status;
     const bool receiving = s_cloud_status.busy;
     const bool show_code = bind->code[0] && !s_cloud_cancelling;
+    const bool show_unbind_hint = !s_cloud_cancelling && !bind->busy && !show_code && !bind->authorized &&
+                                  bind->error == CZ_ACTIVATION_UNAVAILABLE;
     const EpdRect card = {36, 282, 612, 290};
     ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "设备绑定", EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_round_rect(fb, card, 22, 0x90);
     ui_text_box(fb, (EpdRect){56, show_code ? 297 : 329, 572, 47}, 28,
                 cloud_bind_title(), EPD_DRAW_ALIGN_CENTER, false);
     if (show_code) ui_text_box(fb, (EpdRect){56, 344, 572, 78}, 58, bind->code, EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_box(fb, (EpdRect){56, show_code ? 422 : 383, 572, 44}, 21,
-                cloud_bind_detail(), EPD_DRAW_ALIGN_CENTER, false);
+    if (show_unbind_hint) {
+        ui_text_box(fb, (EpdRect){56, 378, 572, 40}, 21,
+                    "若此设备已绑定，请先在", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_box(fb, (EpdRect){56, 418, 572, 40}, 21,
+                    "CloudZao App 或小程序解绑后重试", EPD_DRAW_ALIGN_CENTER, false);
+    } else {
+        ui_text_box(fb, (EpdRect){56, show_code ? 422 : 383, 572, 44}, 21,
+                    cloud_bind_detail(), EPD_DRAW_ALIGN_CENTER, false);
+    }
 
     const EpdRect action = cloud_button(CLOUD_BIND);
     const bool enabled = cloud_bind_action_enabled(), primary = enabled && !bind->busy && !show_code;
