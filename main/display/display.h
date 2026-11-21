@@ -140,12 +140,25 @@ enum EpdDrawError update_display_area_diff_with(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area
 );
+/// 稳定 GL16 局刷可同帧补偿区外已上屏纯黑，不提前提交区外目标。
+/// Stable GL16 differentials may reinforce presented outside black in the same scan without publishing pending outside targets.
+enum EpdDrawError update_display_area_stable_diff(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, EpdRect area
+);
 /// 差分刷新并把脏行/脏列向外扩，让差分跳过的邻像素重新走 LUT，用于擦除细线残影。
 /// Differential update with dilated dirty masks so skipped neighbours run the LUT again.
+/// 全宽正文翻页：同帧补正文带外新旧都为纯黑的顶底栏像素。/ Full-width body turn: reinforce chrome that stays pure black outside the body.
+enum EpdDrawError update_display_area_reader_turn(
+    EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode, EpdRect area, bool full_body
+);
 enum EpdDrawError update_display_area_diff_padded(
     EpdiyHighlevelState* hl, const EpdWaveform* waveform, enum EpdDrawMode mode,
     EpdRect area, int pad_lines, int pad_col_bytes
 );
+/// 正文与指定栏位一次呈现。false 表示未扫描，可走分步出口；结果有误不得回放局刷。
+/// Present body and requested bars together. False means no scan and allows legacy fallback; never replay a failed scan.
+bool update_display_reader_joined(EpdiyHighlevelState* hl, EpdRect body, EpdRect top, EpdRect footer,
+                                  bool ripple, e0470_turn_dir_t dir, enum EpdDrawError* result);
 /// 阅读页可选的真实错相 GL16 翻页，使用面板原厂灰阶表；缺相位时回退现有 GL16，扫描失败重建真实基准。
 /// Optional staggered GL16 reader turn using the vendor table; fall back on missing phases and rebuild the baseline after failure.
 enum EpdDrawError update_display_water_turn(EpdiyHighlevelState* hl, EpdRect area,

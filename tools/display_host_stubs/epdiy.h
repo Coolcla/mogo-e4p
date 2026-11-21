@@ -6,7 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 typedef struct { int x, y, width, height; } EpdRect;
-typedef struct { int id; } EpdWaveform;
+#include "../../components/epdiy/include/epd_waveform.h"
 enum EpdDrawMode { MODE_DU = 1, MODE_GC16 = 2, MODE_GL16 = 5,
                   MODE_PACKING_1PPB_DIFFERENCE = 0x100 };
 enum EpdRotation { EPD_ROT_LANDSCAPE, EPD_ROT_PORTRAIT,
@@ -31,6 +31,7 @@ int epd_height(void);
 void epd_fill_rect(EpdRect area, uint8_t color, uint8_t *fb);
 void epd_clear_phase_luts(void);
 void epd_leading_skip_discard(void);
+void epd_leading_skip_forget_waveform(void);
 enum EpdDrawError epd_draw_base(EpdRect area, const uint8_t *data, EpdRect crop,
     enum EpdDrawMode mode, int temperature, const bool *lines,
     const uint8_t *columns, const EpdWaveform *waveform);

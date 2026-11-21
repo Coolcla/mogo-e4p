@@ -73,6 +73,8 @@ typedef struct {
     // 同一物理扫描中的逐行或逐列错相 LUT。/ Per-line or per-column staggered LUTs in one physical scan.
     const uint8_t* const* phase_luts;
     const int8_t* line_phase;
+    const uint8_t* line_outer_lut;
+    int line_inner_x0, line_inner_x1;
     const int* col_band_x0;
     const int* col_band_x1;
     const int8_t* col_band_phase;

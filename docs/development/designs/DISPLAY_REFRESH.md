@@ -13,6 +13,7 @@ Pages and controls submit intent, bounds and frame attributes. Display selects w
 | `display_refresh.c` | 解析后只调用一次既有物理出口，原样返回错误。/ Resolve and invoke exactly one existing physical exit, returning its error. |
 | `display_waveform_catalog.c` | 23 个稳定编号、来源、主要基底、派生说明和用途；惰性调用原构造器。/ 23 stable IDs with sources, primary bases, recipes and roles; resolve original builders lazily. |
 | `display.c` | 物理执行、导航多段输出、清屏计数、扫描档、OTA 互斥、供电准入与失败恢复。/ Physical execution, staged navigation, counters, scan profiles, OTA exclusion, power admission and recovery. |
+| `display_static_black.c` | 复用差分缓冲同帧合成局刷和区外纯黑补偿，不改源波形。/ Merge the requested update and outside-black reinforcement in the existing difference buffer without modifying source waveforms. |
 | `display_main_waveform.c` / `display_reader_waveform.c` / `display_normalize.c` | 原有派生构造与分配失败回退，不属于页面接口。/ Existing derivation builders and allocation-failure fallbacks, outside the page API. |
 | `components/e0470_epaper_waveform/` | 原始表、基础裁剪及基础短表；生成/供应商表不手改。/ Source tables, base trims and short tables; do not hand-edit generated/vendor data. |
 
@@ -21,8 +22,8 @@ Callers own the rectangle passed to `display_refresh_area()`. Policy does not en
 
 ## 意图矩阵 / Intent matrix
 
-AUTO 保留旧出口行为：区域 GL16 会全像素驱动，DU 按原差分；整屏走原 high-level 路径。DIFF 只驱动变化像素；FULL 强制区域全像素。`QUICK` 仅表示已选短刷新状态，不能让调用方自由指定波形。
-AUTO retains the old exit behavior: area GL16 drives all pixels, DU uses the original differential, and screen requests use the original high-level path. DIFF drives changed pixels; FULL forces all pixels in the region. QUICK conveys an already-selected short-refresh state without allowing arbitrary waveforms.
+AUTO 保留旧出口行为：区域 GL16 会全像素驱动，DU 按原差分；整屏走原 high-level 路径。DIFF 通常只驱动变化像素（静态纯黑补偿见下文）；FULL 强制区域全像素。`QUICK` 仅表示已选短刷新状态，不能让调用方自由指定波形。
+AUTO retains the old exit behavior: area GL16 drives all pixels, DU uses the original differential, and screen requests use the original high-level path. DIFF normally drives changed pixels (see the static-black exception below); FULL forces all pixels in the region. QUICK conveys an already-selected short-refresh state without allowing arbitrary waveforms.
 
 | 意图 / Intent | 波形 / Waveform | 模式 / Mode | 覆盖 / Coverage |
 | --- | --- | --- | --- |
@@ -36,7 +37,7 @@ AUTO retains the old exit behavior: area GL16 drives all pixels, DU uses the ori
 | MAIN_CLOCK | 主页快刷 main-bw，否则 main-gray / fast main-bw, otherwise main-gray | DU / GL16 | DIFF |
 | MAIN_DETAIL | 普通 main-normal，否则 main-gray / ordinary main-normal, otherwise main-gray | GL16 | DIFF |
 | MAIN_SCROLL | 普通 main-normal，否则 default / ordinary main-normal, otherwise default | GL16 | DIFF，1 行 + 1 列字节膨胀 / 1 row + 1 column byte padding |
-| READER_TEXT | reader-text | GL16 | DIFF |
+| READER_TEXT | reader-text；有背景用 reader-background / reader-background when configured | GL16 | DIFF；有背景保留 AUTO 回退 / AUTO fallback for backgrounds |
 | READER_BODY | IMAGE 优先 reader-image；否则背景 reader-background / 无背景 reader-ink / IMAGE wins, otherwise background reader-background or reader-ink | QUICK DU，否则 GL16 / QUICK DU, otherwise GL16 | DIFF |
 | READER_LAYOUT | 背景 reader-background，否则 reader-ink / background reader-background, otherwise reader-ink | QUICK DU，否则 GL16 / QUICK DU, otherwise GL16 | AUTO |
 | READER_IMAGE | full | GC16 | AUTO |
@@ -55,11 +56,33 @@ Unlocks and reader-to-main returns (including an in-app shelf return) use comple
 阅读正文静置时，分钟、电量及充电变化不单独触发顶部刷新；下一次正文翻页或整页重绘显示当前状态。窗口化页眉与系统状态栏共用80/160像素顶部带，全屏隐藏状态栏时不刷新顶部；主页面和快捷栏仍按原规则更新状态。
 Minute, battery and charging changes do not independently refresh a resting reader. The next body turn or whole-page redraw shows current status. Windowed headers and system status share the 80/160-pixel top band; full screen with a hidden status bar has no top output. Main pages and the quick layer retain their status rules.
 
-局部翻页优先输出正文，成功后再输出窗口化页脚或全屏进度，最后更新有变化的顶部。为缩短顶底栏刷新，恢复旧路径：顶部与全屏进度使用 DETAIL 默认裁剪 GL16（37相、白到黑13推），普通页脚使用 READER_FOOTER 短 DU（8相、白到黑7推）；换章或插图帧的页脚使用 DETAIL GL16 清理。顶底栏不随阅读背景切换波形。插图正文保留原灰阶出口，水波纹正文保留原表和节拍。任一步失败都短路并保留错误，只有成功完成相应输出才确认顶部状态。手动/周期GC16、工具带和关闭面板归一仍保留原出口，不额外叠加顶底栏。
-Partial turns present the body first, then the windowed footer or full-screen progress after success, and changed status last. To shorten chrome output, restore the legacy paths: status and full-screen progress use DETAIL trimmed GL16 (37 phases, 13 white-to-black pushes); ordinary footers use READER_FOOTER short DU (8 phases, 7 white-to-black pushes), while chapter and illustration-frame footers use DETAIL GL16 cleanup. Chrome waveforms do not depend on reading backgrounds. Illustration bodies retain their grayscale exit, and ripple bodies retain their tables and pacing. Any error stops later output and propagates; status acknowledgement requires successful presentation. Manual/periodic GC16, tools bands and panel-close normalization retain their exits without added chrome passes.
+稳定文字页的局部翻页在开始扫描前准备正文、变化后的顶部和可见页脚；能合并时一次推屏，不在正文后再刷顶底栏。未开扫且无法合并时才走分步路径：先正文，再页脚，最后更新有变化的顶部；普通页脚仍用 8 相短 DU，顶部及换章/插图的较强页脚使用 37 相 DETAIL GL16。只有成功输出后才确认顶部状态；中途扫描失败不以差分回放，沿用真实基准恢复。插图、手动/周期清理、工具带与关闭面板归一仍走原出口。
 
-静置不单刷顶部的策略针对用户观察到的顶部局刷后正文变浅；顶底栏按用户速度反馈恢复旧波形选择，没有修改VCOM、供电或波形数据。宿主回归只证明刷新时机、顺序和错误处理，累计墨度、残影与实际耗时须由实屏验证。
-Deferring idle status output addresses reported body fading after top-band updates; the legacy chrome waveform choices return in response to latency feedback, without changing VCOM, power settings or waveform data. Host regressions establish timing, order and error handling; accumulated ink density, ghosting and actual latency require panel verification.
+Stable partial text turns prepare body, changed status and visible footer before scan. A joined turn presents them together with no trailing chrome scan. If joining is unavailable before scanning, the split order is body, footer, then changed status. Ordinary split footers retain eight-phase short DU; split status and stronger chapter/image footers use 37-phase DETAIL GL16. Acknowledge status only after success; never replay a differential after interrupted output. Illustration, manual/periodic cleanup, tools bands, and panel-close normalization keep their existing exits.
+
+## 局刷同帧静态纯黑补偿 / Same-scan static-black reinforcement
+
+`DETAIL`、`MAIN_CLOCK` 和 `MAIN_DETAIL` 在最终选择 GL16 差分、区域裁剪后且确有变化时计数。每第 4 次尝试补偿，整屏 GC16 成功后重新计数；无变化不计。DU、跟手/按压反馈、显式扩边的动效、整页与清理仍走原路径。策略与页面无关，不要求调用方重画静止区域。
+
+`DETAIL`, `MAIN_CLOCK`, and `MAIN_DETAIL` count when the effective mode is differential GL16 and the final cropped area really changes. Try reinforcement every fourth eligible update; a successful full-screen GC16 restarts the count. No-ops do not count. DU, motion/press feedback, explicitly padded motion, whole-page updates, and cleaning keep their existing paths. The policy is page-independent and does not require callers to repaint resting regions.
+
+补偿轮在同一次扫描中保留区域内变化像素的原波形；区外只根据已提交的 `back_fb` 识别 `0x0` 纯黑，复用当前 GL16 白→黑的最后四次推黑相，不推白、不增加相位。其他未变化像素保持，白底、中灰、抗锯齿灰边不补偿；固定导航也仅允许已显示的纯黑受驱动，不能改写内容。补偿轮不使用常规脏掩码膨胀，成功后仅回写请求区域（保留边界邻接半字节），不提前提交区外待绘图。没有区外纯黑、波形不适用或临时 LUT 分配失败则使用原差分。扫描失败不回写，走既有整屏恢复机制。
+
+The merged scan retains the original transitions for changed pixels in the area. Outside it, only committed `back_fb` pixels at gray level `0x0` reuse the final four white-to-black pushes from the effective GL16 table, with no whitening or added phases. Other unchanged pixels hold, including whites, midgrays and antialiased edges. Fixed navigation may only receive drive on already-visible black; its content cannot change. The merged scan does not dilate dirty masks; on success it commits only the requested area, including exact nibble edges, and does not leak staged outside targets. No outside black, unsupported waveforms or temporary LUT allocation failure fall back to the original differential. Failed scans do not commit; they use existing full-recovery handling.
+
+相数不增加不代表耗时无变化：合并轮会多做整屏差分编码，实际前导相跳过也取决于像素迁移。4 次 / 4 相是起始参数，需用实屏比较静态纯黑墨度、保持中的灰边、黑→白残影和局刷耗时。
+
+No extra phases does not guarantee unchanged latency: merged updates encode a full-screen difference, and leading-phase skips depend on the transitions in it. The four-update/four-pulse values are starting points; verify static black density, held gray edges, black-to-white ghosting and partial-update latency on panel.
+
+### 阅读翻页顶底栏保墨 / Reader turn chrome reinforcement
+
+稳定正文的普通 GL16 和水波纹翻页将有变化的栏位并入正文的扫描窗口，在原相位预算内擦旧字、写新字；未变化的纯黑仍可同帧补四相，不等通用局刷计数。正文外纯白仅在新旧帧以该点为中心的 5×5 邻域都为白时，借最后一个黑→白拍同向补一次；这样文字、图标、抗锯齿灰边和周围两像素都不会被补白。其他不变灰阶保持；未请求更新的栏位不提交新内容。静置时不产生保墨请求。
+
+Ordinary GL16 and ripple turns of stable text publish changed chrome in the body scan window. Old and new glyphs fit the existing phase budget; unchanged pure black can still receive four reinforcement pulses without waiting for generic partial-update counts. Drive a white pixel outside the body once on the last black-to-white tick only if its 5×5 neighborhood is white in both frames. This excludes glyphs, icons, antialiased edges and their two-pixel margin. Hold other unchanged chrome levels; never publish staged content outside requested regions. Reinforcement never schedules an idle scan.
+
+普通翻页使用当前正文表响应栏位差分；带背景时正文保留原迁移，包括白→白。水波纹正文保留 8 带/37 相的揭页顺序，栏位在同一轮的前 37 拍走独立、未错相的 LUT。已变化和静态纯黑分开编码，未启动的正文条带保持；整体仍是 44 拍、11090 µs 目标节拍。扫描成功才提交准确范围。宿主验证相数和范围，不保证实际耗时与光学表现；实机须检查跨章和跨分钟的擦除、墨度以及连翻白底和稳定性。
+
+Ordinary turns use the current body table for chrome differences; with a background the body retains original transitions, including white-to-white. Ripple retains the eight-band/37-phase body reveal, and chrome uses an independent, unstaggered LUT within the first 37 ticks. Changed pixels and static black are encoded separately, and unstarted body bands hold; the full turn still takes 44 ticks at the 11090 µs target. Commit exact regions only on success. Host tests establish phase counts and bounds, not physical latency or optical behavior; verify chapter/minute erasure, ink density, background whiteness and consecutive-turn stability on panel.
 
 ## 界面三色 / UI palette
 

@@ -7,6 +7,7 @@
 #include <string.h>
 #include "e0470_epaper_waveform.h"
 #include "display_main_waveform.h"
+#include "display_refresh_config.h"
 #include "ui/ui_image_dither.h"
 
 int main(void) {
@@ -134,6 +135,17 @@ int main(void) {
     const EpdWaveform *normal_wave=display_main_normal_waveform();
     const EpdWaveformPhases *normal_table=e0470_waveform_phases(normal_wave,MODE_GL16);
     assert(normal_table&&normal_table->phases==water_table->phases&&display_main_normal_waveform()==normal_wave);
+    // 三条有效局刷表都必须有足够的白→黑相，不能在真机静默退回原出口。
+    // The three effective partial-update tables need enough white-to-black pushes to avoid silent fallback on device.
+    const EpdWaveform *eligible[] = {&E0470_WAVEFORM, local, normal_wave};
+    for (size_t i = 0; i < sizeof(eligible) / sizeof(*eligible); ++i) {
+        assert(eligible[i]->num_temp_ranges == 1);
+        const EpdWaveformPhases *p = e0470_waveform_phases(eligible[i], MODE_GL16);
+        assert(p && p->phases <= 64);
+        unsigned black_pushes = 0;
+        for (int f = 0; f < p->phases; ++f) black_pushes += e0470_phase_action(p, f, 0, 15) == 1;
+        assert(black_pushes >= DISPLAY_STATIC_BLACK_PUSHES);
+    }
     int softened=0;
     for(int from=0;from<16;++from)for(int to=0;to<16;++to){
         int old_counts[4]={0},new_counts[4]={0},differences=0,first=-1,last=-1;

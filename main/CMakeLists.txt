@@ -103,6 +103,7 @@ idf_component_register(
         "display/display_main_waveform.c"
         "display/display_reader_waveform.c"
         "display/display_normalize.c"
+        "display/display_static_black.c"
         "power/cache_wake_restore.c"
         "power/s31_sleep_compat.c"
         "services/storage_jobs.c"

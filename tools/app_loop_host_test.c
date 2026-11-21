@@ -247,6 +247,13 @@ enum EpdDrawError update_display_area_diff_with(EpdiyHighlevelState*h,const void
     if (a.y==1120) assert(w==&E0470_FOLLOW_WAVEFORM&&m==MODE_DU&&a.height==48&&a.width==50);
     return update_display_area_with(h,w,m,a);
 }
+enum EpdDrawError update_display_area_stable_diff(EpdiyHighlevelState*h,const void*w,int m,EpdRect a) {
+    return update_display_area_diff_with(h, w, m, a);
+}
+enum EpdDrawError update_display_area_reader_turn(EpdiyHighlevelState*h,const void*w,int m,EpdRect a, bool full_body) {
+    (void)full_body;
+    return update_display_area_diff_with(h, w, m, a);
+}
 enum EpdDrawError update_display_area_diff_padded(EpdiyHighlevelState*h,const void*w,int m,EpdRect a,
                                                   int pad_lines,int pad_col_bytes) {
     (void)pad_lines;(void)pad_col_bytes;

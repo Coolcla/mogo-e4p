@@ -69,6 +69,23 @@ static void check_trim(void) {
 int main(void) {
     check_trim();
     e0470_waveform_init();
+    const EpdWaveform *chrome_waves[] = {display_reader_water_base_waveform(), display_reader_bg_waveform()};
+    for (unsigned i = 0; i < sizeof(chrome_waves) / sizeof(*chrome_waves); ++i) {
+        const EpdWaveformPhases *p = e0470_waveform_phases(chrome_waves[i], MODE_GL16);
+        assert(p && p->phases < 40);
+        int pushes = 0;
+        for (int f = 7; f < p->phases; ++f) pushes += e0470_phase_action(p, f, 0, 15) == 1;
+        assert(pushes >= 4);
+        if (i == 1) {
+            int white_actions = 0;
+            for (int f = 0; f < p->phases; ++f) {
+                assert(!e0470_phase_action(p, f, 0, 0) && !e0470_phase_action(p, f, 14, 14));
+                white_actions += e0470_phase_action(p, f, 15, 15) != 0;
+            }
+            assert(white_actions > 0);
+        }
+    }
+
     const EpdWaveformPhases* old = e0470_waveform_phases(&E0470_TEXTTURN_WAVEFORM, MODE_GL16);
     uint8_t saved[E0470_GL16_FRAMES * 16 * 4];
     assert(old && old->phases == E0470_GL16_FRAMES && !old->phase_times);

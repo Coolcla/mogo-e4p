@@ -168,6 +168,13 @@ enum EpdDrawError update_display_area_full_with(EpdiyHighlevelState *h, const vo
 enum EpdDrawError update_display_area_diff_with(EpdiyHighlevelState *h, const void *wave, int mode, EpdRect area) {
     assert(h == &hl); return push(37, wave, mode, area);
 }
+enum EpdDrawError update_display_area_stable_diff(EpdiyHighlevelState *h, const void *wave, int mode, EpdRect area) {
+    return update_display_area_diff_with(h, wave, mode, area);
+}
+enum EpdDrawError update_display_area_reader_turn(EpdiyHighlevelState *h, const void *wave, int mode, EpdRect area, bool full_body) {
+    (void)full_body;
+    return update_display_area_diff_with(h, wave, mode, area);
+}
 enum EpdDrawError update_display_area_diff_padded(EpdiyHighlevelState *h, const void *wave, int mode, EpdRect area, int x, int y) {
     assert(h == &hl && x == 1 && y == 1); return push(38, wave, mode, area);
 }

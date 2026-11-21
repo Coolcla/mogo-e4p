@@ -179,6 +179,8 @@ static void draw_reader(uint8_t *fb,unsigned page){*fb=(uint8_t)page;}
 static EpdRect ui_rect_union(EpdRect a,EpdRect b){(void)b;return a;}
 static enum EpdDrawError record(int kind,enum EpdDrawMode mode,EpdRect area){assert(trace_count<256);trace_route[trace_count]=kind;trace_mode[trace_count]=mode;trace_area[trace_count++]=area;++pushes;route=kind;pushed_mode=mode;pushed_area=area;return (enum EpdDrawError)test_push_error;}
 static enum EpdDrawError update_display_area_diff_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(DIFF,mode,area);}
+static enum EpdDrawError update_display_area_stable_diff(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){return update_display_area_diff_with(hl,wave,mode,area);}
+static enum EpdDrawError update_display_area_reader_turn(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area,bool full_body){(void)hl;trace_wave[trace_count]=*wave;return record(full_body?AREA:DIFF,mode,area);}
 static enum EpdDrawError update_display_area_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(AREA,mode,area);}
 static enum EpdDrawError update_display_area_full_with(void *hl,const int *wave,enum EpdDrawMode mode,EpdRect area){(void)hl;trace_wave[trace_count]=*wave;return record(LOCAL_FULL,mode,area);}
 static enum EpdDrawError update_display_with(void *hl,const int *wave,enum EpdDrawMode mode){(void)hl;(void)wave;return record(WHOLE,mode,(EpdRect){0});}
@@ -187,6 +189,7 @@ static enum EpdDrawError update_display_full(void *hl){(void)hl;return record(FU
 static enum EpdDrawError update_display_reader_image_gray(void *hl){(void)hl;return record(READER_IMAGE_GRAY,MODE_GC16,(EpdRect){0});}
 static enum EpdDrawError update_display_fast_page(void *hl){(void)hl;return record(FAST,MODE_GL16,(EpdRect){0});}
 static enum EpdDrawError update_display_mode_diff(void *hl,enum EpdDrawMode mode){(void)hl;return record(READER,mode,(EpdRect){0});}
+static bool update_display_reader_joined(void *hl,EpdRect body,EpdRect top,EpdRect footer,bool water,int dir,enum EpdDrawError *result){(void)hl;(void)body;(void)top;(void)footer;(void)water;(void)dir;(void)result;return false;}
 static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){(void)hl;(void)dir;assert(test_tick_us==E0470_TURN_FAST_TICK_US);return record(WATER,MODE_GL16,area);}
 '''
 shelf += f'\n#include "{root / "main/book/reader_turn.c"}"\n'

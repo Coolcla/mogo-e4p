@@ -5,6 +5,8 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+- 稳定 GL16 局刷可在同一次扫描中补强区域外已显示的纯黑，不增加额外刷新轮次。/ Stable GL16 partial updates can reinforce already-visible black outside the update area without a separate scan.
+- 普通与水波纹文字页翻页可在正文原有扫描内更新页眉、状态栏和页脚，同时补强不变的纯黑和远离字形的纯白，减少连翻时栏位白底发灰，不再追加栏位刷新。/ Ordinary and ripple text turns can update the header, status strip and footer in the existing body scan, reinforcing unchanged black and paper whites clear of glyphs to reduce gray drift without a trailing chrome refresh.
 - 天气可在空闲设置等主页面借用现有网络静默更新，正常周期延长到十小时（需平台配套）；阅读与待机继续避让。/ Refresh weather quietly on idle root pages over an existing connection, with a ten-hour normal interval when supported by the platform. Reading and standby still take priority.
 - 退出阅读回首页时，迷你书库改为后台整理，天气自动刷新让切页优先；阅读时间、手账和进度保存不变。/ Refresh the mini library in the background and give navigation priority over automatic weather updates when returning Home. Reading time, journal and progress saving are unchanged.
 - 横屏阅读固定使用普通翻页，切入横屏时短暂提示；转回竖屏自动恢复原选项，主页水波纹不变。/ Use ordinary turns in landscape reading and show a brief notice on entry. Portrait restores the selected effect; main-page ripple is unchanged.

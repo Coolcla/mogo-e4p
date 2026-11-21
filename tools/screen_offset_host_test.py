@@ -39,6 +39,7 @@ typedef struct {
  uint8_t *feed_line_buffers[2],*line_mask;LineQueue_t line_queues[2];
  bool lut_msb_first;uint8_t *static_line_buffer;
  const uint8_t *conversion_lut;const uint8_t *const *phase_luts;const int8_t *line_phase;
+ const uint8_t *line_outer_lut;int line_inner_x0,line_inner_x1;
  int col_band_n;const int *col_band_x0,*col_band_x1;const int8_t *col_band_phase;
  void (*lut_lookup_func)(const uint32_t *,uint8_t *,const uint8_t *,uint32_t);
 } RenderContext_t;
@@ -76,7 +77,7 @@ for signature in ("static inline uint8_t lookup_pixels_in_VE_LUT(",
     scan += text[start:text.index("\n}", start) + 2] + "\n"
 scan += function("push_pixels_populate_line", ROOT / "components/epdiy/src/output_lcd/render_lcd.c") + "\n"
 feeder = (ROOT / "components/epdiy/src/output_lcd/render_lcd.c").read_text()
-scan += "void " + feeder[feeder.index("lcd_calculate_frame("):feeder.rindex("\n#endif")]
+scan += "static void " + feeder[feeder.index("lookup_line_with_outer("):feeder.rindex("\n#endif")].replace('__attribute__((optimize("O3"))) ', "")
 scan += r'''
 static enum EpdRotation rotation=EPD_ROT_INVERTED_PORTRAIT;
 int epd_width(void){return 1216;}int epd_height(void){return 684;}
@@ -97,20 +98,22 @@ static void scan_test(void){
  const int x0[]={0,32},x1[]={32,64};const int8_t band_phase[]={0,-1};
  for(int y=0;y<40;++y){dirty[y]=y%3!=1;phases[y]=y%2;for(int x=0;x<64;++x)data[y][x]=(uint8_t)(x+y*3);}
  for(int i=0;i<16;++i)mask[i]=(uint8_t)(i%2?0xf3:0xcf);
- for(int mode=0;mode<3;++mode)for(int dx=-32;dx<=32;++dx)for(int dy=-32;dy<=32;++dy){
+ for(int mode=0;mode<4;++mode)for(int dx=-32;dx<=32;++dx)for(int dy=-32;dy<=32;++dy){
   RenderContext_t ctx={.area={0,0,64,40},.crop_to={0,3,64,34},.mode=1,.display_width=64,.display_height=40,
    .offset_x=dx,.offset_y=dy,.data_ptr=&data[0][0],.drawn_lines=dirty,.lines_total=44,
    .feed_line_buffers={input,input},.line_queues={{80,16},{80,16}},.line_mask=mask,
    .lut_lookup_func=lookup,.lut_msb_first=true,.conversion_lut=&base};
-  if(mode==1){ctx.phase_luts=luts;ctx.line_phase=phases;}
+  if(mode==1||mode==3){ctx.phase_luts=luts;ctx.line_phase=phases;}
+  for(int y=0;y<40;++y)phases[y]=mode==3&&y%4==0?-1:y%2;
+  if(mode==3){ctx.line_outer_lut=&base;ctx.line_inner_x0=13;ctx.line_inner_x1=41;}
   if(mode==2){ctx.phase_luts=luts;ctx.col_band_n=2;ctx.col_band_x0=x0;ctx.col_band_x1=x1;ctx.col_band_phase=band_phase;}
   active=&ctx;commits=starts=0;memset(output,0xa5,sizeof(output));lcd_calculate_frame(&ctx,0);
   assert(commits==44&&starts==1&&!ctx.error);
   for(int y=0;y<44;++y)for(int x=0;x<64;++x){
    int sy=y-dy,sx=x-dx;unsigned want=0;
    if(y<40&&sy>=3&&sy<37&&dirty[sy]&&sx>=0&&sx<64){
-    if(mode!=2||sx<32){int phase=mode==1?1+phases[sy]:mode==2?1:0;
-     want=(data[sy][sx]+phase)&3;
+    if(mode!=2||sx<32){int phase=(mode==1||(mode==3&&sx>=13&&sx<41))?1+phases[sy]:mode==2?1:0;
+     want=mode==3&&sx>=13&&sx<41&&phases[sy]<0?0:(data[sy][sx]+phase)&3;
      want&=(mask[sx/4]>>(6-2*(sx%4)))&3;
     }
    }
