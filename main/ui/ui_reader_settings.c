@@ -65,13 +65,13 @@ static void draw_reading_toggle(uint8_t *fb, unsigned scale, int index, const ch
     EpdRect row = ui_reader_settings_rect(scale, index);
     ui_text_box(fb, (EpdRect){row.x+20, row.y+8, row.width-134, row.height/2-8}, 27, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_text_box(fb, (EpdRect){row.x+20, row.y+row.height/2, row.width-134, row.height/2-8}, 21,
-                detail ? detail : on ? "开启" : "关闭", EPD_DRAW_ALIGN_LEFT, false);
+                detail ? detail : on ? "開啟" : "關閉", EPD_DRAW_ALIGN_LEFT, false);
     ui_reader_settings_switch(fb, (EpdRect){row.x+row.width-90, row.y+row.height/2-19, 69, 39}, on);
     ui_hairline(fb, row.y+row.height-1, row.x+20, row.width-40, 0xa0);
 }
 
 void ui_reader_settings_draw(uint8_t *fb, const ui_reader_settings_values_t *values) {
-    static const char *const tabs[] = {"操作", "页面", "刷新"};
+    static const char *const tabs[] = {"操作", "頁面", "重新整理"};
     unsigned scale = values->system_font_size;
     for (int i = 0; i < UI_READER_SETTINGS_GROUP_COUNT; ++i) {
         EpdRect tab = ui_reader_settings_tab_rect(scale, i);
@@ -80,21 +80,23 @@ void ui_reader_settings_draw(uint8_t *fb, const ui_reader_settings_values_t *val
         ui_text_box(fb, (EpdRect){tab.x+12, tab.y+6, tab.width-24, tab.height-12}, 28, tabs[i], EPD_DRAW_ALIGN_CENTER, selected);
     }
     if (values->group == UI_READER_SETTINGS_INPUT) {
-        draw_reading_card(fb, scale, 2, "翻页方式", values->grid_tap ? "九宫格 · 自定义点按" : values->vertical_turn ? "上下点按 · 左右滑动" : "左右点按 · 左右滑动", false);
-        draw_reading_card(fb, scale, 3, "按键控制", "短按、长按与双击动作", false);
-        draw_reading_toggle(fb, scale, 9, "关闭触摸", "先在按键控制绑定触摸开关", values->touch_disabled);
+        draw_reading_card(fb, scale, 2, "翻頁方式", values->grid_tap ? "九宮格 · 自定義點按" : values->vertical_turn ? "上下點按 · 左右滑動" : "左右點按 · 左右滑動", false);
+        draw_reading_card(fb, scale, 3, "按鍵控制", "短按、長按與雙擊動作", false);
+        draw_reading_toggle(fb, scale, 9, "關閉觸控", "先在按鍵控制繫結觸控開關", values->touch_disabled);
     } else if (values->group == UI_READER_SETTINGS_PAGE) {
-        draw_reading_toggle(fb, scale, 4, "状态栏", "阅读时显示时间与电量", values->statusbar);
-        draw_reading_card(fb, scale, 7, "页眉页脚", "显示内容、栏高与进度条", false);
-        draw_reading_toggle(fb, scale, 6, "竖排文字", "从右到左排列正文", values->vertical_text);
-        draw_reading_toggle(fb, scale, 5, "隐藏插图", "跳过正文图片，保留原书文件", values->hide_images);
-        draw_reading_toggle(fb, scale, 8, "书内样式", "关闭后使用统一排版", values->book_styles);
+        draw_reading_toggle(fb, scale, 4, "狀態列", "閱讀時顯示時間與電量", values->statusbar);
+        draw_reading_card(fb, scale, 7, "頁首頁尾", "顯示內容、欄高與進度條", false);
+        static const char *const direction[] = {"跟隨書籍", "橫排", "直排"};
+        unsigned selected = values->book_direction < 3 ? values->book_direction : 0;
+        draw_reading_card(fb, scale, 6, "排版方向", direction[selected], true);
+        draw_reading_toggle(fb, scale, 5, "隱藏插圖", "跳過正文圖片，保留原書檔案", values->hide_images);
+        draw_reading_toggle(fb, scale, 8, "書內樣式", "關閉後使用統一排版", values->book_styles);
     } else if (values->group == UI_READER_SETTINGS_REFRESH) {
         char interval[24];
-        if (values->full_pages) snprintf(interval, sizeof(interval), "每 %u 页", values->full_pages);
-        else snprintf(interval, sizeof(interval), "%s", "不强制");
-        draw_reading_card(fb, scale, 0, "自动全刷", interval, true);
-        draw_reading_card(fb, scale, 1, "翻页效果", values->turn_effect ? "水波纹" : "普通", true);
+        if (values->full_pages) snprintf(interval, sizeof(interval), "每 %u 頁", values->full_pages);
+        else snprintf(interval, sizeof(interval), "%s", "不強制");
+        draw_reading_card(fb, scale, 0, "自動全刷", interval, true);
+        draw_reading_card(fb, scale, 1, "翻頁效果", values->turn_effect ? "水波紋" : "普通", true);
     }
 }
 
@@ -104,8 +106,8 @@ EpdRect ui_reader_turn_mode_rect(unsigned mode) {
 EpdRect ui_reader_turn_shake_rect(void) { return (EpdRect){36, 1040, 612, 100}; }
 
 void ui_reader_turn_settings_draw(uint8_t *fb, unsigned mode, bool shake) {
-    static const char *const titles[] = {"左右翻页", "上下翻页", "九宫格翻页"};
-    static const char *const details[] = {"左右各半，轻点翻页", "上 1/3，下 2/3", "九个区域，自定义动作"};
+    static const char *const titles[] = {"左右翻頁", "上下翻頁", "九宮格翻頁"};
+    static const char *const details[] = {"左右各半，輕點翻頁", "上 1/3，下 2/3", "九個區域，自定義動作"};
     for (unsigned i = 0; i < 3; ++i) {
         EpdRect card = ui_reader_turn_mode_rect(i);
         bool selected = mode == i;
@@ -138,7 +140,7 @@ void ui_reader_turn_settings_draw(uint8_t *fb, unsigned mode, bool shake) {
         if(i==2)ui_draw_icon(fb,610,card.y+133,26,UI_ICON_CHEVRON_RIGHT,UI_GRAY_BLACK);
     }
     EpdRect row=ui_reader_turn_shake_rect();
-    ui_text_box(fb,(EpdRect){row.x+20,row.y+4,440,44},26,"晃动翻页",EPD_DRAW_ALIGN_LEFT,false);
-    ui_text_box(fb,(EpdRect){row.x+20,row.y+50,440,38},20,"左晃上一页，右晃下一页",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text_box(fb,(EpdRect){row.x+20,row.y+4,440,44},26,"晃動翻頁",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text_box(fb,(EpdRect){row.x+20,row.y+50,440,38},20,"左晃上一頁，右晃下一頁",EPD_DRAW_ALIGN_LEFT,false);
     ui_reader_settings_switch(fb,(EpdRect){row.x+row.width-90,row.y+30,69,39},shake);
 }

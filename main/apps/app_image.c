@@ -87,7 +87,7 @@ static void scan_dir(const char *root) {
 static void scan_images(void) {
     s_count = 0;
     if (!items_alloc()) {
-        strcpy(s_message, "图片列表内存不足，请返回后重试");
+        strcpy(s_message, "圖片列表記憶體不足，請返回後重試");
         return;
     }
     // 先分配再访问列表；首次从文件管理进入时此前会解引用空指针。
@@ -96,7 +96,7 @@ static void scan_images(void) {
         const char *name = strrchr(s_requested_path, '/');
         bool png;
         if (!name || !image_name(name + 1, &png)) {
-            strcpy(s_message, "图片格式不支持");
+            strcpy(s_message, "圖片格式不支援");
             return;
         }
         s_count = 1;
@@ -112,7 +112,7 @@ static void scan_images(void) {
     }
     s_count = 1;
     memset(s_items, 0, sizeof(s_items[0]));
-    strcpy(s_items[0].name, "内置灰阶测试图");
+    strcpy(s_items[0].name, "內建灰階測試圖");
     s_items[0].png = true;
     board_sd_info_t sd = {0};
     board_sd_get_info(&sd);
@@ -135,12 +135,12 @@ static bool load_image(int index) {
     if (from_file) {
         struct stat st;
         if (stat(item->path, &st) || st.st_size <= 0 || (uint64_t)st.st_size > IMAGE_BYTES_MAX) {
-            strcpy(s_message, "图片超过 50 MB 或无法读取"); return false;
+            strcpy(s_message, "圖片超過 50 MB 或無法讀取"); return false;
         }
     }
     bool dimensions_ok = from_file ? book_image_file_dimensions(item->path, item->png, &width, &height)
                                   : book_image_dimensions(data, size, item->png, &width, &height);
-    if (!dimensions_ok || !width || !height) { strcpy(s_message, "图片格式不支持"); return false; }
+    if (!dimensions_ok || !width || !height) { strcpy(s_message, "圖片格式不支援"); return false; }
     unsigned fit_w = UI_LOCK_WIDTH, fit_h = (uint64_t)height * fit_w / width;
     if (fit_h > UI_LOCK_HEIGHT) { fit_h = UI_LOCK_HEIGHT; fit_w = (uint64_t)width * fit_h / height; }
     if (!fit_w) fit_w = 1;
@@ -148,7 +148,7 @@ static bool load_image(int index) {
     s_gray = heap_caps_malloc((size_t)fit_w * fit_h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     bool ok = s_gray && (from_file ? book_image_file_grayscale(item->path, item->png, fit_w, fit_h, s_gray)
                                   : book_image_grayscale(data, size, item->png, fit_w, fit_h, s_gray));
-    if (!ok) { free(s_gray); s_gray = NULL; strcpy(s_message, "解码失败或内存不足"); return false; }
+    if (!ok) { free(s_gray); s_gray = NULL; strcpy(s_message, "解碼失敗或記憶體不足"); return false; }
     s_width = fit_w; s_height = fit_h; s_selected = index; s_viewing = true;
     s_message[0] = 0;
     return true;
@@ -167,9 +167,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     }
     ui_nav_status(fb);
     ui_nav_back(fb, 36, 79);
-    ui_text_vc(fb, 342, 107, 34, "图片", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(fb, 342, 107, 34, "圖片", EPD_DRAW_ALIGN_CENTER, false);
     char caption[64];
-    snprintf(caption, sizeof(caption), "%d 张 · JPG / PNG", s_count);
+    snprintf(caption, sizeof(caption), "%d 張 · JPG / PNG", s_count);
     ui_text(fb, 36, 165, 21, caption, EPD_DRAW_ALIGN_LEFT, false);
     ui_hairline(fb, 202, 36, 612, UI_GRAY_LIGHT);
     for (int row = 0; row < IMAGE_ROWS; ++row) {
@@ -249,7 +249,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *event) 
 }
 static bool menu_handle_enabled(app_ctx_t *ctx) { (void)ctx; return false; }
 const app_desc_t app_image = {
-    .title = "图片对比 Images", .detail = "灰阶测试图 / TF 卡 JPG PNG", .enter_full = false,
+    .title = "圖片對比 Images", .detail = "灰階測試圖 / TF 卡 JPG PNG", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = menu_handle_enabled,
     .on_enter = on_enter, .on_exit = image_on_exit, .on_media_lost = on_media_lost,
     .render = render, .present = present, .on_key = on_key,

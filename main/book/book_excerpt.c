@@ -160,7 +160,7 @@ static bool contains_ascii(const char *text, const char *needle) {
 }
 
 static bool usable(const char *text) {
-    const char *const notices[] = {"版权", "著作权", "仅供", "禁止转载", "copyright",
+    const char *const notices[] = {"版權", "著作權", "僅供", "禁止轉載", "copyright",
                                   "all rights reserved", "isbn", "http://", "https://", "www."};
     for (size_t i = 0; i < sizeof(notices) / sizeof(notices[0]); ++i)
         if (strstr(text, notices[i]) || contains_ascii(text, notices[i])) return false;

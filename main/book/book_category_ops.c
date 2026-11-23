@@ -63,7 +63,7 @@ bool book_category_name_valid(const char *name) {
     if (!name) return false;
     size_t n = strnlen(name, BOOK_CATEGORY_NAME_MAX + 1);
     if (!n || n > BOOK_CATEGORY_NAME_MAX || name[0] == '.' || name[0] == ' ' ||
-        name[n - 1] == '.' || name[n - 1] == ' ' || !strcmp(name, "全部书籍") || !strcmp(name, "未分类")) return false;
+        name[n - 1] == '.' || name[n - 1] == ' ' || !strcmp(name, "全部書籍") || !strcmp(name, "未分類")) return false;
     for (size_t i = 0; i < n;) {
         unsigned char c = (unsigned char)name[i++]; unsigned more; uint32_t cp;
         if (c < 32 || c == 127 || strchr("/\\:*?\"<>|", c)) return false;

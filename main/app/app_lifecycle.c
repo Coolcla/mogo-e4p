@@ -11,7 +11,6 @@
 #include "weather_service.h"
 #include "storage_jobs.h"
 #include "ota_online.h"
-#include "ota_auto.h"
 #include "network_service.h"
 #include "ble_page_turner.h"
 #include "reader_prefetch.h"
@@ -31,7 +30,6 @@ void app_lifecycle_checkpoint(app_ctx_t *ctx, const app_desc_t *current) {
 
 bool app_lifecycle_pause_for_lock(void) {
     app_weather_cancel_join();
-    pico_ota_auto_cancel();
     app_time_service_cancel();
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
     if (!cloudzao_quiesce(2000)) return false;
@@ -41,7 +39,6 @@ bool app_lifecycle_pause_for_lock(void) {
 
 bool app_lifecycle_prepare_poweroff(void) {
     app_weather_cancel_join();
-    pico_ota_auto_cancel();
     app_time_service_cancel();
     if (pico_online_busy() || !storage_jobs_quiesce(2000) || !network_service_pause_for_sleep()) return false;
     (void)ble_pt_stop(2000);

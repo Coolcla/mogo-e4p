@@ -210,8 +210,8 @@ static void quick_toggle_network(app_ctx_t *ctx, const app_desc_t *current, netw
     const esp_err_t err = network_service_set_enabled(bearer, !enabled);
     if (err == ESP_OK) return;
     const char *hint = memory_peak_hint(err);
-    if (!hint && !enabled && err == ESP_ERR_NO_MEM) hint = "内存不足，无法启动网络";
-    quick_show_notice(ctx, current, hint ? hint : "网络正在使用或启动失败");
+    if (!hint && !enabled && err == ESP_ERR_NO_MEM) hint = "記憶體不足，無法啟動網路";
+    quick_show_notice(ctx, current, hint ? hint : "網路正在使用或啟動失敗");
 }
 
 // 前光开关改变层高时整层重绘；黑白滑杆拖动与松手共用完整 DU 差分，不追加定稿。

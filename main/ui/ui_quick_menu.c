@@ -221,7 +221,7 @@ bool ui_quick_menu_draw_notice(uint8_t *fb, const ui_quick_menu_t *menu, EpdRect
     ui_fill_rect_fast(*dirty, UI_GRAY_WHITE, fb);
     if (menu->network_notice || menu->rotation_notice)
         ui_text_fixed_vc(fb, epd_rotated_display_width() / 2, dirty->y + 16, 20,
-            menu->network_notice ? menu->network_notice : "仅阅读正文支持自动旋转", EPD_DRAW_ALIGN_CENTER, false);
+            menu->network_notice ? menu->network_notice : "僅閱讀正文支援自動旋轉", EPD_DRAW_ALIGN_CENTER, false);
     return true;
 }
 

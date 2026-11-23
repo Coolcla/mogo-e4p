@@ -17,5 +17,5 @@ void ui_text_input_draw(uint8_t *fb, const ui_text_edit_t *edit, EpdRect field,
 /// Tap text to position the caret or arrows to move it; return whether the field was hit.
 bool ui_text_input_tap(ui_text_edit_t *edit, EpdRect field, int px, bool masked,
                        const char *suffix, int x, int y);
-/// 拼音组字行同样显示常亮光标。/ Show a steady caret on the Pinyin composition line too.
+/// 注音組字行同樣顯示常亮游標。/ Show a steady caret on the Zhuyin composition line too.
 void ui_text_input_composition(uint8_t *fb, const char *text, EpdRect line, int px);

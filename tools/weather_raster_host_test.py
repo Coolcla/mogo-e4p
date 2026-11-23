@@ -22,18 +22,40 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--output-dir", type=Path, help="Export native host previews after passing regressions")
 args = parser.parse_args()
 samples = (
-    (100, "sun", "晴", 14, 22, 52),
+    (100, "sun", "晴朗", 14, 22, 52),
     (305, "rain", "小雨", 13, 17, 86),
-    (101, "cloud", "多云", 12, 19, 68),
+    (101, "cloud", "多雲", 12, 19, 68),
     (400, "snow", "小雪", -4, 1, 82),
-    (501, "fog", "雾", 9, 14, 94),
-    (302, "storm", "雷阵雨", 15, 21, 88),
-    (507, "dust", "沙尘暴", 10, 18, 26),
+    (501, "fog", "有霧", 9, 14, 94),
+    (302, "storm", "雷陣雨", 15, 21, 88),
+    (507, "dust", "沙塵暴", 10, 18, 26),
     (502, "haze", "霾", 10, 18, 60),
-    (404, "sleet", "雨夹雪", -1, 3, 85),
-    (104, "overcast", "阴", 11, 17, 76),
+    (404, "sleet", "雨夾雪", -1, 3, 85),
+    (104, "overcast", "陰天", 11, 17, 76),
     (999, "neutral", "未知", 12, 18, 68),
 )
+lower_mainland_samples = (
+    (0, "lm-clear", "晴朗", 10, 23, 55),
+    (1, "lm-mainly-clear", "大致晴朗", 9, 21, 60),
+    (2, "lm-partly-cloudy", "局部多雲", 8, 18, 68),
+    (3, "lm-overcast", "陰天", 7, 12, 88),
+    (45, "lm-fog", "有霧", 5, 10, 96),
+    (48, "lm-rime-fog", "霧淞", 0, 3, 96),
+    (51, "lm-drizzle", "毛毛雨", 7, 12, 90),
+    (55, "lm-heavy-drizzle", "強毛毛雨", 7, 11, 94),
+    (56, "lm-freezing-drizzle", "輕度凍毛毛雨", -2, 2, 93),
+    (61, "lm-light-rain", "小雨", 7, 12, 89),
+    (63, "lm-moderate-rain", "中雨", 8, 13, 92),
+    (65, "lm-heavy-rain", "大雨", 9, 14, 97),
+    (67, "lm-freezing-rain", "強凍雨", -3, 1, 95),
+    (71, "lm-light-snow", "小雪", -2, 2, 88),
+    (80, "lm-rain-showers", "小陣雨", 8, 13, 86),
+    (82, "lm-heavy-showers", "強陣雨", 9, 14, 92),
+    (85, "lm-snow-showers", "小陣雪", -1, 3, 88),
+    (95, "lm-thunderstorm", "雷雨", 12, 21, 84),
+    (97, "lm-heavy-thunderstorm", "強雷雨", 11, 19, 91),
+)
+all_samples = samples + lower_mainland_samples
 asset_samples = tuple(sample for sample in samples[:-1] if sample[1] != "haze")
 assert tuple(sample[1] for sample in asset_samples) == SCENES
 subprocess.run([os.sys.executable, str(ROOT / "tools/generate_weather_backgrounds.py"), "--check"], check=True)
@@ -66,8 +88,8 @@ else:
 KIT = ROOT / "main/ui/ui_kit.c"
 with TTFont(ROOT / "main/assets/builtin.ttf") as font:
     codepoints = set(font.getBestCmap())
-assert all(ord(ch) in codepoints for ch in "石家庄河北省"), "missing default-font weather-city glyphs"
-assert all(ord(ch) in codepoints for sample in samples for ch in sample[2]), "missing weather-preview glyphs"
+assert all(ord(ch) in codepoints for ch in "Vancouver, BC"), "missing built-in fallback-location glyphs"
+assert all(ord(ch) in codepoints for sample in all_samples for ch in sample[2]), "missing weather-preview glyphs"
 for source in ("main/ui/ui_weather.c", "main/apps/app_components.c", "main/services/weather_service.c"):
     strings = []
     for token in re.finditer(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"', (ROOT / source).read_text()):
@@ -126,8 +148,23 @@ production = (ROOT / "main/ui/ui_weather.c").read_text()
 unit += "\n".join(line for line in production.splitlines() if not line.startswith("#include"))
 unit += '\nstatic const struct {int code; const char *name,*condition; int low,high,humidity;} samples[]={\n'
 unit += ",\n".join(f'{{{code},"{name}","{label}",{low},{high},{humidity}}}'
-                    for code, name, label, low, high, humidity in samples)
+                    for code, name, label, low, high, humidity in all_samples)
 unit += "\n};\n"
+unit += "static const int sample_codes[]={" + ",".join(str(sample[0]) for sample in all_samples) + "};\n"
+local_scene_expectations = (
+    (0, "WEATHER_SCENE_SUN"), (1, "WEATHER_SCENE_SUN"),
+    (2, "WEATHER_SCENE_CLOUD"), (3, "WEATHER_SCENE_OVERCAST"),
+    (45, "WEATHER_SCENE_FOG"), (48, "WEATHER_SCENE_FOG"),
+    (51, "WEATHER_SCENE_RAIN"), (55, "WEATHER_SCENE_RAIN"),
+    (56, "WEATHER_SCENE_RAIN"), (61, "WEATHER_SCENE_RAIN"),
+    (63, "WEATHER_SCENE_RAIN"), (65, "WEATHER_SCENE_RAIN"),
+    (67, "WEATHER_SCENE_RAIN"), (71, "WEATHER_SCENE_SNOW"),
+    (80, "WEATHER_SCENE_RAIN"), (82, "WEATHER_SCENE_RAIN"),
+    (85, "WEATHER_SCENE_SNOW"), (95, "WEATHER_SCENE_STORM"),
+    (97, "WEATHER_SCENE_STORM"),
+)
+unit += "static const struct {int code; weather_scene_t scene;} local_scene_expectations[]={" + ",".join(
+    f"{{{code},{scene}}}" for code, scene in local_scene_expectations) + "};\n"
 unit += r"""
 #include "weather_test_data.h"
 static void previews(uint8_t *f,const char *directory){
@@ -135,9 +172,10 @@ static void previews(uint8_t *f,const char *directory){
     assert(weather_location_parse(WEATHER_TEST_CITY,strlen(WEATHER_TEST_CITY),&view.city));
     int64_t fixture_now=weather_timestamp("2026-11-02T00:30:00Z");
     assert(weather_forecast_parse(WEATHER_TEST_FORECAST,strlen(WEATHER_TEST_FORECAST),fixture_now,&view.city,&view.forecast));
-    strcpy(view.city.id,"101090101");strcpy(view.city.name,"石家庄");
-    strcpy(view.city.admin1,"河北省");strcpy(view.city.admin2,"石家庄");
-    view.city.lat=38.0428;view.city.lon=114.5149;view.forecast.location=view.city;
+    strcpy(view.city.id,"VANCOUVER");strcpy(view.city.name,"Vancouver");
+    strcpy(view.city.admin1,"British Columbia");strcpy(view.city.admin2,"Metro Vancouver");
+    strcpy(view.city.country,"Canada");strcpy(view.city.timezone,"America/Vancouver");
+    view.city.lat=49.2827;view.city.lon=-123.1207;view.forecast.location=view.city;
     const int64_t now=weather_timestamp("2026-11-04T00:30:00Z");
     view.forecast.fetched=now-600;view.forecast.fresh=now+3600;view.forecast.serve=view.forecast.fetched+21600;
     display_rotation=EPD_ROT_PORTRAIT;ttf_set_antialias(true);
@@ -270,12 +308,13 @@ int main(int argc,char **argv){
     assert(ui_weather_prepare()&&live-old==684u*472u/2u);
     packed_backgrounds(f,before);
     equivalent_halo(f,before);
-    const int codes[]={100,305,101,400,501,302,507,502,404,104,999};
     const int scene_codes[]={100,305,101,400,501,302,507,404,104};
-    assert(sizeof(codes)/sizeof(*codes)==sizeof(samples)/sizeof(*samples));
+    assert(sizeof(sample_codes)/sizeof(*sample_codes)==sizeof(samples)/sizeof(*samples));
     assert(sizeof(scene_codes)/sizeof(*scene_codes)==WEATHER_SCENE_COUNT-1);
     assert(sizeof(weather_backgrounds_asset)==(WEATHER_SCENE_COUNT-1)*77u*448u);
     for(int i=0;i<WEATHER_SCENE_COUNT-1;++i)assert(weather_scene(scene_codes[i])==(weather_scene_t)(i+1));
+    for(unsigned i=0;i<sizeof(local_scene_expectations)/sizeof(*local_scene_expectations);++i)
+        assert(weather_scene(local_scene_expectations[i].code)==local_scene_expectations[i].scene);
     const EpdRect regions[]={{0,168,684,472},{0,640,684,472},{0,236,684,472}};
     display_rotation=EPD_ROT_PORTRAIT;
     view.forecast.days[0].code=501;
@@ -291,15 +330,15 @@ int main(int argc,char **argv){
         for(unsigned slot=0;slot<3;++slot){
             EpdRect region=regions[slot];
             actions(region);
-            for(unsigned i=0;i<sizeof(codes)/sizeof(*codes);i++)for(int tomorrow=0;tomorrow<2;tomorrow++){
-                view.forecast.days[tomorrow].code=codes[i];
+            for(unsigned i=0;i<sizeof(sample_codes)/sizeof(*sample_codes);i++)for(int tomorrow=0;tomorrow<2;tomorrow++){
+                view.forecast.days[tomorrow].code=sample_codes[i];
                 memset(f,0xaa,684*1216/2);memcpy(before,f,684*1216/2);
                 app_weather_view_t original=view;
                 uint8_t *scratch=s_scratch;
                 ui_weather_draw(f,region,tomorrow,&view,now);outside(f,before,region);
                 assert(!memcmp(&view,&original,sizeof(view))&&s_scratch==scratch);
                 assert(memcmp(f,before,684*1216/2)!=0);
-                perimeter(f,region,codes[i]);
+                perimeter(f,region,sample_codes[i]);
             }
             view.has_forecast=false;
             ui_weather_draw(f,region,false,&view,0);outside(f,before,region);
@@ -389,7 +428,7 @@ with tempfile.TemporaryDirectory(prefix="weather-raster-") as directory:
 
 if args.output_dir:
     out = args.output_dir
-    for _, name, _, _, _, _ in samples:
+    for _, name, _, _, _, _ in all_samples:
         for suffix in ("", "-tomorrow"):
             raw = (out / f"{name}{suffix}.raw").read_bytes()
             assert len(raw) == 684 * 1216
@@ -417,10 +456,12 @@ if args.output_dir:
 
     sheet(samples[:-1], "all-weather-today.png")
     sheet(samples[:-1], "all-weather-tomorrow.png", tomorrow=True)
+    sheet(lower_mainland_samples, "lower-mainland-today.png")
+    sheet(lower_mainland_samples, "lower-mainland-tomorrow.png", tomorrow=True)
     sheet(samples[6:10], "new-weather.png")
     sheet(asset_samples, "all-backgrounds.png", masks=True)
     sheet((samples[0], samples[-1]), "neutral-comparison.png")
     with ZipFile(out / "weather-host-previews.zip", "w") as archive:
         for path in sorted(out.glob("*.png")):
             archive.write(path, path.name)
-    print(f"PASS: 22 native weather previews and five comparison sheets exported to {out}")
+    print(f"PASS: {len(all_samples) * 2} native weather previews and seven comparison sheets exported to {out}")

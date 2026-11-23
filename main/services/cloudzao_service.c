@@ -58,6 +58,7 @@ static cz_job_t s_job;
 typedef struct {
     int64_t deadline, next_check;
     cz_error_t link;
+    network_bearer_t bearer;
     cz_job_t job;
     uint16_t preview_http_error;
     unsigned char *chunk;
@@ -152,16 +153,22 @@ static cz_error_t stop(void *context) {
     int64_t now = esp_timer_get_time();
     if (now >= worker->next_check) {
         worker->next_check = now + 200000;
-        wifi_transfer_status_t wifi = {0};
-        wifi_transfer_get_status(&wifi);
         if (worker->job == CZ_JOB_DOWNLOAD && !media_ready()) atomic_store(&s_media_gone, true);
-        if (!wifi.network_only || wifi.mode != WIFI_TRANSFER_MODE_STA || !wifi.network_ready)
-            worker->link = CZ_WIFI;
+        if (worker->bearer != NETWORK_BEARER_NONE) {
+            network_status_t network = {0};
+            network_service_get_status(&network);
+            const bool ready = worker->bearer == NETWORK_BEARER_WIFI ? network.wifi_ready : network.cellular_ready;
+            if (!ready) worker->link = CZ_WIFI;
+        }
     }
     if (atomic_load(&s_media_gone)) return CZ_MEDIA;
     if (atomic_load(&s_cancel)) return CZ_CANCELLED;
     if (now >= worker->deadline) return CZ_TIMEOUT;
     return worker->link;
+}
+
+static bool network_wait_cancelled(void) {
+    return atomic_load(&s_cancel) || atomic_load(&s_media_gone);
 }
 
 static void row_changed(void *context, unsigned index, const cz_row_t *file, bool active) {
@@ -427,7 +434,12 @@ static void run(void *argument) {
     char *json = NULL;
     if (result.error == CZ_OK && !cloudzao_token_valid(s_integration_id)) result.error = CZ_INTEGRATION;
     if (result.error == CZ_OK && !current_utc(NULL)) result.error = CZ_CLOCK;
-    if (result.error == CZ_OK && network_service_borrow_ready_wifi(&lease) != ESP_OK) result.error = CZ_WIFI;
+    if (result.error == CZ_OK) {
+        const esp_err_t acquired = network_service_acquire(NETWORK_USE_WEATHER, &lease);
+        if (acquired != ESP_OK || !network_service_wait_ready_cancelable(&lease, 30000, network_wait_cancelled))
+            result.error = network_wait_cancelled() ? CZ_CANCELLED : CZ_WIFI;
+        else worker.bearer = lease.bearer;
+    }
     if (result.error == CZ_OK && pair_job(worker.job) && esp_read_mac(bytes, ESP_MAC_WIFI_STA) != ESP_OK) result.error = CZ_WIFI;
     if (result.error == CZ_OK) {
         worker.chunk = heap_caps_malloc(CLOUDZAO_CHUNK + CLOUDZAO_PARTNER_RESPONSE_CAP, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);

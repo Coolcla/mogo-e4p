@@ -9,12 +9,12 @@ import sys
 import tempfile
 import zlib
 from home_cover_cache_host_test import function
-from generate_brand_images import SOURCE, outputs
+from generate_brand_images import SOURCE, STARTUP, outputs
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-with Image.open(SOURCE) as source:
-    for path, data in outputs(source.convert('L')).items():
+with Image.open(SOURCE) as source, Image.open(STARTUP) as splash:
+    for path, data in outputs(source.convert('L'), splash.convert('L')).items():
         if path.suffix == '.png':
             # PNG压缩字节可随zlib变化，解码像素必须一致。/ Compression bytes may vary with zlib; decoded pixels must match.
             with Image.open(path) as actual, Image.open(BytesIO(data)) as expected:
@@ -24,7 +24,7 @@ with Image.open(SOURCE) as source:
             assert path.read_bytes() == data, f'Regenerate {path}'
 assert not (ROOT / 'assets/image/init-loading.png').exists()
 assert not (ROOT / 'main/assets/loading_4bpp.bin').exists()
-cmake = (ROOT / 'main/CMakeLists.txt').read_text()
+cmake = (ROOT / 'main/CMakeLists.txt').read_text(encoding='utf-8')
 assert 'loading_4bpp' not in cmake and 'assets/avatar_4bpp.bin' in cmake
 with tempfile.TemporaryDirectory() as folder:
     work = Path(folder)
@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory() as folder:
                '--source', str(ROOT / 'main/assets'), '--output', str(work)]
     subprocess.run(command, check=True)
     assembly = ['.data']
-    for name in ['lock']:
+    for name in ['lock', 'startup']:
         packed_path = work / (name + '_4bpp.kbz')
         packed = packed_path.read_bytes()
         raw_path = ROOT / 'main/assets' / (name + '_4bpp.bin')
@@ -106,6 +106,7 @@ static enum EpdRotation epd_get_rotation(void){return display_rotation;}
     unit += '#pragma GCC diagnostic pop\n#include "' + str(ROOT / 'main/ui/ui_builtin_image.c') + '"\n'
     unit += r'''
 extern const uint8_t reference_lock[] asm("reference_lock_start");
+extern const uint8_t reference_startup[] asm("reference_startup_start");
 static uint8_t guarded[FRAME_BYTES+32],expected[FRAME_BYTES];
 static uint8_t *frame=guarded+16;
 static void prepare(void){memset(guarded,0xa5,sizeof(guarded));allocations=0;assert(live==0);}
@@ -114,15 +115,13 @@ static void white(void){for(size_t i=0;i<FRAME_BYTES;++i)assert(frame[i]==255);b
 static void set_word(uint8_t *p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=(uint8_t)(v>>(i*8));}
 int main(void){
  unsigned success_allocations=0;
- size_t lock_bytes,loading_bytes;
- assert(image_data(UI_BUILTIN_IMAGE_LOCK,&lock_bytes)==image_data(UI_BUILTIN_IMAGE_LOADING,&loading_bytes));
- assert(lock_bytes==loading_bytes);
  for(int rotation=0;rotation<4;++rotation){
   display_rotation=rotation;
   for(unsigned image=0;image<2;++image){
    prepare();assert(ui_builtin_image_size(image)==FRAME_BYTES);
    memset(expected,255,sizeof(expected));
-   epd_draw_rotated_image((EpdRect){0,0,epd_rotated_display_width(),epd_rotated_display_height()},reference_lock,expected);
+   const uint8_t *reference=image==UI_BUILTIN_IMAGE_LOADING?reference_startup:reference_lock;
+   epd_draw_rotated_image((EpdRect){0,0,epd_rotated_display_width(),epd_rotated_display_height()},reference,expected);
    assert(ui_builtin_image_draw(frame,image));assert(!memcmp(frame,expected,FRAME_BYTES));
    success_allocations=allocations;boundaries();
   }
@@ -164,7 +163,7 @@ int main(void){
  }
  prepare();assert(!ui_builtin_image_draw(frame,99));white();assert(ui_builtin_image_size(99)==0);
  assert(!ui_builtin_image_draw(NULL,UI_BUILTIN_IMAGE_LOCK));assert(!live);free(bad);
- printf("PASS: splash/lock share one resource; generated art and both avatars match pixels in four rotations, including clipping; bounded temporary heap peak %zu B; OOM, bad headers, truncation, checksum, trailing data and output-size faults clear white without leaks or overwrites\n",peak);
+ printf("PASS: separate splash and lock resources plus both avatars match pixels in four rotations, including clipping; bounded temporary heap peak %zu B; OOM, bad headers, truncation, checksum, trailing data and output-size faults clear white without leaks or overwrites\n",peak);
 }
 '''
     (work / 'test.c').write_text(unit)

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：离线连续拼音、九宫格与词组候选，借用已有单字字表。
- * English: Offline continuous Pinyin, T9 and phrase candidates using the existing character table.
+ * 中文：離線注音轉拼音組詞候選，借用已有單字字表；羅馬拼音只作內部查表格式。
+ * English: Offline Zhuyin-to-Pinyin word composition using the existing character table; roman Pinyin is an internal lookup format only.
  */
 #pragma once
 #include <stdbool.h>

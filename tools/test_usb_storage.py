@@ -54,6 +54,7 @@ int gpio_set_direction(int pin,int mode);
 int gpio_set_level(int pin,int level);
 typedef struct {bool mounted;} board_sd_info_t;
 int board_sd_get_info(board_sd_info_t *info);
+int board_sd_get_usb_export_config(sdmmc_host_t *host,sdmmc_slot_config_t *slot);
 int board_sd_sync(void);
 int board_sd_remount(void);
 bool ttf_font_is_builtin(void);
@@ -63,7 +64,8 @@ typedef struct {struct {int auto_mount_off;} user_flags;} tinyusb_msc_driver_con
 typedef struct {struct {sdmmc_card_t *card;} medium;int mount_point;
 struct {bool do_not_format;struct {int max_files;} config;} fat_fs;} tinyusb_msc_storage_config_t;
 #define TINYUSB_MSC_STORAGE_MOUNT_USB 1
-typedef struct {int port;} tinyusb_config_t;
+typedef struct {unsigned size;} tinyusb_task_config_t;
+typedef struct {int port;tinyusb_task_config_t task;} tinyusb_config_t;
 #define TINYUSB_DEFAULT_CONFIG() ((tinyusb_config_t){0})
 int tinyusb_msc_install_driver(const tinyusb_msc_driver_config_t *config);
 int tinyusb_msc_new_storage_sdmmc(const tinyusb_msc_storage_config_t *config,tinyusb_msc_storage_handle_t *handle);
@@ -96,6 +98,11 @@ static int failed(int where){return stage==where?ESP_FAIL:ESP_OK;}
 void vTaskDelay(int ms){assert(ms>0);}
 const char *esp_err_to_name(int e){(void)e;return "test";}
 int board_sd_get_info(board_sd_info_t *i){i->mounted=mounted;return ESP_OK;}
+int board_sd_get_usb_export_config(sdmmc_host_t *h,sdmmc_slot_config_t *s){
+    *h=(sdmmc_host_t){.slot=1};
+    *s=(sdmmc_slot_config_t){.width=4,.clk=24,.cmd=25,.d0=20,.d1=21,.d2=22,.d3=23,.cd=-1,.wp=-1,.flags=SDMMC_SLOT_FLAG_INTERNAL_PULLUP};
+    return ESP_OK;
+}
 int board_sd_sync(void){assert(mounted&&thumbnail_invalidations>0);mounted=false;return ESP_OK;}
 int board_sd_remount(void){assert(!driver&&!borrowed&&!msc&&!host&&switch_level==1);mounted=true;++remounts;return ESP_OK;}
 bool ttf_font_is_builtin(void){return true;}
@@ -112,7 +119,7 @@ int tinyusb_msc_new_storage_sdmmc(const tinyusb_msc_storage_config_t *c,tinyusb_
     assert(msc&&c->medium.card&&c->fat_fs.do_not_format);
     if(failed(5))return ESP_FAIL;borrowed=c->medium.card;*h=malloc(1);assert(*h);return ESP_OK;
 }
-int tinyusb_driver_install(const tinyusb_config_t *c){(void)c;assert(borrowed&&!mounted&&switch_level==0);if(failed(6))return ESP_FAIL;driver=connected=true;return ESP_OK;}
+int tinyusb_driver_install(const tinyusb_config_t *c){assert(c->task.size==8192);assert(borrowed&&!mounted&&switch_level==0);if(failed(6))return ESP_FAIL;driver=connected=true;return ESP_OK;}
 int tinyusb_msc_delete_storage(tinyusb_msc_storage_handle_t h){
     assert(borrowed&&borrowed->marker==47&&!mounted);++deletes;
     if(busy>0){--busy;return ESP_ERR_INVALID_STATE;}if(delete_error)return delete_error;

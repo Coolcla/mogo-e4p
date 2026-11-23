@@ -60,7 +60,7 @@ typedef struct {
     unsigned books, days;
 } reading_journal_totals_t;
 
-/// 固定UTC+8，未对时或越界返回false；周一为0。/ Fixed UTC+8; reject unsynced/out-of-range time; Monday is zero.
+/// 使用目前地點的本地時區，未對時或越界返回false；週一為0。/ Use the selected location's local zone; reject unsynced/out-of-range time; Monday is zero.
 bool reading_journal_date(int64_t utc_ms, reading_journal_date_t *out);
 void reading_journal_clear(reading_journal_model_t *model);
 /// 月变清记录，跨日轮换，回拨保留插画并重设日期基线。/ Clear records on month changes; advance scenes on forward days and rebase rollbacks.

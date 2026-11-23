@@ -115,7 +115,7 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
     uint8_t *original=!clock && heap_caps_get_free_size(MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT)>FRAME_BYTES+1024u*1024u
         ?heap_caps_malloc(FRAME_BYTES,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT):NULL;
     if(original)memcpy(original,fb,FRAME_BYTES);
-    ui_pinpad_t pad={0};ui_pinpad_begin(&pad,fb,"输入密码");
+    ui_pinpad_t pad={0};ui_pinpad_begin(&pad,fb,"輸入密碼");
     bool waiting=!boot;
     unsigned failures=0;int64_t retry_at=0;
     for(;;){
@@ -128,11 +128,11 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
             app_lock_sleep_wait(hl,acc);
             // 浅睡期间日期可能变化；重建模糊底图，避免密码层恢复旧分钟。
             // Rebuild the frost from the current face after sleep instead of restoring an old minute.
-            if(clock){(void)lock_clock_draw(fb);ui_pinpad_end(&pad);ui_pinpad_begin(&pad,fb,"输入密码");}
+            if(clock){(void)lock_clock_draw(fb);ui_pinpad_end(&pad);ui_pinpad_begin(&pad,fb,"輸入密碼");}
         }
         app_lock_wait_key_idle(800);
-        ui_pinpad_reset(&pad,"输入密码","");
-        if(esp_timer_get_time()/1000<retry_at){pad.blocked=true;snprintf(pad.notice,sizeof(pad.notice),"请等待 10 秒后重试");}
+        ui_pinpad_reset(&pad,"輸入密碼","");
+        if(esp_timer_get_time()/1000<retry_at){pad.blocked=true;snprintf(pad.notice,sizeof(pad.notice),"請等待 10 秒後重試");}
         // 直接推送完整密码画面一次，不再补刷第二段背景。/ Present the complete PIN screen once, without a second backdrop stage.
         ui_pinpad_paint(fb,&pad,ui_pinpad_full());present(hl,ui_pinpad_full());
         // 密码等待不是启动失败；待验证时保留一次性恢复，不提前开书。
@@ -145,7 +145,7 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
             int64_t now=esp_timer_get_time()/1000;
             if(now-active_at>=30000){cancel=true;break;}
             if(now-last_poll>=40){last_poll=now;(void)device_power_poll();if(device_power_take_key_action()!=DEVICE_POWER_KEY_NONE){cancel=true;break;}}
-            if(pad.blocked&&lock_pin_available()&&now>=retry_at){ui_pinpad_reset(&pad,NULL,"请重新输入");ui_pinpad_paint(fb,&pad,ui_pinpad_entry_area());present(hl,ui_pinpad_entry_area());}
+            if(pad.blocked&&lock_pin_available()&&now>=retry_at){ui_pinpad_reset(&pad,NULL,"請重新輸入");ui_pinpad_paint(fb,&pad,ui_pinpad_entry_area());present(hl,ui_pinpad_entry_area());}
             app_touch_t sample={0};esp_err_t error=s31_input_read_touch(touch,&sample);
             bool down=error==ESP_OK&&sample.touched;
             const bool mapped = !down || display_orientation_touch(&sample.x, &sample.y);
@@ -160,8 +160,8 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
                 if(r==UI_PIN_COMPLETE){
                     bool verified=lock_pin_verify(pad.digits);
                     if(verified){ui_pinpad_end(&pad);free(original);device_power_drain_events();ble_pt_event_t e;while(ble_pt_pop_key(&e)){}ble_pt_raw_t raw;while(ble_pt_pop_raw(&raw)){}return;}
-                    ui_pinpad_reset(&pad,NULL,"密码不正确，请重试");
-                    if(++failures>=3){failures=0;retry_at=now+10000;pad.blocked=true;snprintf(pad.notice,sizeof(pad.notice),"请等待 10 秒后重试");}
+                    ui_pinpad_reset(&pad,NULL,"密碼不正確，請重試");
+                    if(++failures>=3){failures=0;retry_at=now+10000;pad.blocked=true;snprintf(pad.notice,sizeof(pad.notice),"請等待 10 秒後重試");}
                     ui_pinpad_paint(fb,&pad,ui_pinpad_entry_area());present(hl,ui_pinpad_entry_area());
                 }
             }

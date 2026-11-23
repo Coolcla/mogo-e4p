@@ -76,7 +76,7 @@ static app_redraw_t key(app_ctx_t *ctx,int value) {
 static app_redraw_t held_key(app_ctx_t *ctx,int value) {(void)ctx;return value==UI_KEY_2?APP_REDRAW_FULL:APP_REDRAW_NONE;}
 static bool no_handle(app_ctx_t *ctx) {(void)ctx;return false;}
 const app_desc_t app_reading_journal={
-    .title="阅读手账",.detail="本月阅读记录",.enter_full=false,.owns_keys=true,
+    .title="閱讀手賬",.detail="本月閱讀記錄",.enter_full=false,.owns_keys=true,
     .defer_middle_short=true,.on_key=key,.on_key_long=held_key,
     .menu_handle_enabled=no_handle,.on_enter=enter,.on_exit=flush,.on_before_lock=flush,
     .render=render,.on_gesture=gesture,.on_tick=tick,

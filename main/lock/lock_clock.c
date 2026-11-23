@@ -37,8 +37,8 @@ static clock_identity_t sample(ui_lock_clock_face_t *face, bool force) {
         ? (int64_t)s_anchor_utc+(now-s_anchor_us)/1000000 : (int64_t)tv.tv_sec;
     *face=(ui_lock_clock_face_t){0};
     if (utc_valid(utc)) {
-        time_t china=(time_t)(utc+8*3600);struct tm day;
-        if (gmtime_r(&china,&day))
+        time_t instant=(time_t)utc;struct tm day;
+        if (localtime_r(&instant,&day))
             *face=(ui_lock_clock_face_t){.valid=true,.hour=day.tm_hour,.minute=day.tm_min,
                 .month=day.tm_mon+1,.day=day.tm_mday,.weekday=day.tm_wday};
     }

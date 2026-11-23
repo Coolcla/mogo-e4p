@@ -193,8 +193,11 @@ esp_err_t UartUhci::InitGdma(const Config& config) {
     ESP_RETURN_ON_ERROR(gdma_config_transfer(rx_dma_chan_, &transfer_cfg), kTag, "RX DMA config failed");
 
     // Get RX alignment constraints
-    ESP_RETURN_ON_ERROR(gdma_get_alignment_constraints(rx_dma_chan_, &rx_int_mem_align_, &rx_ext_mem_align_),
+    gdma_channel_alignment_info_t rx_alignment = {};
+    ESP_RETURN_ON_ERROR(gdma_get_channel_alignment_constraints(rx_dma_chan_, &rx_alignment),
                         kTag, "RX DMA alignment unavailable");
+    rx_int_mem_align_ = rx_alignment.int_mem_alignment;
+    rx_ext_mem_align_ = MAX_OF(rx_alignment.ext_enc_mem_alignment, rx_alignment.ext_no_enc_mem_alignment);
 
     // Create RX DMA link list with buffer pool size and owner checking enabled
     // Each buffer gets one DMA node, owner mechanism manages buffer availability

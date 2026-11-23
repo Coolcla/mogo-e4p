@@ -30,10 +30,10 @@
 #include <time.h>
 
 static const uint8_t values[]={1,0,2,3,4,APP_LOCK_STYLE_CLOCK};
-static const char *const names[]={"壁纸","阅读票根","书架拼贴","透明书封","日历","简约时钟"};
+static const char *const names[]={"桌布","閱讀票根","書架拼貼","透明書封","日曆","簡約時鐘"};
 static const uint8_t off_values[]={APP_OFF_CUSTOM,APP_OFF_TICKET,APP_OFF_COLLAGE,APP_OFF_CALENDAR,APP_OFF_SYSTEM};
-static const char *const off_names[]={"壁纸","阅读票根","书架拼贴","日历","系统默认"};
-static const char *const options[]={"透明背景","封面背景","老黄历","万年历"};
+static const char *const off_names[]={"桌布","閱讀票根","書架拼貼","日曆","系統預設"};
+static const char *const options[]={"透明背景","封面背景","老黃曆","萬年曆"};
 static int s_tab,s_pages[2],s_preview=-1,s_pending=-1,s_count;
 static unsigned s_seen;
 static bool s_open,s_catalogue_ready,s_scan_pending,s_offline,s_batch_changed;
@@ -122,7 +122,8 @@ static void validate_faces(void){
     for(const unsigned char *p=(const unsigned char *)(path?path:"");*p;++p)font=(font^*p)*UINT64_C(1099511628211);
     font=(font^app_settings_system_font_size())*UINT64_C(1099511628211);
     font=(font^app_settings_system_contrast())*UINT64_C(1099511628211);
-    time_t utc=preview_time();uint64_t day=utc>=1704067200?(utc+8*3600)/86400:0;
+    time_t utc=preview_time();struct tm local_day={0};uint64_t day=0;
+    if(utc>=1704067200&&localtime_r(&utc,&local_day))day=(uint64_t)(local_day.tm_year+1900)*10000u+(uint64_t)(local_day.tm_mon+1)*100u+(uint64_t)local_day.tm_mday;
     for(int i=0;i<7;++i){
         uint64_t data=(i<2||i==6)?((uint64_t)book_progress_revision()<<32)^day:i<4?day:i==4?(utc>=1704067200?(uint64_t)utc/60:0):book_lock_collage_preview_revision();
         uint64_t key=(font^data)*UINT64_C(1099511628211);
@@ -149,7 +150,7 @@ void ui_lock_style_media_lost(void){
     shutdown_wallpaper_cancel();s_off_commit=s_off_loading=false;
     lock_images_close();invalidate_cache();s_catalogue_ready=true;s_scan_pending=false;s_offline=true;s_preview=s_pending=-1;s_batch_changed=true;
     free(s_background);s_background=NULL;
-    snprintf(s_notice,sizeof(s_notice),"TF 卡已断开");
+    snprintf(s_notice,sizeof(s_notice),"TF 卡已斷開");
 }
 void ui_lock_style_media_ready(void){
     lock_images_close();invalidate_cache();s_pending=s_preview=-1;
@@ -191,14 +192,14 @@ static const uint8_t *image_pixels(const char *path,bool bookmark,bool large,loc
 static void paint_image(uint8_t *fb,const char *path,bool bookmark,bool large,EpdRect r){
     lock_image_state_t state;const uint8_t *p=image_pixels(path,bookmark,large,&state);
     if(p)paint_pixels(fb,p,large?342:160,large?608:284,r);
-    else placeholder(fb,r,state==LOCK_IMAGE_FAILED?"无法加载":"加载中");
+    else placeholder(fb,r,state==LOCK_IMAGE_FAILED?"無法載入":"載入中");
 }
 static int face_for(int tab){return tab==1?(int)app_settings_ticket_background():tab==4?2+(int)app_settings_calendar_style():tab==5?4:5;}
 static void paint_face(uint8_t *fb,int tab,EpdRect area){
     if(tab==0||tab==3){paint_image(fb,grid_path(tab==3),tab==3,false,area);return;}
     int face=face_for(tab);
     if(s_faces[face])paint_pixels(fb,s_faces[face],160,284,area);
-    else placeholder(fb,area,s_face_done[face]?(tab==1?"暂无阅读":"暂无预览"):"准备中");
+    else placeholder(fb,area,s_face_done[face]?(tab==1?"暫無閱讀":"暫無預覽"):"準備中");
 }
 static void visible_states(lock_image_state_t states[6]){
     for(int i=0;i<6;++i)states[i]=LOCK_IMAGE_FAILED;
@@ -228,14 +229,14 @@ static bool visible_ready(void){
 void ui_lock_style_render(uint8_t *fb){
     ui_clear_page(fb);ui_nav_status(fb);
     ui_draw_icon(fb,57,115,44,UI_ICON_CHEVRON_LEFT,0);
-    label(fb,(EpdRect){96,80,s_preview>=0?500:282,64},44,s_preview>=0?"图片预览":"壁纸",false);
+    label(fb,(EpdRect){96,80,s_preview>=0?500:282,64},44,s_preview>=0?"圖片預覽":"桌布",false);
     if(s_preview<0&&(s_off_tab?s_off_browse==APP_OFF_CUSTOM:(s_tab==0||s_tab==3))){
         for(int i=0;i<2;++i){
             EpdRect r=s_off_tab?off_fit_rect(i):s_tab==0?wallpaper_mode_rect(i):bookmark_mode_rect(i);
             bool active=s_off_tab?app_settings_shutdown_wallpaper()->fit==i:s_tab==0 ? (unsigned)app_settings_wallpaper_mode()==(unsigned)i :
                 (unsigned)app_settings_bookmark_mode()==(unsigned)i;
             outline(fb,r,9,active?3:1,active?0:0xb0);
-            label(fb,(EpdRect){r.x+4,r.y+2,r.width-8,r.height-4},21,i==0?"裁剪填满":"完整显示",true);
+            label(fb,(EpdRect){r.x+4,r.y+2,r.width-8,r.height-4},21,i==0?"裁剪填滿":"完整顯示",true);
         }
     }
     if(s_preview>=0){
@@ -245,11 +246,11 @@ void ui_lock_style_render(uint8_t *fb){
     }
     for(int i=0;i<2;++i){
         EpdRect r=purpose_rect(i);outline(fb,r,8,(s_off_tab==(i==1))?3:1,0);
-        label(fb,r,28,i?"关机壁纸":"待机壁纸",true);
+        label(fb,r,28,i?"關機桌布":"待機桌布",true);
     }
     if(s_off_tab){
         const app_shutdown_wallpaper_t *value=app_settings_shutdown_wallpaper();
-        label(fb,(EpdRect){36,210,612,38},24,s_notice[0]?s_notice:"完全关机后显示，与浅睡锁屏分开",false);
+        label(fb,(EpdRect){36,210,612,38},24,s_notice[0]?s_notice:"完全關機後顯示，與淺睡鎖屏分開",false);
         for(int i=0;i<5;++i){
             EpdRect r=off_style_rect(i);unsigned style=off_values[i];
             outline(fb,r,10,s_off_browse==style?3:1,s_off_browse==style?0:0xb0);
@@ -259,22 +260,22 @@ void ui_lock_style_render(uint8_t *fb){
                 else paint_image(fb,value->path,false,false,thumb);
             }else if(style==APP_OFF_SYSTEM){
                 ui_draw_icon(fb,thumb.x+25,thumb.y+32,26,UI_ICON_POWER,0);
-                label(fb,(EpdRect){r.x+16,r.y+68,160,24},18,"mogo 已关机",true);
+                label(fb,(EpdRect){r.x+16,r.y+68,160,24},18,"EP4已關機",true);
             }else{
                 int face=style==APP_OFF_TICKET?(value->ticket_background?1:6):style==APP_OFF_CALENDAR?2+value->calendar_style:5;
                 if(s_faces[face])paint_pixels(fb,s_faces[face],160,284,thumb);
-                else placeholder(fb,thumb,s_face_done[face]?"暂无预览":"准备中");
+                else placeholder(fb,thumb,s_face_done[face]?"暫無預覽":"準備中");
             }
             label(fb,(EpdRect){r.x+8,r.y+110,176,38},27,off_names[i],true);
             if(value->style==style)checkmark(fb,r.x+171,r.y+20);
         }
         if(s_off_browse!=APP_OFF_SYSTEM){
-            label(fb,(EpdRect){36,623,460,48},26,"显示关机提示",false);
-            EpdRect hint={524,623,124,48};outline(fb,hint,8,2,0);label(fb,hint,24,value->show_hint?"开启":"关闭",true);
+            label(fb,(EpdRect){36,623,460,48},26,"顯示關機提示",false);
+            EpdRect hint={524,623,124,48};outline(fb,hint,8,2,0);label(fb,hint,24,value->show_hint?"開啟":"關閉",true);
         }
     }else{
     label(fb,(EpdRect){36,210,612,38},24,s_notice[0]?s_notice:
-        ((s_tab==0||s_tab==3)?"裁剪填满铺满屏幕，完整显示保留原图比例":"点选即用 · 长按图片预览"),false);
+        ((s_tab==0||s_tab==3)?"裁剪填滿鋪滿螢幕，完整顯示保留原圖比例":"點選即用 · 長按圖片預覽"),false);
     for(int i=0;i<6;++i){
         EpdRect r=card_rect(i);bool active=app_settings_lock_style()==values[i];
         outline(fb,r,12,s_tab==i?3:1,s_tab==i?0:0xb0);
@@ -285,7 +286,7 @@ void ui_lock_style_render(uint8_t *fb){
     }
     }
     if(images_tab()){
-        label(fb,(EpdRect){36,687,390,48},30,!s_off_tab&&s_tab==3?"书封图片":"壁纸图片",false);
+        label(fb,(EpdRect){36,687,390,48},30,!s_off_tab&&s_tab==3?"書封圖片":"桌布圖片",false);
         int count=image_count(),pages=(count+2)/3;if(!pages)pages=1;
         EpdRect prev={452,683,64,64},next={584,683,64,64};
         outline(fb,prev,10,1,0xb0);outline(fb,next,10,1,0xb0);
@@ -294,8 +295,8 @@ void ui_lock_style_render(uint8_t *fb){
         char position[24];snprintf(position,sizeof(position),"%d/%d",page()+1,pages);
         label(fb,(EpdRect){518,686,64,58},23,position,true);
         if(!count){
-            label(fb,(EpdRect){36,826,612,52},30,!s_catalogue_ready?"正在查找图片":s_offline?"请插入 TF 卡":"暂无可选图片",true);
-            label(fb,(EpdRect){36,890,612,46},24,!s_off_tab&&s_tab==3?"将 PNG / JPG 书封放入 pictures 文件夹":"将 JPG / PNG 放入 pictures 文件夹",true);
+            label(fb,(EpdRect){36,826,612,52},30,!s_catalogue_ready?"正在查詢圖片":s_offline?"請插入 TF 卡":"暫無可選圖片",true);
+            label(fb,(EpdRect){36,890,612,46},24,!s_off_tab&&s_tab==3?"將 PNG / JPG 書封放入 pictures 資料夾":"將 JPG / PNG 放入 pictures 資料夾",true);
         }
         for(int i=0;i<3;++i){
             int at=image_index(page()*3+i);if(at<0)break;EpdRect r=image_rect(i);
@@ -307,7 +308,7 @@ void ui_lock_style_render(uint8_t *fb){
         }
     }else if(s_off_tab?(s_off_browse==APP_OFF_TICKET||s_off_browse==APP_OFF_CALENDAR):(s_tab==1||s_tab==4)){
         bool ticket=s_off_tab?s_off_browse==APP_OFF_TICKET:s_tab==1;
-        label(fb,(EpdRect){36,687,360,48},30,ticket?"票根背景":"日历版式",false);
+        label(fb,(EpdRect){36,687,360,48},30,ticket?"票根背景":"日曆版式",false);
         for(int i=0;i<2;++i){
             EpdRect r=option_rect(i);int option=(ticket?0:2)+i;
             int face=s_off_tab&&ticket&&!i?6:option;
@@ -316,25 +317,25 @@ void ui_lock_style_render(uint8_t *fb){
                 (app_settings_lock_style()==values[s_tab]&&i==(ticket?(int)app_settings_ticket_background():(int)app_settings_calendar_style()));
             outline(fb,r,12,active?3:1,active?0:0xb0);
             if(s_faces[face])paint_pixels(fb,s_faces[face],160,284,(EpdRect){r.x+22,r.y+24,126,224});
-            else placeholder(fb,(EpdRect){r.x+22,r.y+24,126,224},s_face_done[face]?"暂无阅读":"准备中");
-            label(fb,(EpdRect){r.x+164,r.y+92,112,46},27,s_off_tab&&ticket&&!i?"纯白背景":options[option],true);
+            else placeholder(fb,(EpdRect){r.x+22,r.y+24,126,224},s_face_done[face]?"暫無閱讀":"準備中");
+            label(fb,(EpdRect){r.x+164,r.y+92,112,46},27,s_off_tab&&ticket&&!i?"純白背景":options[option],true);
             if(active)checkmark(fb,r.x+270,r.y+27);
         }
-        label(fb,(EpdRect){36,1050,612,38},23,ticket?(s_off_tab?"关机时使用最新阅读记录":"保留票面、书摘与阅读统计"):(s_off_tab?"按关机时的日期生成":"按待机时的日期生成"),false);
+        label(fb,(EpdRect){36,1050,612,38},23,ticket?(s_off_tab?"關機時使用最新閱讀記錄":"保留票面、書摘與閱讀統計"):(s_off_tab?"按關機時的日期生成":"按待機時的日期生成"),false);
     }else if(s_off_tab){
         bool collage=s_off_browse==APP_OFF_COLLAGE;
-        label(fb,(EpdRect){36,687,612,48},30,collage?"书架拼贴":"系统默认",false);
+        label(fb,(EpdRect){36,687,612,48},30,collage?"書架拼貼":"系統預設",false);
         if(collage)paint_face(fb,2,(EpdRect){52,752,180,320});
         else{outline(fb,(EpdRect){52,752,180,320},0,1,0xb0);ui_draw_icon(fb,142,858,42,UI_ICON_POWER,0);
-            label(fb,(EpdRect){60,922,164,48},24,"mogo 已关机",true);}
-        label(fb,(EpdRect){266,820,382,56},30,collage?"关机时生成书架拼贴":"显示关机状态",false);
-        label(fb,(EpdRect){266,890,382,44},24,collage?"预览为上次生成效果":"长按电源键开机",false);
+            label(fb,(EpdRect){60,922,164,48},24,"EP4已關機",true);}
+        label(fb,(EpdRect){266,820,382,56},30,collage?"關機時生成書架拼貼":"顯示關機狀態",false);
+        label(fb,(EpdRect){266,890,382,44},24,collage?"預覽為上次生成效果":"長按電源鍵開機",false);
     }else{
         label(fb,(EpdRect){36,687,612,48},30,names[s_tab],false);
         paint_face(fb,s_tab,(EpdRect){52,752,180,320});
-        label(fb,(EpdRect){266,820,382,56},30,s_tab==5?"每分钟更新":"你的书架，自动拼贴",false);
-        label(fb,(EpdRect){266,890,382,44},24,s_tab==5?"浅睡时持续显示时间":"预览为上次生成效果",false);
-        if(s_tab==2&&!s_faces[5])label(fb,(EpdRect){266,948,382,44},24,"首次锁屏后显示预览",false);
+        label(fb,(EpdRect){266,820,382,56},30,s_tab==5?"每分鐘更新":"你的書架，自動拼貼",false);
+        label(fb,(EpdRect){266,890,382,44},24,s_tab==5?"淺睡時持續顯示時間":"預覽為上次生成效果",false);
+        if(s_tab==2&&!s_faces[5])label(fb,(EpdRect){266,948,382,44},24,"首次鎖屏後顯示預覽",false);
     }
     ui_nav_draw(fb,3);
 }
@@ -375,7 +376,7 @@ static void prepare_face(int face){
         time_t utc=preview_time();
         calendar_date_t date;bool valid=calendar_from_utc((int64_t)utc*1000,&date);
         if(face<4)ui_calendar_draw(canvas,valid?&date:NULL,face==3);
-        else{time_t china=utc+8*3600;struct tm tm={0};gmtime_r(&china,&tm);
+        else{struct tm tm={0};localtime_r(&utc,&tm);
             ui_lock_clock_face_t clock={.valid=valid,.hour=tm.tm_hour,.minute=tm.tm_min,.month=tm.tm_mon+1,.day=tm.tm_mday,.weekday=tm.tm_wday};
             ui_lock_clock_draw(canvas,&clock);
         }
@@ -394,18 +395,18 @@ static bool save_choice(const char *path,unsigned option){
     bool ok=app_settings_select_lock(values[s_tab],path,option);
     if(ok&&s_tab==3)book_lock_bookmark_prepare_mode(app_settings_bookmark_path(),
         app_settings_bookmark_mode()==APP_BOOKMARK_MODE_CROP);
-    snprintf(s_notice,sizeof(s_notice),"%s",ok?"已保存":"保存失败，请重试");
+    snprintf(s_notice,sizeof(s_notice),"%s",ok?"已儲存":"儲存失敗，請重試");
     return ok;
 }
 static bool save_wallpaper_mode(unsigned mode){
     bool ok=app_settings_set_wallpaper_mode((app_wallpaper_mode_t)mode);
-    snprintf(s_notice,sizeof(s_notice),"%s",ok?"显示方式已保存":"保存失败，请重试");
+    snprintf(s_notice,sizeof(s_notice),"%s",ok?"顯示方式已儲存":"儲存失敗，請重試");
     return ok;
 }
 static bool save_bookmark_mode(unsigned mode){
     bool ok=app_settings_set_bookmark_mode((app_bookmark_mode_t)mode);
     if(ok)book_lock_bookmark_prepare_mode(app_settings_bookmark_path(),mode==APP_BOOKMARK_MODE_CROP);
-    snprintf(s_notice,sizeof(s_notice),"%s",ok?"显示方式已保存":"保存失败，请重试");
+    snprintf(s_notice,sizeof(s_notice),"%s",ok?"顯示方式已儲存":"儲存失敗，請重試");
     return ok;
 }
 static void off_cancel(void){
@@ -415,7 +416,7 @@ static void off_request(app_shutdown_wallpaper_t value,bool rebuild){
     if(rebuild)value.slot=(uint8_t)(1u-app_settings_shutdown_wallpaper()->slot);
     s_off_commit=rebuild;s_off_loading=true;
     shutdown_wallpaper_request(&value,rebuild);
-    if(rebuild)snprintf(s_notice,sizeof(s_notice),"正在保存到TF卡，可继续挑选");
+    if(rebuild)snprintf(s_notice,sizeof(s_notice),"正在儲存到TF卡，可繼續挑選");
 }
 static void off_select_image(const char *path){
     app_shutdown_wallpaper_t value=*app_settings_shutdown_wallpaper();
@@ -424,7 +425,7 @@ static void off_select_image(const char *path){
 }
 static bool off_save(app_shutdown_wallpaper_t value){
     off_cancel();bool ok=app_settings_set_shutdown_wallpaper(&value);
-    snprintf(s_notice,sizeof(s_notice),"%s",ok?"已保存":"保存失败，请重试");
+    snprintf(s_notice,sizeof(s_notice),"%s",ok?"已儲存":"儲存失敗，請重試");
     return ok;
 }
 bool ui_lock_style_tick(int64_t now_ms){
@@ -433,12 +434,12 @@ bool ui_lock_style_tick(int64_t now_ms){
     bool changed=false;s_dirty=(EpdRect){0};
     app_shutdown_wallpaper_t off_value;bool off_ok=false;uint8_t *off_thumb=NULL;
     if(shutdown_wallpaper_take(&off_value,&off_ok,&off_thumb)){
-        const char *error=off_ok?"设置保存失败":shutdown_wallpaper_error();
+        const char *error=off_ok?"設定儲存失敗":shutdown_wallpaper_error();
         if(s_off_commit&&off_ok)off_ok=app_settings_set_shutdown_wallpaper(&off_value);
         if(off_ok){mm_free(s_off_thumb);s_off_thumb=off_thumb;off_thumb=NULL;}
         mm_free(off_thumb);
-        if(off_ok)snprintf(s_notice,sizeof(s_notice),"%s",s_off_commit?"壁纸已保存到TF卡":"TF壁纸已就绪");
-        else snprintf(s_notice,sizeof(s_notice),"%s，保留原选择",error);
+        if(off_ok)snprintf(s_notice,sizeof(s_notice),"%s",s_off_commit?"桌布已儲存到TF卡":"TF桌布已就緒");
+        else snprintf(s_notice,sizeof(s_notice),"%s，保留原選擇",error);
         s_off_commit=s_off_loading=false;
         if(s_off_tab){dirty((EpdRect){0,0,684,1216});changed=true;}
     }
@@ -470,7 +471,7 @@ bool ui_lock_style_tick(int64_t now_ms){
     if(s_pending>=0){
         lock_image_state_t state;const uint8_t *p=image_pixels(s_items[s_pending].path,s_tab==3,false,&state);
         if(p){save_choice(s_items[s_pending].path,0);s_pending=-1;request_images();dirty((EpdRect){36,148,612,944});changed=true;}
-        else if(state==LOCK_IMAGE_FAILED){snprintf(s_notice,sizeof(s_notice),"图片无法加载，请换一张");s_pending=-1;dirty((EpdRect){36,148,612,38});changed=true;}
+        else if(state==LOCK_IMAGE_FAILED){snprintf(s_notice,sizeof(s_notice),"圖片無法載入，請換一張");s_pending=-1;dirty((EpdRect){36,148,612,38});changed=true;}
     }
     // 分tick准备但不逐张刷屏；完成当前可见批次后统一定稿。
     // Prepare across ticks without presenting each thumbnail; settle the visible batch once.
@@ -568,8 +569,8 @@ bool ui_lock_style_gesture(const ui_gesture_event_t *ev){
             s_pending=-1;
             lock_image_state_t state;const uint8_t *p=image_pixels(s_items[at].path,s_tab==3,false,&state);
             if(p){save_choice(s_items[at].path,0);request_images();}
-            else if(state==LOCK_IMAGE_FAILED)snprintf(s_notice,sizeof(s_notice),"图片无法加载，请换一张");
-            else{s_pending=at;snprintf(s_notice,sizeof(s_notice),"加载后应用，可继续挑选");}
+            else if(state==LOCK_IMAGE_FAILED)snprintf(s_notice,sizeof(s_notice),"圖片無法載入，請換一張");
+            else{s_pending=at;snprintf(s_notice,sizeof(s_notice),"載入後應用，可繼續挑選");}
             return true;
         }
     }else if(tap&&!s_off_tab&&(s_tab==1||s_tab==4))for(int i=0;i<2;++i)if(ui_rect_hit(option_rect(i),ev->x0,ev->y0)){save_choice(NULL,i);return true;}

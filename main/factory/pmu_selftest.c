@@ -40,14 +40,14 @@ static pmu_st_blob_t s_blob;
 static char s_detail[96];
 
 static const char* const s_names[PMU_ST_COUNT] = {
-    "身份", "握手", "连通", "状态",
-    "快读电池", "采电池", "对时", "设闹钟",
-    "关闹钟", "充电唤醒", "按键事件", "充电灯",
-    "低电通知", "清事件", "指示灯命令",
-    "屏电源轨", "加速度计",
-    "红灯", "白灯", "短按", "插拔充电",
-    "浅睡按键", "浅睡拿起",
-    "深睡开机", "闹钟唤醒", "关机开机",
+    "身份", "握手", "連通", "狀態",
+    "快讀電池", "採電池", "對時", "設鬧鐘",
+    "關鬧鐘", "充電喚醒", "按鍵事件", "充電燈",
+    "低電通知", "清事件", "指示燈命令",
+    "屏電源軌", "加速度計",
+    "紅燈", "白燈", "短按", "插拔充電",
+    "淺睡按鍵", "淺睡拿起",
+    "深睡開機", "鬧鐘喚醒", "關機開機",
 };
 
 const char* pmu_selftest_name(int id) {
@@ -57,9 +57,9 @@ const char* pmu_selftest_name(int id) {
 
 const char* pmu_selftest_result_cn(uint8_t result) {
     switch (result) {
-        case PMU_ST_RES_PASS: return "通过 Pass";
-        case PMU_ST_RES_FAIL: return "失败 Fail";
-        case PMU_ST_RES_SKIP: return "跳过 Skip";
+        case PMU_ST_RES_PASS: return "透過 Pass";
+        case PMU_ST_RES_FAIL: return "失敗 Fail";
+        case PMU_ST_RES_SKIP: return "跳過 Skip";
         default: return "-";
     }
 }
@@ -321,8 +321,8 @@ void pmu_selftest_bind(sc7a20h_handle_t acc) {
     recount();
     if (s_view.pending_n == 0
         && (s_view.pass_n + s_view.fail_n + s_view.skip_n) > 0) {
-        hint(s_view.fail_n ? "上次探活失败" : "探活通过");
-        note("结果来自上次");
+        hint(s_view.fail_n ? "上次探活失敗" : "探活透過");
+        note("結果來自上次");
     }
 }
 
@@ -332,7 +332,7 @@ void pmu_selftest_reset(void) {
     memset(&s_view, 0, sizeof(s_view));
     recount();
     save_blob();
-    hint("已清空，点探测开始");
+    hint("已清空，點探測開始");
     note("已清空");
 }
 
@@ -348,12 +348,12 @@ void pmu_selftest_run_probe(void) {
     recount();
     if (!device_power_ready()) {
         for (int i = 0; i < PMU_ST_CMD_END; i++) {
-            mark(i, PMU_ST_RES_FAIL, "PMU 未就绪");
+            mark(i, PMU_ST_RES_FAIL, "PMU 未就緒");
         }
         for (int i = PMU_ST_CMD_END; i < PMU_ST_COUNT; i++) {
             mark(i, PMU_ST_RES_SKIP, NULL);
         }
-        hint("PMU 未就绪");
+        hint("PMU 未就緒");
         recount();
         save_blob();
         return;
@@ -362,21 +362,21 @@ void pmu_selftest_run_probe(void) {
     bool gate_ok = true;
     for (int i = 0; i < PMU_ST_CMD_END; i++) {
         if (!gate_ok) {
-            mark(i, PMU_ST_RES_FAIL, "探活未过");
+            mark(i, PMU_ST_RES_FAIL, "探活未過");
             continue;
         }
         if (i2c_dead()) {
-            mark(i, PMU_ST_RES_FAIL, "I2C 中断");
+            mark(i, PMU_ST_RES_FAIL, "I2C 中斷");
             gate_ok = false;
             continue;
         }
         if (i == PMU_ST_ACCEL && s_acc == NULL) {
-            mark(i, PMU_ST_RES_SKIP, "无加速度计");
+            mark(i, PMU_ST_RES_SKIP, "無加速度計");
             continue;
         }
         bool ok = run_case(i);
         mark(i, ok ? PMU_ST_RES_PASS : PMU_ST_RES_FAIL,
-             s_detail[0] ? s_detail : (ok ? "通过" : "断言失败"));
+             s_detail[0] ? s_detail : (ok ? "透過" : "斷言失敗"));
         if (i < PMU_ST_GATE_END && !ok) gate_ok = false;
     }
     for (int i = PMU_ST_CMD_END; i < PMU_ST_COUNT; i++) {
@@ -385,11 +385,11 @@ void pmu_selftest_run_probe(void) {
     recount();
     save_blob();
     if (s_view.fail_n) {
-        hint("探活失败");
-        note("探活失败");
+        hint("探活失敗");
+        note("探活失敗");
     } else {
-        hint("探活通过");
-        note("探活通过");
+        hint("探活透過");
+        note("探活透過");
     }
 }
 

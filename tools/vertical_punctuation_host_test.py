@@ -38,7 +38,7 @@ unit = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
-''' + function(FONT, 'vertical_rotated_cp') + r'''
+''' + function(FONT, 'vertical_rotated_cp') + function(FONT, 'vertical_form_cp') + r'''
 int main(void) {
     // 横排方向是"一道横线"的符号：连字符、短破折号、破折号、横杠、负号、长音符与半角长音符、
     // 小号破折号/连字符。竖排里它们必须转 90°，否则读者看到的是一道跟正文走向垂直的短线。
@@ -67,7 +67,13 @@ int main(void) {
             return 1;
         }
     }
-    puts("PASS: dash-like marks turn in vertical setting, upright forms stay upright");
+    const struct {uint32_t source, form;} forms[] = {
+        {0x3001,0xfe11},{0x3002,0xfe12},{0xff0c,0xfe10},{0xff0e,0xfe12},
+        {0xff01,0xfe15},{0xff1f,0xfe16},{0xff1a,0xfe13},{0xff1b,0xfe14},
+    };
+    for (unsigned i=0;i<sizeof(forms)/sizeof(forms[0]);++i)
+        if (vertical_form_cp(forms[i].source)!=forms[i].form) return 1;
+    puts("PASS: dash rotation, upright forms, and CJK vertical punctuation substitutions");
     return 0;
 }
 '''

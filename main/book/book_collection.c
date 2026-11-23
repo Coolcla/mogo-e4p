@@ -55,7 +55,7 @@ bool book_collection_name(const char *input, char out[BOOK_COLLECTION_NAME_BYTES
         i+=bytes;
     }
     memcpy(out,input,n);out[n]=0;
-    return strcmp(out,"全部书籍") && strcmp(out,"未分类") && strcmp(out,".") && strcmp(out,"..");
+    return strcmp(out,"全部書籍") && strcmp(out,"未分類") && strcmp(out,".") && strcmp(out,"..");
 }
 
 static int category_index(const book_collection_data_t *d,uint32_t id) {
@@ -289,7 +289,7 @@ static void legacy_names(book_collection_data_t *d) {
             if(!book_collection_name(prefix,clean)) {prefix[len]=0;break;}
             len+=bytes;++chars;
         }
-        if(!book_collection_name(prefix,clean))memcpy(clean,"原目录",sizeof("原目录"));
+        if(!book_collection_name(prefix,clean))memcpy(clean,"原目錄",sizeof("原目錄"));
         for(unsigned suffix=1;;++suffix){char alias[BOOK_COLLECTION_NAME_BYTES];
             snprintf(alias,sizeof(alias),"%.72s %u",clean,suffix);bool used=false;
             for(int j=0;j<d->count;++j)if(!strcmp(d->categories[j].name,alias)){used=true;break;}

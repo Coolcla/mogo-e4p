@@ -1,0 +1,6 @@
+# Fan profile: dynamic CPU frequency scaling from the configured 320 MHz maximum.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_320=y
+CONFIG_PM_ENABLE=y
+CONFIG_PM_DFS_INIT_AUTO=y
+# PM controls CPU frequency only; do not enable FreeRTOS automatic light sleep.
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=n

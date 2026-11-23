@@ -33,6 +33,8 @@ int ttf_draw_text_px_rotated(uint8_t* fb, int x, int y, int px, const char* text
 int ttf_draw_text_px_vertical(uint8_t* fb, int x, int y, int px, const char* text,
                               int tracking_px, uint8_t fg, uint8_t bg);
 int ttf_vertical_text_height_px(int px, const char* text, int tracking_px);
+int ttf_vertical_glyph_advance_px(int px, uint32_t codepoint, bool digit_run_rotates, int tracking_px);
+bool ttf_vertical_digit_run_rotates(const char* after_current, size_t remaining_bytes);
 
 typedef struct {
     size_t start, end; ///< 输入 UTF-8 字节区间 / Input UTF-8 byte span

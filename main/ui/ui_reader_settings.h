@@ -24,7 +24,7 @@ typedef struct {
     bool vertical_turn; ///< 上下点击翻页 / Vertical tap zones
     bool statusbar; ///< 显示状态栏 / Visible status bar
     bool hide_images; ///< 跳过书内插图 / Skip inline images
-    bool vertical_text; ///< 竖排正文 / Vertical body text
+    unsigned book_direction; ///< 跟随书籍、横排或直排 / Follow book, horizontal or vertical
     bool book_styles; ///< 保留书内样式 / Keep in-book styles
     bool touch_disabled; ///< 关闭阅读屏幕触摸 / Reader screen touch disabled
     ui_reader_settings_group_t group; ///< 当前设置分组 / Visible settings group

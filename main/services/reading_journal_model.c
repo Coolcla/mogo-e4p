@@ -18,20 +18,33 @@ static int month_days(int year, int month) {
     static const uint8_t days[] = {31,28,31,30,31,30,31,31,30,31,30,31};
     return days[month-1] + (month == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
 }
-bool reading_journal_date(int64_t utc_ms, reading_journal_date_t *out) {
-    if (!out) return false;
-    memset(out, 0, sizeof(*out));
-    if (utc_ms < INT64_C(1704067200000) || utc_ms >= INT64_C(4102416000000) - 8*3600000) return false;
-    time_t civil = (time_t)(utc_ms / 1000 + 8*3600);
+static int32_t civil_serial(int year, int month, int day) {
+    year -= month <= 2;
+    int era = year / 400;
+    unsigned yoe = (unsigned)(year - era * 400);
+    unsigned doy = (153u * (unsigned)(month + (month > 2 ? -3 : 9)) + 2u) / 5u + (unsigned)day - 1u;
+    unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+    return era * 146097 + (int32_t)doe - 719468;
+}
+static bool date_from_serial(int32_t serial, reading_journal_date_t *out) {
+    time_t civil = (time_t)serial * 86400;
     struct tm date = {0};
     if (!gmtime_r(&civil, &date)) return false;
     *out = (reading_journal_date_t){
-        .year = date.tm_year+1900, .month = date.tm_mon+1, .day = date.tm_mday,
-        .weekday = (date.tm_wday+6)%7, .serial = (int32_t)(civil/86400),
+        .year=date.tm_year+1900,.month=date.tm_mon+1,.day=date.tm_mday,
+        .weekday=(date.tm_wday+6)%7,.serial=serial,
     };
     out->days = month_days(out->year, out->month);
     out->first_weekday = (out->weekday + 35 - (out->day-1)%7)%7;
     return true;
+}
+bool reading_journal_date(int64_t utc_ms, reading_journal_date_t *out) {
+    if (!out) return false;
+    memset(out, 0, sizeof(*out));
+    if (utc_ms < INT64_C(1704067200000) || utc_ms >= INT64_C(4102444800000)) return false;
+    time_t utc=(time_t)(utc_ms/1000);struct tm local={0};
+    if(!localtime_r(&utc,&local)||local.tm_year+1900<2024||local.tm_year+1900>2099)return false;
+    return date_from_serial(civil_serial(local.tm_year+1900,local.tm_mon+1,local.tm_mday),out);
 }
 void reading_journal_clear(reading_journal_model_t *model) {
     reading_journal_record_t *row = model->records;
@@ -97,8 +110,7 @@ bool reading_journal_sync(reading_journal_model_t *model, const reading_journal_
     bool changed = false;
     if (!model->streak.day && model->scene_day && model->month!=(uint32_t)(date->year*100+date->month)) {
         reading_journal_date_t known;
-        if (model->scene_day<=date->serial &&
-            reading_journal_date((int64_t)model->scene_day*86400000-8*INT64_C(3600000),&known))
+        if (model->scene_day<=date->serial && date_from_serial(model->scene_day,&known))
             changed |= reading_journal_streak_import(model,&known);
     }
     if (!model->streak.day || date->serial<model->streak.day)

@@ -10,6 +10,34 @@ TTF
 SD
 SD card
 wght
+晴朗
+有霧
+凍毛毛雨
+雷雨有冰雹
+陰天
+短暫陣雨
+局部多雲
+霧淞
+中度毛毛雨
+強毛毛雨
+輕度凍毛毛雨
+強凍毛毛雨
+輕度凍雨
+強凍雨
+小陣雨
+中陣雨
+小陣雪
+強陣雪
+雷雨伴小冰雹
+雷雨伴大冰雹
+強雷雨
+雷陣雨
+沙塵暴
+霾
+雨夾雪
+# 豎排標點呈現形 U+FE10–U+FE16。/ Vertical punctuation presentation forms U+FE10–U+FE16.
+︐︑︒︓︔︕︖
+參
 GC16
 DU
 GL16
@@ -20,7 +48,7 @@ CST836U
 SC7A20H
 CW32
 Read Pico
-小纸 Pico
+小紙 Pico
 Overview
 Power
 Firmware
@@ -30,13 +58,13 @@ Host
 Build
 Hardware
 Offline
-不在线
-电源按键
+不線上
+電源按鍵
 原始事件
 按下
 抬起
 短按
-长按
+長按
 No data
 Unknown
 Idle
@@ -50,9 +78,9 @@ Next
 PASS
 FAIL
 ESP MAC
-序列号
-整机自检
-探测
+序列號
+整機自檢
+探測
 探活
 VCOM
 PGOOD
@@ -68,28 +96,30 @@ NVS
 ±
 ℃
 # 3) Extra UI / home-page samples (CJK also scanned from sources)
-滚滚长江东逝水
-写入
+滾滾長江東逝水
+寫入
 改回
-即将写入
+即將寫入
 —.——
 0.50—2.50
-内建
-内建或存储卡 TTF
+內建
+內建或儲存卡 TTF
 使用中
-界面字体
-存储卡 TTF
-传感器型号
-曲谱
+介面字型
+儲存卡 TTF
+感測器型號
+曲譜
 柔和
 明亮
-增强
+增強
 持
 衰
 原
 右
 全
-# 中文天气城市回归样本。/ Chinese weather-city regression sample.
-石家庄
-# 常规界面的必备轮廓字；固定文案不依赖 24 px 补充位图。/ Required UI outlines; fixed labels do not rely on 24 px supplemental bitmaps.
-万估八具净剪囊尾异归徽搭旋景材析框箭素繁纯胶裁观追遥震顾驻
+# 中文天氣城市迴歸樣本。/ Chinese weather-city regression sample.
+石家莊
+# 常規介面的必備輪廓字；固定文案不依賴 24 px 補充點陣圖。/ Required UI outlines; fixed labels do not rely on 24 px supplemental bitmaps.
+萬估八具淨剪囊尾異歸徽搭旋景材析框箭素繁純膠裁觀追遙震顧駐
+# 注音鍵盤與注音擴充字形。/ Zhuyin keyboard and phonetic extension glyphs.
+ㄅㄆㄇㄈㄉㄊㄋㄌㄍㄎㄏㄐㄑㄒㄓㄔㄕㄖㄗㄘㄙㄧㄨㄩㄚㄛㄜㄝㄞㄟㄠㄡㄢㄣㄤㄥㄦˉˊˇˋ˙ㆠㆡㆢㆣㆤㆥㆦㆧㆨㆩㆪㆫㆬㆭㆮㆯㆰㆱㆲㆳㆴㆵㆶㆷㆸㆹㆺㆻㆼㆽㆾㆿ

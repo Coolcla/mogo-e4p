@@ -61,7 +61,7 @@ static void system_nav(uint8_t *fb) {
     ui_draw_icon(fb,342,1164,44,UI_ICON_HOUSE,0);
 }
 static void component_option(uint8_t *fb,int y,app_home_widget_t widget,unsigned slot) {
-    static const char *names[]={"最近阅读","天气","留白","阅读手账","迷你书库"};
+    static const char *names[]={"最近閱讀","天氣","留白","閱讀手賬","迷你書庫"};
     const ui_icon_t icons[]={UI_ICON_BOOK_OPEN,UI_ICON_SUN,UI_ICON_EYE_CLOSED,UI_ICON_BOOKMARK,UI_ICON_BOOK_OPEN};
     ui_draw_icon(fb,58,y,30,icons[widget],0);
     text(fb,94,y,30,names[widget],EPD_DRAW_ALIGN_LEFT);
@@ -76,16 +76,16 @@ static EpdRect city_page_button(bool next) {
 }
 static void render(app_ctx_t *ctx,uint8_t *fb) {
     (void)ctx;ui_clear_page(fb);ui_nav_status(fb);
-    ui_text(fb,36,91,52,s_city?"所在城市":s_weather_settings?"天气设置":"首页组件",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text(fb,36,91,52,s_city?"所在城市":s_weather_settings?"天氣設定":"首頁元件",EPD_DRAW_ALIGN_LEFT,false);
     const app_weather_view_t *v=app_weather_view();
     if(!s_city&&!s_weather_settings) {
-        text(fb,36,205,26,"上方区域",EPD_DRAW_ALIGN_LEFT);
+        text(fb,36,205,26,"上方區域",EPD_DRAW_ALIGN_LEFT);
         for(unsigned i=0;i<sizeof(s_choices)/sizeof(s_choices[0]);++i)component_option(fb,component_row(APP_HOME_SLOT_TOP,i),s_choices[i],APP_HOME_SLOT_TOP);
         ui_draw_separator(fb,540,36,612,0x90);
-        text(fb,36,575,26,"下方区域",EPD_DRAW_ALIGN_LEFT);
+        text(fb,36,575,26,"下方區域",EPD_DRAW_ALIGN_LEFT);
         for(unsigned i=0;i<sizeof(s_choices)/sizeof(s_choices[0]);++i)component_option(fb,component_row(APP_HOME_SLOT_BOTTOM,i),s_choices[i],APP_HOME_SLOT_BOTTOM);
         ui_draw_separator(fb,920,36,612,0x90);
-        text(fb,36,964,27,"天气设置",EPD_DRAW_ALIGN_LEFT);
+        text(fb,36,964,27,"天氣設定",EPD_DRAW_ALIGN_LEFT);
         char city[193];snprintf(city,sizeof(city),"%s",v->has_city?v->city.name:"");
         while(*city&&ui_text_fixed_width_px(25,city)>300) {
             size_t n=strlen(city)-1;while(n&&((unsigned char)city[n]&192)==128)--n;city[n]=0;
@@ -94,29 +94,29 @@ static void render(app_ctx_t *ctx,uint8_t *fb) {
         ui_draw_icon(fb,637,964,26,UI_ICON_CHEVRON_RIGHT,0);
         if(s_notice[0])fitted(fb,36,1040,22,s_notice,612);
     } else if(!s_city) {
-        text(fb,36,189,28,"天气",EPD_DRAW_ALIGN_LEFT);
-        text(fb,648,189,23,app_home_has_widget(APP_HOME_WIDGET_WEATHER)?"已添加":"未添加",EPD_DRAW_ALIGN_RIGHT);
+        text(fb,36,189,28,"天氣",EPD_DRAW_ALIGN_LEFT);
+        text(fb,648,189,23,app_home_has_widget(APP_HOME_WIDGET_WEATHER)?"已新增":"未新增",EPD_DRAW_ALIGN_RIGHT);
         ui_weather_draw(fb,(EpdRect){0,236,684,472},s_tomorrow,v,app_weather_now());
         ui_draw_separator(fb,790,36,612,0x90);
-        text(fb,36,838,28,"自动刷新",EPD_DRAW_ALIGN_LEFT);
-        text(fb,528,838,22,"每6小时",EPD_DRAW_ALIGN_RIGHT);
+        text(fb,36,838,28,"自動重新整理",EPD_DRAW_ALIGN_LEFT);
+        text(fb,528,838,22,"每6小時",EPD_DRAW_ALIGN_RIGHT);
         ui_fill_round_rect(fb,(EpdRect){560,814,88,48},24,v->auto_refresh?0:0x90);
         epd_fill_circle(v->auto_refresh?624:584,838,18,255,fb);
         ui_draw_separator(fb,886,36,612,0x90);
         text(fb,36,934,28,"所在城市",EPD_DRAW_ALIGN_LEFT);
-        fitted(fb,300,934,26,v->has_city?v->city.name:"自动识别 / 手动选择",300);
+        fitted(fb,300,934,26,v->has_city?v->city.name:"自動識別 / 手動選擇",300);
         ui_draw_icon(fb,639,934,24,UI_ICON_CHEVRON_RIGHT,0);
-        fitted(fb,36,1083,20,s_notice[0]?s_notice:"点城市名称，可自动定位或手动修改。",612);
+        fitted(fb,36,1083,20,s_notice[0]?s_notice:"點城市名稱，可自動定位或手動修改。",612);
     } else {
-        fitted(fb,36,193,24,v->has_city?v->city.name:"尚未选择城市",380);
+        fitted(fb,36,193,24,v->has_city?v->city.name:"尚未選擇城市",380);
         ui_draw_control_frame(fb,(EpdRect){440,165,208,56},8,0);
         ui_draw_icon(fb,468,193,24,UI_ICON_RADIO_TOWER,0);
-        text(fb,560,193,24,"自动定位",EPD_DRAW_ALIGN_CENTER);
-        fitted(fb,36,235,20,s_notice[0]?s_notice:v->state==APP_WEATHER_LOADING?"正在查询…":
-            v->notice[0]?v->notice:"输入中文或拼音，点搜索后选择匹配城市",612);
+        text(fb,560,193,24,"自動定位",EPD_DRAW_ALIGN_CENTER);
+        fitted(fb,36,235,20,s_notice[0]?s_notice:v->state==APP_WEATHER_LOADING?"正在查詢…":
+            v->notice[0]?v->notice:"輸入中文或拼音，點搜尋後選擇匹配城市",612);
         ui_text_input_draw(fb,&s_edit,(EpdRect){36,270,480,68},28,false,NULL);
         ui_draw_control_frame(fb,(EpdRect){540,270,108,68},16,0);
-        text(fb,594,304,26,"搜索",EPD_DRAW_ALIGN_CENTER);
+        text(fb,594,304,26,"搜尋",EPD_DRAW_ALIGN_CENTER);
         if(!s_keyboard_visible) {
             for(unsigned i=0;i<v->result_count;i++) {
                 const weather_location_t *city=&v->results[i];EpdRect row=city_result_row(i);char value[256];
@@ -128,7 +128,7 @@ static void render(app_ctx_t *ctx,uint8_t *fb) {
             }
             if(v->result_total) {
                 EpdRect prev=city_page_button(false),next=city_page_button(true);
-                char page[64];snprintf(page,sizeof(page),"%u / %u   共%u个地点",v->result_page+1,
+                char page[64];snprintf(page,sizeof(page),"%u / %u   共%u個地點",v->result_page+1,
                     (v->result_total+WEATHER_CITY_LIMIT-1)/WEATHER_CITY_LIMIT,v->result_total);
                 text(fb,342,1068,24,page,EPD_DRAW_ALIGN_CENTER);
                 if(v->result_page)ui_draw_icon(fb,prev.x+prev.width/2,1068,32,UI_ICON_CHEVRON_LEFT,0);
@@ -151,12 +151,12 @@ static bool keyboard_hide(void) {
     return true;
 }
 static app_redraw_t submit(void) {
-    if(ui_keyboard_pending())snprintf(s_notice,sizeof(s_notice),"请先选择候选字");
-    else if(!weather_query_valid(s_query))snprintf(s_notice,sizeof(s_notice),"请输入2至64个汉字或字母");
+    if(ui_keyboard_pending())snprintf(s_notice,sizeof(s_notice),"請先選擇候選字");
+    else if(!weather_query_valid(s_query))snprintf(s_notice,sizeof(s_notice),"請輸入2至64個漢字或字母");
     else {
         keyboard_hide();
         s_notice[0]=0;
-        if(!app_weather_request(APP_WEATHER_SEARCH,s_query))snprintf(s_notice,sizeof(s_notice),"暂不能搜索，请稍后重试并检查网络与时间");
+        if(!app_weather_request(APP_WEATHER_SEARCH,s_query))snprintf(s_notice,sizeof(s_notice),"暫不能搜尋，請稍後重試並檢查網路與時間");
     }
     return APP_REDRAW_PAGE;
 }
@@ -207,14 +207,14 @@ static app_redraw_t gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
             if(x<108&&next)--next;
             else if(x>=576&&(next+1)*WEATHER_CITY_LIMIT<page->result_total)++next;
             if(next!=page->result_page&&!app_weather_search(s_query,next))
-                snprintf(s_notice,sizeof(s_notice),"暂不能搜索，请稍后重试并检查网络与时间");
+                snprintf(s_notice,sizeof(s_notice),"暫不能搜尋，請稍後重試並檢查網路與時間");
             return APP_REDRAW_PAGE;
         }
         bool results_visible=!s_keyboard_visible;
         bool hidden=keyboard_hide();
         if(y>=165&&y<221&&x>=440&&x<648) {
             s_notice[0]=0;
-            if(!app_weather_request(APP_WEATHER_LOCATE,NULL))snprintf(s_notice,sizeof(s_notice),"暂不能定位，请稍后重试并检查网络与时间");
+            if(!app_weather_request(APP_WEATHER_LOCATE,NULL))snprintf(s_notice,sizeof(s_notice),"暫不能定位，請稍後重試並檢查網路與時間");
             return APP_REDRAW_PAGE;
         }
         if(results_visible) {
@@ -222,7 +222,7 @@ static app_redraw_t gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
             for(unsigned i=0;i<v->result_count;i++)if(ui_rect_hit(city_result_row(i),x,y)) {
                 weather_location_t city=v->results[i];
                 if(app_weather_select(&city)){ui_keyboard_end();s_city=false;s_notice[0]=0;(void)app_weather_request(APP_WEATHER_FETCH,NULL);}
-                else snprintf(s_notice,sizeof(s_notice),"保存失败，请检查设置存储");
+                else snprintf(s_notice,sizeof(s_notice),"儲存失敗，請檢查設定儲存");
                 return APP_REDRAW_PAGE;
             }
         }
@@ -234,7 +234,7 @@ static app_redraw_t gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
             for(unsigned slot=0;slot<APP_HOME_SLOT_COUNT;++slot)for(unsigned choice=0;choice<sizeof(s_choices)/sizeof(s_choices[0]);++choice) {
                 int row=component_row(slot,choice);
                 if(y>=row-30&&y<row+30) {
-                    if(!app_home_component_set(slot,s_choices[choice]))snprintf(s_notice,sizeof(s_notice),"设置保存失败，请稍后重试");
+                    if(!app_home_component_set(slot,s_choices[choice]))snprintf(s_notice,sizeof(s_notice),"設定儲存失敗，請稍後重試");
                     else {s_notice[0]=0;if(!app_home_has_widget(APP_HOME_WIDGET_WEATHER))app_weather_cancel();}
                     return APP_REDRAW_PAGE;
                 }
@@ -244,7 +244,7 @@ static app_redraw_t gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
     } else if(ev->type==UI_GESTURE_TAP) {
         int x=ev->x0,y=ev->y0;
         if(y>=800&&y<876) {
-            if(!app_weather_set_auto_refresh(!app_weather_view()->auto_refresh))snprintf(s_notice,sizeof(s_notice),"设置保存失败，请稍后重试");
+            if(!app_weather_set_auto_refresh(!app_weather_view()->auto_refresh))snprintf(s_notice,sizeof(s_notice),"設定儲存失敗，請稍後重試");
             else s_notice[0]=0;
             return APP_REDRAW_PAGE;
         }
@@ -287,7 +287,7 @@ static bool present(app_ctx_t *ctx,app_redraw_t redraw) {
 static display_rect_t area(app_ctx_t *ctx) {(void)ctx;return display_rect_from_epd(s_area);}
 static bool no_menu(app_ctx_t *ctx) {(void)ctx;return false;}
 const app_desc_t app_components={
-    .title="首页组件",.detail="上下区域与天气设置",.owns_keys=true,.enter_full=false,.menu_handle_enabled=no_menu,
+    .title="首頁元件",.detail="上下區域與天氣設定",.owns_keys=true,.enter_full=false,.menu_handle_enabled=no_menu,
     .on_enter=enter,.on_exit=leave,.on_before_lock=before_lock,.render=render,.present=present,
     .on_tick=tick,.on_gesture=gesture,.on_key=key,.area_hint=area,
 };

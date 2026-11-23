@@ -94,6 +94,9 @@ esp_err_t ttf_font_open(const char* path);
 bool ttf_font_open_io_error(void);
 esp_err_t ttf_font_open_builtin(void);
 bool ttf_font_is_builtin(void);
+/// Borrow the decompressed system font while the system face is the built-in font.
+/// The pointer remains valid only until the system font is opened or unloaded again.
+const uint8_t* ttf_font_builtin_data(size_t* len);
 bool ttf_font_path_is_builtin(const char* path);
 void ttf_font_unload(void);
 /// 按目录内容扩容，不限制字体数量；内存不足时保留已扫描项，可再次扫描重试。
@@ -176,20 +179,24 @@ int ttf_draw_text_px_rotated(
     uint8_t fg, uint8_t bg
 );
 
-/// 竖排单列：从 (x, y) 的字身框起逐字向下，汉字与假名正立、全角句读抬到右上角、拉丁与括号
-/// 转 90°；tracking_px 加在字与字之间，用来摊平列内余量。返回推进的列高。
-/// One vertical column: glyphs run down from the em box at (x, y), with ideographs and kana
-/// upright, fullwidth stops lifted to the top-right corner and Latin and brackets turned 90°.
-/// tracking_px goes between glyphs and spreads a column's slack. Returns the height consumed.
+/// 竖排单列：汉字假名正立，直排标点优先使用呈现字形，拉丁字母与括号旋转；推进量按字形墨迹
+/// 和字高计算，负 tracking 不会缩到重叠。返回与排版量测相同的列高。
+/// One vertical column: ideographs and kana stay upright, punctuation uses vertical forms when
+/// available, and Latin/brackets rotate. Advances honor ink size, and negative tracking cannot
+/// create overlap. Returns the same column height used by layout measurement.
 int ttf_draw_text_px_vertical(
     uint8_t* framebuffer, int x, int y, int pixel_height, const char* text,
     int tracking_px, uint8_t fg, uint8_t bg
 );
 
-/// 竖排下一列能放多少像素：ttf_draw_text_px_vertical 的返回值口径，供界面排版预留位置。
-/// How many pixels a vertical column of this text takes; same measure ttf_draw_text_px_vertical
-/// returns, so UI layout can reserve room for it.
+/// 竖排下一列能放多少像素：与 ttf_draw_text_px_vertical 的返回值一致，供排版预留位置。
+/// Measure a vertical column with the same overlap-safe advances returned by the drawing function.
 int ttf_vertical_text_height_px(int pixel_height, const char* text, int tracking_px);
+/// Measure one vertical glyph cell, including overlap-safe tracking and digit-run rotation.
+int ttf_vertical_glyph_advance_px(int pixel_height, uint32_t codepoint,
+                                  bool digit_run_rotates, int tracking_px);
+/// Decide whether an ASCII digit run rotates; `after_current` points after its first digit.
+bool ttf_vertical_digit_run_rotates(const char* after_current, size_t remaining_bytes);
 
 void ttf_measure_line(int size, const char* text, int* above, int* below);
 void ttf_measure_line_px(int pixel_height, const char* text, int* above, int* below);

@@ -35,7 +35,8 @@ typedef enum {
 
 /// 仅明确发起的操作可临时启用关闭的 4G。/ Only explicit actions may temporarily start switched-off cellular.
 static inline bool network_use_allows_temporary_cellular(network_use_t use) {
-    return use == NETWORK_USE_WEATHER_MANUAL || use == NETWORK_USE_TIME_MANUAL || use == NETWORK_USE_OTA_MANUAL;
+    return use == NETWORK_USE_WEATHER_MANUAL || use == NETWORK_USE_TIME_MANUAL ||
+        use == NETWORK_USE_OTA_MANUAL;
 }
 
 static inline bool network_route_valid(network_route_t route) {

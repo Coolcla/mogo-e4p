@@ -10,7 +10,7 @@
 
 typedef enum {
     UI_BUILTIN_IMAGE_LOCK, ///< 默认锁屏图 / Fallback lock art
-    UI_BUILTIN_IMAGE_LOADING, ///< 开机与默认锁屏共用同一份资源 / Splash shares the fallback lock resource
+    UI_BUILTIN_IMAGE_LOADING, ///< 独立开机图 / Dedicated startup splash
 } ui_builtin_image_t;
 
 /// 返回校验过资源头的原始像素字节数，资源头无效返回零。/ Return the raw pixel byte count, or zero for an invalid resource header.

@@ -138,7 +138,7 @@ int main(void) {
     assert(book_store_roots(roots, &n) == ESP_OK && n == 1 && roots[0].is_flash && book_store_roots_degraded());
     sd_mkdir_error = 0;
     assert(book_store_roots(roots, &n) == ESP_OK && n == 2 && !book_store_roots_degraded());
-    assert(book_store_file_limit(&roots[0]) == SIZE_MAX);
+    assert(book_store_file_limit(&roots[0]) == 50 * 1024 * 1024);
     assert(book_store_file_limit(&roots[1]) == 1024 * 1024);
     assert(book_store_free_bytes(&roots[1]) == 1234);
     fat_error = ESP_FAIL; assert(book_store_free_bytes(&roots[0]) == 0);

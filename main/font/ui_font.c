@@ -12,6 +12,7 @@
 #include "ui_font.h"
 #include "ui_hanzi.h"
 #include "ui_hanzi_scale.h"
+#include "ttf_font.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -32,8 +33,8 @@ typedef struct {
     bool used;
 } ui_glyph_t;
 
-extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
 static stbtt_fontinfo s_font;
+static const uint8_t *s_font_data;
 static bool s_ready, s_attempted;
 // 字形缓存放 PSRAM。每次取字形都会读一遍，但渲染本来就逐行读 PSRAM 里的
 // framebuffer，多这一处不改变量级。
@@ -71,10 +72,29 @@ size_t ui_font_cache_clear(void) {
 }
 
 static bool ready(void) {
+    size_t font_len = 0;
+    const uint8_t *font_data = ttf_font_builtin_data(&font_len);
+    if (!font_data || font_len < 64) {
+        if (s_font_data) {
+            ui_font_cache_clear();
+            memset(&s_font, 0, sizeof(s_font));
+            s_font_data = NULL;
+            s_ready = false;
+            s_attempted = false;
+        }
+        return false;
+    }
+    if (font_data != s_font_data) {
+        ui_font_cache_clear();
+        memset(&s_font, 0, sizeof(s_font));
+        s_font_data = font_data;
+        s_ready = false;
+        s_attempted = false;
+    }
     if (s_attempted) return s_ready;
     s_attempted = true;
-    int offset = stbtt_GetFontOffsetForIndex(builtin_ttf_start, 0);
-    s_ready = offset >= 0 && stbtt_InitFont(&s_font, builtin_ttf_start, offset);
+    int offset = stbtt_GetFontOffsetForIndex(s_font_data, 0);
+    s_ready = offset >= 0 && stbtt_InitFont(&s_font, s_font_data, offset);
     for (int i = 0; i < 256; ++i)
         s_cover[i] = (uint8_t)lroundf(255.f * powf((float)i / 255.f, 0.4f));
     return s_ready;

@@ -20,6 +20,11 @@ esp_err_t book_metadata_read(const char *path, char *title, size_t title_cap, ch
     if (mobi(path)) return book_mobi_metadata(path, title, title_cap, author, author_cap);
     return book_epub_metadata(path, title, title_cap, author, author_cap);
 }
+esp_err_t book_metadata_identifier(const char *path, char *identifier, size_t identifier_cap) {
+    const char *ext = path ? strrchr(path, '.') : NULL;
+    if (!ext || strcasecmp(ext, ".epub")) return ESP_ERR_NOT_SUPPORTED;
+    return book_epub_metadata_identifier(path, identifier, identifier_cap);
+}
 esp_err_t book_metadata_cached(const char *path, char *title, size_t title_cap, char *author, size_t author_cap) {
     if (mobi(path)) return book_mobi_metadata_cached(path, title, title_cap, author, author_cap);
     return book_epub_metadata_cached(path, title, title_cap, author, author_cap);

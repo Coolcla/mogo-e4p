@@ -16,7 +16,5 @@ void app_device_settings_request_network(bool return_to_origin);
 /// 快捷栏直达内存管理页；返回来源页时复用导航恢复。
 /// Open memory management from the quick bar and restore the origin on back.
 void app_device_settings_request_memory(bool return_to_origin);
-/// 自动更新确认入口；已在设置页时只打断主列表或升级页。/ Automatic offer entry; within Settings, interrupt only the root or updater.
-bool app_device_settings_offer_update(bool already_in_settings);
-/// 本地更新或重启已进入不可离页阶段。/ A local update or reboot now requires Settings to stay active.
+/// A pending BOOT-mode transition must finish before navigation can leave Settings.
 bool app_device_settings_navigation_busy(void);

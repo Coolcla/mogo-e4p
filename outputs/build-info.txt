@@ -1,0 +1,51 @@
+Fan firmware build record
+Build date: 2026-11-22 22:11:56 America/Vancouver
+Source: chopper1026/mogo-e4p
+Target: esp32s31 --preview
+ESP-IDF: v6.1.1 (C:\esp\v6.1.1\esp-idf)
+Compiler: riscv32-esp-elf GCC 15.2.0 (crosstool-NG esp-15.2.0_20251204; C:\Espressif)
+App version: 1.1.8
+Flash mode/frequency: DIO / 80 MHz / 16 MiB declaration
+
+Input assets
+mogo-e4p.bin: 4,814,944 bytes, SHA256 0f0691bf05ffab8546f317cd5c73002a835cb19799e50af1d48d3353b670008a
+Fan-usb-full.bin reference: 4,989,952 bytes, SHA256 b0de4683175a24f4d22a873e8112d8cff0a5b78312f54a9e0e2f34ebf4f1231a
+startup.png: 684 x 1216, SHA256 6d8f705c94af397d03842d2f3fd7abb17980c6cae9f43d7694f54d75f56b334f
+NotoSansCJK.ttf: 36,143,328 bytes, SHA256 6b40dd16cf1b73b5a7a0ed2472d641b60e3e85e87211abd20009f67d841425da
+Fan.zip fan.png reference: 271 x 182, SHA256 74bd42d95e4929eb24ccdf13a4229266efa3c7e460133977cb0d25e370e3a080
+Updated fan.png: 378 x 416, 2,385 bytes, SHA256 15df772db7f4b8a2895a3d550cb05b1abb6dd585535c3f337b3ce8d5001a4515
+
+Common image layout
+bootloader at 0x2000: each profile uses its own build (21,120 bytes); DFS SHA256 c684357512e803a04220f5770bc17eec4defa943d7f0c63f3e7aa8e1bc720898; no-DFS SHA256 ccd31c2f937aa19db4719880235a069afcef31b21102b675c4df34cf6846da80
+partition table: 0x8000 (logical records match Fan.zip and Fan-usb-full.bin)
+OTA initialization data: 0xd000
+application: 0x10000
+OTA slots: 0x10000 and 0x510000, each 5 MiB
+App partition: 5 MiB
+DFS app: 0x4aa510 bytes, 0x55af0 bytes free
+Fixed-frequency app: 0x4a9090 bytes, 0x56f70 bytes free
+Built-in TTF subset: 1,053,412 bytes at wght=500; compressed resource 616,375 bytes
+
+Outputs (both are 0x0-start merged images, not full-flash dumps)
+fan.bin: 4,957,456 bytes, SHA256 784e1eba50a38ff4e06562be763a84f772f9c0d1879ad7189cf75168560d6d18
+  DFS enabled (CONFIG_PM_ENABLE=y, CONFIG_PM_DFS_INIT_AUTO=y), CPU target 320 MHz; tickless idle disabled.
+fan-no-dfs.bin: 4,952,208 bytes, SHA256 0a92046a2b36392173e7cb57a0dc2b610b4d219ef444311139295a29f0c1b566
+  DFS disabled (CONFIG_PM_ENABLE=n), fixed CPU 320 MHz; tickless idle disabled.
+
+Keyboard: English/Zhuyin modes show one number row; numeric mode uses its own digit row without the duplicate top row or retype key. Keys use bold wght=500; password inputs have show/hide controls; KOReader and WebDAV fields use Wi-Fi-style immediate input display; the space and 中/En keys have shared, non-overlapping draw, hit and dirty-refresh bounds.
+WebDAV: custom HTTPS server URL, username and password are persisted in NVS; first use opens setup and later use connects directly. Supports browsing, upload, download to /sdcard/WebDAV, remote rename (MOVE) and delete. The book import page can browse WebDAV and import/open EPUB, TXT and MOBI in the configured books directory; remote books and folders support management actions.
+Profile: editable personal name (default 凡繁煩) is shown by the avatar; the status-bar signature remains empty.
+USB MSC: host descriptors identify Fan E4P SD / Fan TF Card. SD probe busy results remain retryable; startup reports missing card, unmounted volume and timeout separately. A connected-but-unconfigured USB cable is not distinguishable from a missing data cable on the device, so the page advises checking the cable and host port.
+USB stability: MSC raw-card handoff reuses the board SDMMC host configuration and its 4 KiB internal DMA relay to prevent direct DMA from unsafe buffers; the high-speed TinyUSB MSC task uses an 8 KiB stack for nested SDMMC callbacks.
+Wi-Fi book transfer: TF card uploads are limited to 50 MiB per book by both firmware and the upload page; built-in flash keeps its 1 MiB per-file limit, and available space is checked independently.
+Reading sync: Readest Cloud device-code OAuth and KOReader KOSync are configured independently; closing/leaving a book queues an upload, and opening a book queues two-way comparison when a provider is configured. KOSync document IDs use KOReader-compatible partial MD5 samples at offsets 0, 1024, 4096, ...; Readest's existing book identity is unchanged.
+  Sync work acquires the configured network automatically and releases its lease on completion; calibrated system time is required. A six-entry in-memory queue keeps recent book positions while another request is active; connection failures retry after 30 seconds. KOSync/Readest receive a chapter-level DocFragment XPointer plus percentage; exact intra-chapter cross-engine position is approximate.
+  Cloud protocol exchange and physical-device sync behavior have not been exercised without an E4P runtime/account session.
+WebDAV: listing metadata staging is stored in PSRAM; the former 24-item local array was about 9.4 KiB and exceeded the 8 KiB WebDAV worker stack.
+Network lifecycle: one-shot time, weather/location, WebDAV, reading sync and CloudZao jobs acquire the saved route and release their network lease on success, failure or cancellation. A network-only Wi-Fi connection started by a job is stopped when its last lease is returned; the long-running Wi-Fi book-transfer session remains active until the user ends it.
+Simplified-to-traditional book conversion is paused and omitted from the firmware build; source files are retained for future resumption.
+Acceptance: both firmware profiles built; UI font coverage, image generation and transfer webpage interaction were checked. WebDAV crash remediation is build-verified but still needs physical-device confirmation.
+USB MSC DMA-buffer and task-stack hardening is build-verified; USB enumeration and host file access still need physical-device confirmation.
+  Lower Mainland weather scenarios and all Open-Meteo WMO condition translations are covered in host source; weather raster and vertical glyph host C tests could not run because no native C compiler is installed.
+  Native keyboard rendering and complete offline EPUB/TXT sample-book tests remain pending because no native C compiler or E4P runtime is installed.
+The E4P was not flashed. Physical-device validation remains pending.

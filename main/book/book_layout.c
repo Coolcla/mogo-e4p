@@ -548,7 +548,7 @@ static wrap_class_t wrap_class(uint32_t cp, wrap_class_t previous, size_t after,
         return WRAP_GLUE;
     if (cp == '\'' || cp == '"' || cp == 0x2019 || cp == '-' || cp == 0x2010) {
         uint32_t next = peek_codepoint(after, limit);
-        // 词内撇号与连字符不成断点；直引号仅在有开引号上下文时当作左标点。
+        // 詞內撇號與連字元不成斷點；直引號僅在有開引號上下文時當作左標點。
         // Keep internal apostrophes and hyphens; treat straight quotes as openers only in opening context.
         if (cp != '"' && previous == WRAP_WORD && latin_word_char(next)) return WRAP_WORD;
         if (cp == '\'' || cp == '"') {
@@ -583,7 +583,7 @@ void book_layout_free(void) {
     s_px = 0;
     s_blocks = NULL;
     s_block_count = 0;
-    // 内链表和 run 表一样是借用的：重排不重建它，释放权归调用方。
+    // 內連結串列和 run 表一樣是借用的：重排不重建它，釋放權歸呼叫方。
     // The link table is borrowed like the run table: a re-layout keeps it and the caller owns
     // its lifetime.
     s_link_hit_count = s_link_hit_count_next = 0;
@@ -638,8 +638,8 @@ EpdRect book_layout_image_rect(void) {
     return s_image_rect.width > 0 ? s_image_rect : s_rect;
 }
 
-// 每次重排由正文栏推出插图区域：通栏时宽度换成整屏并贴住面板原点，其余保持原样。
-// 非对称边距下不能按正文栏居中，否则整屏插图会整体偏移出界。
+// 每次重排由正文欄推出插圖區域：通欄時寬度換成整屏並貼住面板原點，其餘保持原樣。
+// 非對稱邊距下不能按正文欄居中，否則整屏插圖會整體偏移出界。
 // Derive the illustration region from the body column on every re-layout: full bleed takes the
 // panel width anchored at the panel origin, everything else stays put. Centering on the body
 // column would shift a full-bleed illustration off-panel once the margins differ.
@@ -651,7 +651,7 @@ static void resolve_image_rect(void) {
     }
 }
 
-// 按插图区域等比缩放、不超过区域高、不放大——与参考实现同一套规则。
+// 按插圖區域等比縮放、不超過區域高、不放大——與參考實現同一套規則。
 // Aspect-fit to the illustration region, never taller than it, never upscaled, matching the
 // reference implementations.
 static bool image_display_size(int image, int* out_w, int* out_h) {
@@ -710,8 +710,8 @@ int book_layout_page_image(size_t page) {
     if (page >= s_count || !s_block_count) return -1;
     const blk_t* block = block_at(s_pages[page]);
     if (!block || block->offset != s_pages[page] || block->image < 0) return -1;
-    // 图片流进正文之后，插图常常正好落在页首，只判断"页首是图片块"会把普通文字页也算成整页插图。
-    // 这里要求这一页的范围【只覆盖这一个图片块】，才是真正需要强刷的整页灰阶图。
+    // 圖片流進正文之後，插圖常常正好落在頁首，只判斷"页首是图片块"會把普通文字頁也算成整頁插圖。
+    // 這裡要求這一頁的範圍【只覆蓋這一個圖片塊】，才是真正需要強刷的整頁灰階圖。
     // Once images flow into the page an inline image often sits at the top, so testing only the
     // page start also matched ordinary text pages. Require the page to span exactly this image
     // block: that is a whole-page gray bitmap, the case the forced refresh exists for.
@@ -733,7 +733,7 @@ static bool append_page(size_t off) {
         size_t* pages = heap_caps_realloc(s_pages, cap * sizeof(*pages), PSRAM_CAPS);
         if (!pages) return false;
         s_pages = pages;
-        // 起点表要多一项：第 page 页的插图区间是 [start[page], start[page+1])。
+        // 起點表要多一項：第 page 頁的插圖區間是 [start[page], start[page+1])。
         // The start table needs one extra slot: page `page` owns [start[page], start[page+1]).
         uint32_t* starts = heap_caps_realloc(s_page_img_start, (cap + 1) * sizeof(*starts), PSRAM_CAPS);
         if (!starts) return false;
@@ -747,7 +747,7 @@ static bool append_page(size_t off) {
     return true;
 }
 
-// 段首的全角/半角空白不参与排版，缩进由阅读设置决定；返回第一个可见字节。
+// 段首的全形/半形空白不參與排版，縮排由閱讀設定決定；返回第一個可見位元組。
 // Leading blanks of a paragraph take no part in typesetting -- the reader setting owns the
 // indent -- so return the first visible byte.
 static size_t visible_start(size_t off, size_t limit) {
@@ -765,12 +765,12 @@ static size_t visible_start(size_t off, size_t limit) {
     return off;
 }
 
-// 折行时保留原文字节位置；CRLF 算一个段落边界。advance_limit 是行宽（竖排是列高），
-// hang_margin 是正文右缘之外允许标点悬挂的宽度（竖排为 0，列底没有可悬挂的空白）。
+// 折行時保留原文位元組位置；CRLF 算一個段落邊界。advance_limit 是行寬（豎排是列高），
+// hang_margin 是正文右緣之外允許標點懸掛的寬度（豎排為 0，列底沒有可懸掛的空白）。
 // Preserve source offsets while wrapping; CRLF is one paragraph boundary. advance_limit is the
 // line width (the column height vertically) and hang_margin is the slack beyond the body's right
 // edge that a hanging mark may use (0 vertically: a column has no bottom margin to hang into).
-// 行缓冲按实际UTF-8长度增长，包含零宽字符的长行仍可安全扩容；失败保留原指针。
+// 行緩衝按實際UTF-8長度增長，包含零寬字元的長行仍可安全擴容；失敗保留原指標。
 // Grow by actual UTF-8 line bytes, including long zero-width runs; failed growth keeps the old allocation.
 static bool line_append(size_t at, const char *text, size_t bytes) {
     if (at > s_len || bytes > s_len - at) return false;
@@ -794,7 +794,7 @@ static bool english_letter(unsigned char ch) {
     return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
 }
 
-// 仅处理简单英文字词。跨行的词用原词匹配规则，不把上次的折行当成词首。
+// 僅處理簡單英文字詞。跨行的詞用原詞匹配規則，不把上次的折行當成詞首。
 // Match plain English words only, using the original word even on a continuation line.
 static bool english_hyphen_at(size_t from, size_t line_start, size_t fitted_end, size_t limit,
                               int px, int available, int64_t width, size_t* split, int64_t* split_width) {
@@ -855,16 +855,16 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
     bool first_line = block ? off == block->offset :
         off == 0 || s_text[off - 1] == '\n' || s_text[off - 1] == '\r';
     *align = s_book_styles && block ? block->align : 0;
-    // 首行缩进由阅读设置控制；标题不缩进，仅在保留书内样式时沿用段落对齐。
+    // 首行縮排由閱讀設定控制；標題不縮排，僅在保留書內樣式時沿用段落對齊。
     // The reader setting owns indent; headings stay unindented and block alignment applies only with book styles.
     *indent = 0;
     if (first_line && !*heading && !*align) {
-        // 缩进按当前字体真实全角字宽和字间距计算，不把行高当字宽。
+        // 縮排按當前字型真實全形字寬和字間距計算，不把行高當字寬。
         // Indent by actual full-width advances plus tracking, not by the font's line height.
         slot_select_for(off);
-        // 全角空格在部分字体中不是一个汉字宽，使用正文汉字的实际推进量。
+        // 全形空格在部分字型中不是一個漢字寬，使用正文漢字的實際推進量。
         // Some faces have a narrow ideographic space; use an actual CJK advance instead.
-        int advance = ttf_text_width_px(*px, "一");
+        int advance = s_vertical ? *px : ttf_text_width_px(*px, "一");
         if (advance <= 0) advance = *px;
         advance += s_tracking_px;
         if (advance < 1) advance = 1;
@@ -877,7 +877,7 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
     *margin_before = s_book_styles && first_line && block ? (int)((unsigned)*px * block->margin_before_percent / 100) : 0;
     *margin_after = s_book_styles && block ? (int)((unsigned)*px * block->margin_after_percent / 100) : 0;
     size_t limit = block ? block->offset + block->len : s_len;
-    // 纸书常把全角空格写进段首；统一由阅读设置决定缩进，原文偏移仍保留。
+    // 紙書常把全形空格寫進段首；統一由閱讀設定決定縮排，原文偏移仍保留。
     // Printed-book source often contains leading spaces; the reader setting owns the visual indent.
     size_t visible_off = off;
     if (first_line && !*heading && !*align) visible_off = visible_start(off, limit);
@@ -887,7 +887,7 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
             if (!n) return false;
             uint32_t cp = codepoint_value(s_text + visible_off, n);
             if (prohibited_line_end(cp)) {
-                // 段首开标点自身常有半字留白，向缩进区悬挂，保持可见左边缘对齐。
+                // 段首開標點自身常有半字留白，向縮排區懸掛，保持可見左邊緣對齊。
                 // Hang an opener's own leading whitespace into the indent, keeping its ink edge aligned.
                 char glyph[5]; memcpy(glyph, s_text + visible_off, n); glyph[n] = 0;
                 slot_select_for(visible_off);
@@ -903,9 +903,12 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
     int glyph_count = 0;
     wrap_class_t previous = WRAP_FREE;
     bool in_space = false, emergency_tail = false;
+    uint32_t previous_cp = 0;
+    bool digit_run_rotates = false;
+    size_t previous_offset = visible_off;
     size_t word_fragment = visible_off;
     int64_t word_prefix_width = 0;
-    // 只记最近的合法断点。尾随标点串全部放得下才提交，否则退回正文前的断点。
+    // 只記最近的合法斷點。尾隨標點串全部放得下才提交，否則退回正文前的斷點。
     // Keep the latest legal break. A closing run must fit in full, or we rewind before its anchor.
     size_t wrap_end = visible_off, wrap_next = visible_off, hyphen_end = visible_off;
     int64_t wrap_width = 0, hyphen_width = 0;
@@ -917,6 +920,12 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
         size_t n = codepoint_size(s_text + end, limit - end);
         if (!n) return false;
         uint32_t cp = codepoint_value(s_text + end, n);
+        bool current_digit_run_rotates = digit_run_rotates;
+        if (s_vertical && cp >= '0' && cp <= '9') {
+            if (!(previous_cp >= '0' && previous_cp <= '9'))
+                current_digit_run_rotates = ttf_vertical_digit_run_rotates(
+                    s_text + end + n, limit - end - n);
+        } else current_digit_run_rotates = false;
         bool space = wrap_space(cp);
         wrap_class_t current = wrap_class(cp, in_space ? WRAP_FREE : previous, end + n, limit);
         if (current == WRAP_WORD && previous != WRAP_WORD) {
@@ -925,7 +934,7 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
         }
         if (end > visible_off && !in_space && previous != WRAP_OPEN && previous != WRAP_GLUE) {
             if (space) {
-                // 软折行省略分隔空白，显示终点和下行原文偏移分别记录。
+                // 軟折行省略分隔空白，顯示終點和下行原文偏移分別記錄。
                 // Omit separators at a soft wrap; track the visible end and next source offset separately.
                 size_t after = end + n;
                 uint32_t following = peek_codepoint(after, limit);
@@ -946,18 +955,33 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
                 wrap_width = width;
             }
         }
-        // 每字按自己的字体 run 测宽，不因回退重复测量整行前缀。
+        // 每字按自己的字型 run 測寬，不因回退重複測量整行字首。
         // Measure each glyph in its own font run without remeasuring whole prefixes on rewind.
         char glyph[5];
         memcpy(glyph, s_text + end, n);
         glyph[n] = 0;
         slot_select_for(end);
-        int64_t candidate = width + ttf_text_width_px(*px, glyph) +
-                            (end > visible_off && !*heading ? s_tracking_px : 0);
+        int64_t candidate;
+        if (s_vertical) {
+            int glyph_advance = ttf_vertical_glyph_advance_px(*px, cp, current_digit_run_rotates, 0);
+            int spacing = 0;
+            if (end > visible_off) {
+                slot_select_for(previous_offset);
+                int previous_base = ttf_vertical_glyph_advance_px(*px, previous_cp, digit_run_rotates, 0);
+                int previous_spaced = ttf_vertical_glyph_advance_px(*px, previous_cp,
+                                                                     digit_run_rotates, s_tracking_px);
+                spacing = previous_spaced - previous_base;
+                slot_select_for(end);
+            }
+            candidate = width + spacing + glyph_advance;
+        } else {
+            candidate = width + ttf_text_width_px(*px, glyph) +
+                        (end > visible_off && !*heading ? s_tracking_px : 0);
+        }
         if (candidate < 0) return false;
         if (candidate > available || width > available) {
             if (end == visible_off) return false;
-            // 只在可实际压缩的横排正文使用字距预算。竖排与题头不能依靠它。
+            // 只在可實際壓縮的橫排正文使用字距預算。豎排與題頭不能依靠它。
             // Only fitted horizontal body lines have a compression budget, not columns or headings.
             int64_t squeeze = !s_vertical && !*heading && !*align && glyph_count >= 2
                 ? (int64_t)(glyph_count - 1) * 3 : 0;
@@ -974,7 +998,7 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
                     break;
                 }
                 if (wrap_end > visible_off || hyphen_end > visible_off) {
-                    // 整词移不走时，优先在已有连字符后断开，不在词内任意截断。
+                    // 整詞移不走時，優先在已有連字元後斷開，不在詞內任意截斷。
                     // When a word cannot move intact, prefer its existing hyphen to an arbitrary glyph break.
                     bool legal_break = wrap_end > visible_off;
                     end = legal_break ? wrap_end : hyphen_end;
@@ -983,7 +1007,7 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
                     *next = legal_break ? wrap_next : end;
                     goto line_ready;
                 }
-                // 超长词按字兜底；极窄行最多额外容纳少量相连标点，确保可以前进。
+                // 超長詞按字兜底；極窄行最多額外容納少量相連標點，確保可以前進。
                 // Fall back to glyph breaks for overlong words; very narrow lines may carry a small punctuation tail.
                 if (!(current == WRAP_CLOSE && (glyph_count == 1 || emergency_tail)) &&
                     !(previous == WRAP_OPEN && glyph_count == 1 && !space)) break;
@@ -996,7 +1020,10 @@ static bool take_line(size_t off, int advance_limit, int hang_margin, size_t* ne
         previous = current;
         in_space = space;
         if (!line_append(end - visible_off, glyph, n)) return false;
+        previous_offset = end;
         end += n;
+        previous_cp = cp;
+        digit_run_rotates = current_digit_run_rotates;
         if (current == WRAP_WORD && (cp == '-' || cp == 0x2010)) {
             hyphen_end = end;
             hyphen_width = width;
@@ -1017,10 +1044,10 @@ line_ready:
     return *next > off;
 }
 
-/* ---- 竖排 / Vertical setting ---- */
+/* ---- 豎排 / Vertical setting ---- */
 
-// 竖排分页：整页自右向左铺列，列内自上而下；插图独占一页，前后各断一次。
-// 每字是正立、抬到字格右上角还是转 90°，由字体引擎的竖排绘制统一决定。
+// 豎排分頁：整頁自右向左鋪列，列內自上而下；插圖獨佔一頁，前後各斷一次。
+// 每字是正立、抬到字格右上角還是轉 90°，由字型引擎的豎排繪製統一決定。
 // Vertical pagination: columns fill the page right to left and each column runs down; an
 // illustration takes a page of its own, breaking both before and after it. Whether a glyph stands
 // upright, lifts into the cell's corner or turns 90° is the font engine's vertical drawing rule.
@@ -1033,7 +1060,7 @@ static bool build_vertical(size_t len) {
             if (s_blocks[i].image >= 0 && s_blocks[i].offset >= off) { off = s_blocks[i].offset; break; }
     }
     if (!append_page(off)) return false;
-    // 首页右起为竖排题头留出列宽；留太多时第一列正文会另起一页，不会卡住。
+    // 首頁右起為豎排題頭留出列寬；留太多時第一列正文會另起一頁，不會卡住。
     // The first page keeps room for a vertical chapter heading at its right; if that is too wide
     // the first body column starts a new page instead of stalling.
     int64_t used = s_count == 1 && s_chapter_lead_width < (unsigned)s_rect.width
@@ -1044,7 +1071,7 @@ static bool build_vertical(size_t len) {
         const blk_t* block = block_at(off);
         if (block && block->image >= 0 && off == block->offset) {
             int img_w = 0, img_h = 0;
-            // 首页题头占的就是顶部这一条，插图不能在题头上开画。
+            // 首頁題頭佔的就是頂部這一條，插圖不能在題頭上開畫。
             // The first page's heading owns the top band, so an illustration may not start there.
             bool heading_band = s_count == 1 && s_lead_height > 0;
             if (image_display_size(block->image, &img_w, &img_h)) {
@@ -1052,7 +1079,7 @@ static bool build_vertical(size_t len) {
                 if (!record_page_image(block->image, 0, img_w, img_h)) return false;
                 off = block->offset + block->len;
                 if (off < len && s_text[off] == '\n') ++off;
-                // 图后另起一页给正文，图页自己只剩这一张图。
+                // 圖後另起一頁給正文，圖頁自己只剩這一張圖。
                 // Start a fresh page for the text so the image page holds nothing else.
                 if (off < len && !append_page(off)) return false;
                 used = 0;
@@ -1141,14 +1168,14 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
     size_t visible_off = skip_image_spacing(off);
     if (visible_off < len) off = visible_off;
     else if (!s_images_visible) {
-        // 纯插图章节仍保留可检测的插图页，让跨章跳过逻辑继续前进。
+        // 純插圖章節仍保留可檢測的插圖頁，讓跨章跳過邏輯繼續前進。
         // Image-only chapters keep a detectable image page for the chapter-skip path.
         for (size_t i = 0; i < count; ++i)
             if (blocks[i].image >= 0 && blocks[i].offset >= off) { off = blocks[i].offset; break; }
     }
     if (!append_page(off)) goto fail;
     int64_t used = s_lead_height;
-    // 上一段留下的段距，还没决定是否落在本页：页底放不下时压缩到剩余空间。
+    // 上一段留下的段距，還沒決定是否落在本頁：頁底放不下時壓縮到剩餘空間。
     // Gap from the previous paragraph, not yet committed: at the page bottom it shrinks to the
     // space that is left instead of pushing the next line over.
     int64_t pending_gap = 0;
@@ -1161,7 +1188,7 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
             pending_gap = 0;
             int img_w = 0, img_h = 0;
             if (image_display_size(block->image, &img_w, &img_h)) {
-                // 图是页面流里的一个块：放得下就留在本页，文字接着图下面排；放不下才翻页。
+                // 圖是頁面流裡的一個塊：放得下就留在本頁，文字接著圖下面排；放不下才翻頁。
                 // An image is one block in the page flow: keep it on this page when it fits and
                 // let the text continue below it; only start a new page when it does not fit.
                 if (used && used + img_h > s_image_rect.height) {
@@ -1169,9 +1196,9 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
                     used = 0;
                 }
                 if (!record_page_image(block->image, (int)used, img_w, img_h)) goto fail;
-                used += img_h + px / 2;  // 图下留半个行高 / half a line under the image
+                used += img_h + px / 2;  // 圖下留半個行高 / half a line under the image
             } else {
-                // 取不到尺寸时退回整页显示，保证纯插图章节仍可被跨章跳过逻辑识别。
+                // 取不到尺寸時退回整頁顯示，保證純插圖章節仍可被跨章跳過邏輯識別。
                 // Without dimensions, fall back to a whole-page image so an image-only chapter
                 // stays detectable by the chapter-skip path.
                 if (used && !append_page(off)) goto fail;
@@ -1191,8 +1218,8 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         (void)line_width; (void)indent; (void)align;
         line_height = line_height_for(line_px);
         if (line_height > rect.height) goto fail;
-        // 页底按字形高度判定，不按整行盒：行盒尾部那段行距是不可见留白，属于页脚侧边距，
-        // 不该把这一行挤到下一页。行盒底允许悬出正文底，墨迹仍在版心内。
+        // 頁底按字形高度判定，不按整行盒：行盒尾部那段行距是不可見留白，屬於頁尾側邊距，
+        // 不該把這一行擠到下一頁。行盒底允許懸出正文底，墨跡仍在版心內。
         // Page-bottom fit uses the glyph height, not the whole line box: the box's trailing
         // leading is invisible margin on the footer side and must not push this line over. The
         // box bottom may hang below the body while the ink stays inside.
@@ -1205,7 +1232,7 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         }
         int64_t gap = pending_gap;
         int64_t room = (int64_t)rect.height - used - leading - line_px;
-        // 段距落在页底时压缩到剩余空间，不把下一段首行推到下一页。
+        // 段距落在頁底時壓縮到剩餘空間，不把下一段首行推到下一頁。
         // A paragraph gap that lands at the page bottom shrinks to the space left instead of
         // pushing the next paragraph's first line over.
         if (gap > room) gap = room;
@@ -1215,7 +1242,7 @@ bool book_layout_build_blocks(const char* utf8, size_t len, const blk_t* blocks,
         if (paragraph_end) pending_gap = gap_for(line_height, heading) + margin_after;
         off = next;
     }
-    // 测量会按 run 移动游标；还回去，后面的界面与状态栏仍从系统字体起。
+    // 測量會按 run 移動遊標；還回去，後面的介面與狀態列仍從系統字型起。
     // Measuring moves the cursor across spans; hand it back so the UI and status bar still
     // start from the system face.
     ttf_font_select(TTF_FONT_SLOT_SYSTEM);
@@ -1242,8 +1269,8 @@ size_t book_layout_page_for_offset(size_t off) {
     return lo;
 }
 
-// 画一列：字格居中于列宽，列内自上而下逐字；转 90° 的字走旋转绘制，右上角标点抬高半格。
-// 完整列把余量摊到字间，和横排的两端对齐同一套规则。
+// 畫一列：字格居中於列寬，列內自上而下逐字；轉 90° 的字走旋轉繪製，右上角標點抬高半格。
+// 完整列把餘量攤到字間，和橫排的兩端對齊同一套規則。
 // Draw one column: em boxes are centered across the column pitch and glyphs run downward.
 // Rotated glyphs use the rotated draw and corner marks lift half a cell. A complete column
 // spreads its slack between glyphs, mirroring horizontal justification.
@@ -1254,7 +1281,7 @@ static void draw_vertical_column(uint8_t* fb, EpdRect rect, int left, int pitch,
     const int available = rect.height - lead;
     const size_t line_len = strlen(s_line);
     int y = rect.y + lead + indent;
-    // 竖排里的居中与右对齐是列内的纵向对齐，和横排的行内对齐一一对应。
+    // 豎排裡的居中與右對齊是列內的縱向對齊，和橫排的行內對齊一一對應。
     // Centering and end alignment in vertical setting line the column up vertically, mirroring
     // their horizontal meaning inside a line.
     if (align == 1) y += (available - indent - run_height) / 2;
@@ -1273,15 +1300,15 @@ static void draw_vertical_column(uint8_t* fb, EpdRect rect, int left, int pitch,
     }
     reading_guide_span_t guide = {.start = INT_MAX, .end = INT_MIN, .vertical = true};
     ttf_glyph_observer_t guide_observer = {record_reading_guide_glyph, &guide};
-    // 直接观察实际落笔，避免字体引擎放弃两端对齐后仍画出目标宽度。
+    // 直接觀察實際落筆，避免字型引擎放棄兩端對齊後仍畫出目標寬度。
     // Observe actual pens, including cases where the font engine declines justification.
     const ttf_glyph_observer_t *observer = s_reading_line && s_reading_line_follow_text
         ? &guide_observer : &s_glyph_observer;
     EpdRect guide_area = {0, rect.y, 2, rect.height};
     if (s_reading_line) {
-        // 阅读线跟着列走，位置在列的右侧：把整页逆时针转 90° 来读这一列，横排的「字下」正落在这里。
-        // 原先画在列中线上（cell + px/2），等于穿字而过，看上去就是错乱。
-        // 上下位置滑杆在竖排里横着移动这条线；再往里就压字了，所以夹在字格右边。
+        // 閱讀線跟著列走，位置在列的右側：把整頁逆時針轉 90° 來讀這一列，橫排的「字下」正落在這裡。
+        // 原先畫在列中線上（cell + px/2），等於穿字而過，看上去就是錯亂。
+        // 上下位置滑桿在豎排裡橫著移動這條線；再往裡就壓字了，所以夾在字格右邊。
         // The guide follows the column and runs down its right side: turn the page 90° counter-clockwise
         // to read the column as a horizontal line and the horizontal "under the glyphs" lands here. It
         // used to sit on the column's centre line, straight through the glyphs. The offset slider moves
@@ -1295,13 +1322,13 @@ static void draw_vertical_column(uint8_t* fb, EpdRect rect, int left, int pitch,
     ttf_draw_set_runs(s_line_run_count ? s_line_runs : NULL, s_line_run_count);
     (void)ttf_draw_text_px_vertical_observed(fb, cell, y, px, s_line, s_tracking_px + extra, 0, 15, observer);
     if (s_reading_line && s_reading_line_follow_text) draw_reading_guide(fb, guide_area, guide);
-    // 画完把游标还回去：页面其它文字、界面和状态栏都按系统字体走。
+    // 畫完把遊標還回去：頁面其它文字、介面和狀態列都按系統字型走。
     // Hand the cursor back: every other page, the UI and the status bar use the system face.
     ttf_draw_set_runs(NULL, 0);
     ttf_font_select(TTF_FONT_SLOT_SYSTEM);
 }
 
-// 竖排绘制：与 build_vertical 走同样的折列与页界，只是这里落笔。
+// 豎排繪製：與 build_vertical 走同樣的折列與頁界，只是這裡落筆。
 // Vertical drawing: the same column walk and page boundaries as build_vertical, inking as it goes.
 static void draw_vertical_page(uint8_t* fb, size_t page, EpdRect rect) {
     size_t off = s_pages[page];
@@ -1318,7 +1345,7 @@ static void draw_vertical_page(uint8_t* fb, size_t page, EpdRect rect) {
         if (visible != off) { off = visible; continue; }
         const blk_t* image_block = block_at(off);
         if (image_block && image_block->image >= 0 && off == image_block->offset) {
-            // 插图独占一页，位置由调用方按整页图绘制；记录只用于识别这一页。
+            // 插圖獨佔一頁，位置由呼叫方按整頁圖繪製；記錄只用於識別這一頁。
             // The illustration owns its page and the caller draws it whole; the record only marks
             // the page.
             while (img_at < img_end && s_images[img_at].image != image_block->image) ++img_at;
@@ -1372,7 +1399,7 @@ static void draw_page_impl(uint8_t* fb, size_t page, EpdRect rect, int px) {
     if (!fb || page >= s_count || px != s_px || rect.width != s_rect.width ||
         rect.height != s_rect.height || rect.x < 0 || rect.y < 0 ||
         rect.x > INT_MAX - rect.width || rect.y > INT_MAX - rect.height) return;
-    // 预绘的是下一页，不能覆盖当前页的点击表；两页各记一张。
+    // 預繪的是下一頁，不能覆蓋當前頁的點選表；兩頁各記一張。
     // Prefetch draws the next page, so it must not overwrite the current page's hit table;
     // each page gets its own.
     if (s_idle_draw == NULL) {
@@ -1382,7 +1409,7 @@ static void draw_page_impl(uint8_t* fb, size_t page, EpdRect rect, int px) {
         s_link_hits_out = s_link_hits;
         s_link_hits_out_count = &s_link_hit_count;
     } else {
-        // 预绘从游标续画：只有第一片才清表，后续片继续往里追加。
+        // 預繪從遊標續畫：只有第一片才清表，後續片繼續往裡追加。
         // A prefetch resumes from its cursor: only the first slice clears the table and later
         // slices keep appending.
         if (!s_idle_draw->started) {
@@ -1393,7 +1420,7 @@ static void draw_page_impl(uint8_t* fb, size_t page, EpdRect rect, int px) {
         s_link_hits_out = s_link_hits_next;
         s_link_hits_out_count = &s_link_hit_count_next;
     }
-    // 走回退路径的"整页插图"没有图片记录：这里没有文字可画，那张图由调用方绘制，直接返回。
+    // 走回退路徑的"整页插图"没有图片记录：这里没有文字可画，那张图由调用方绘制，直接返回。
     // 有记录时说明图片已经流进正文，文字和图一起排。
     // A whole-page image from the fallback path has no record: there is no text to draw here and
     // the caller draws that image, so return. With records the image flowed into the page and the

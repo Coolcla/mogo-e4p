@@ -13,6 +13,7 @@
 #include <stdint.h>
 
 #include "esp_err.h"
+#include "driver/sdmmc_host.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -40,6 +41,9 @@ esp_err_t board_sd_start_probe(void);
 /// 查询有效 CD 并锁存拔卡失效；检测通信失败保留快照。重新插入须显式 remount。
 /// / Latch removal only from valid CD; detection I/O failure preserves snapshots. Reinsertion needs explicit remount.
 esp_err_t board_sd_get_info(board_sd_info_t* info);
+/// 複製目前卡片的 SDMMC 主機／插槽設定，供 USB MSC 原始卡片交接沿用 DMA 安全緩衝。
+/// / Copy the active card's SDMMC host/slot config for USB MSC raw-card handoff, including its DMA-safe buffer.
+esp_err_t board_sd_get_usb_export_config(sdmmc_host_t* host, sdmmc_slot_config_t* slot);
 /// 检查当前本机挂载；后台巡检忙时仍认可有效快照，不等待也不发起挂载。
 /// / Check the current local mount; busy health checks preserve valid snapshots. Does not wait or mount.
 bool board_sd_is_mounted(void);

@@ -88,13 +88,13 @@ void ui_reading_streak_draw(uint8_t *fb,const reading_streak_view_t *view) {
     int number_w=ui_text_fixed_width_px(px,number);
     int book_x=36+number_w+44,label_x=book_x+131+22;
     ui_text_fixed_vc(fb,36+number_w+6,135,21,"天",EPD_DRAW_ALIGN_LEFT,false);
-    fitted(fb,label_x,104,25,"连续阅读");
-    if (!view->valid) fitted(fb,label_x,136,20,"请先校准时间");
+    fitted(fb,label_x,104,25,"連續閱讀");
+    if (!view->valid) fitted(fb,label_x,136,20,"請先校準時間");
     else if (read) {
         line2(fb,label_x+1,137,label_x+5,141,0);line2(fb,label_x+5,141,label_x+12,131,0);
-        fitted(fb,label_x+22,136,20,"今日已达标");
+        fitted(fb,label_x+22,136,20,"今日已達標");
     } else {
-        char progress[40];snprintf(progress,sizeof(progress),"今日 %u / 30 分钟",(unsigned)(view->milliseconds[6]/60000));
+        char progress[40];snprintf(progress,sizeof(progress),"今日 %u / 30 分鐘",(unsigned)(view->milliseconds[6]/60000));
         fitted(fb,label_x,136,20,progress);
     }
     const int heights[]={44,49,54,59,64,69,74};

@@ -58,27 +58,27 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
 
     struct stat file_stat = {0};
     if (stat(path, &file_stat) != 0) {
-        set_message(info->message, sizeof(info->message), "TF 卡根目录未找到固件升级包");
+        set_message(info->message, sizeof(info->message), "TF 卡根目錄未找到韌體升級包");
         return ESP_ERR_NOT_FOUND;
     }
     if (file_stat.st_size <= 0) {
-        set_message(info->message, sizeof(info->message), "升级包为空");
+        set_message(info->message, sizeof(info->message), "升級包為空");
         return ESP_ERR_INVALID_SIZE;
     }
 
     const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
     if (!target) {
-        set_message(info->message, sizeof(info->message), "当前固件没有可用的 OTA 分区");
+        set_message(info->message, sizeof(info->message), "當前韌體沒有可用的 OTA 分割槽");
         return ESP_ERR_NOT_SUPPORTED;
     }
     if ((size_t)file_stat.st_size > target->size) {
-        set_message(info->message, sizeof(info->message), "升级包超过固件分区容量");
+        set_message(info->message, sizeof(info->message), "升級包超過韌體分割槽容量");
         return ESP_ERR_INVALID_SIZE;
     }
 
     FILE *file = fopen(path, "rb");
     if (!file) {
-        set_message(info->message, sizeof(info->message), "升级包无法读取");
+        set_message(info->message, sizeof(info->message), "升級包無法讀取");
         return ESP_FAIL;
     }
     esp_image_header_t header = {0};
@@ -86,7 +86,7 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
     esp_err_t err = read_candidate(file, &header, &candidate);
     fclose(file);
     if (err != ESP_OK) {
-        set_message(info->message, sizeof(info->message), "升级包不是有效的 mogo 固件");
+        set_message(info->message, sizeof(info->message), "升級包不是有效的 Fan 韌體");
         return err;
     }
 
@@ -96,22 +96,22 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
                     sizeof(running_desc->project_name)) ||
         !copy_field(candidate_project, sizeof(candidate_project), candidate.project_name,
                     sizeof(candidate.project_name)) || strcmp(current_project, candidate_project) != 0) {
-        set_message(info->message, sizeof(info->message), "升级包不属于当前 mogo 固件");
+        set_message(info->message, sizeof(info->message), "升級包不屬於目前的 Fan 韌體");
         return ESP_ERR_INVALID_RESPONSE;
     }
     if (!copy_field(info->candidate_version, sizeof(info->candidate_version), candidate.version,
                     sizeof(candidate.version))) {
-        set_message(info->message, sizeof(info->message), "升级包版本信息无效");
+        set_message(info->message, sizeof(info->message), "升級包版本資訊無效");
         return ESP_ERR_INVALID_RESPONSE;
     }
     if (strcmp(info->current_version, info->candidate_version) == 0) {
-        set_message(info->message, sizeof(info->message), "升级包与当前版本相同");
+        set_message(info->message, sizeof(info->message), "升級包與當前版本相同");
         return ESP_ERR_INVALID_STATE;
     }
 
     info->image_size = (size_t)file_stat.st_size;
     info->ready = true;
-    set_message(info->message, sizeof(info->message), "升级包已通过初步检查");
+    set_message(info->message, sizeof(info->message), "升級包已透過初步檢查");
     return ESP_OK;
 }
 
@@ -125,7 +125,7 @@ esp_err_t pico_ota_install(const char *path, char *message, size_t message_size)
 
     FILE *file = fopen(path, "rb");
     if (!file) {
-        set_message(message, message_size, "升级包无法读取");
+        set_message(message, message_size, "升級包無法讀取");
         return ESP_FAIL;
     }
     if (!epd_flash_begin()) {
@@ -137,7 +137,7 @@ esp_err_t pico_ota_install(const char *path, char *message, size_t message_size)
     err = target ? esp_ota_begin(target, info.image_size, &handle) : ESP_ERR_NOT_FOUND;
     if (err != ESP_OK) {
         fclose(file);
-        set_message(message, message_size, "无法准备空闲固件分区");
+        set_message(message, message_size, "無法準備空閒韌體分割槽");
         epd_flash_end();
         return err;
     }
@@ -149,7 +149,7 @@ esp_err_t pico_ota_install(const char *path, char *message, size_t message_size)
     if (!buffer) {
         esp_ota_abort(handle);
         fclose(file);
-        set_message(message, message_size, "内存不足，无法开始升级");
+        set_message(message, message_size, "記憶體不足，無法開始升級");
         epd_flash_end();
         return ESP_ERR_NO_MEM;
     }
@@ -171,24 +171,24 @@ esp_err_t pico_ota_install(const char *path, char *message, size_t message_size)
     if (err == ESP_OK && total != info.image_size) err = ESP_ERR_INVALID_SIZE;
     if (err != ESP_OK) {
         esp_ota_abort(handle);
-        set_message(message, message_size, "写入中断，当前版本保持不变");
+        set_message(message, message_size, "寫入中斷，當前版本保持不變");
         epd_flash_end();
         return err;
     }
 
     err = esp_ota_end(handle);
     if (err != ESP_OK) {
-        set_message(message, message_size, "固件完整性校验失败");
+        set_message(message, message_size, "韌體完整性校驗失敗");
         epd_flash_end();
         return err;
     }
     err = esp_ota_set_boot_partition(target);
     if (err != ESP_OK) {
-        set_message(message, message_size, "无法切换到新固件");
+        set_message(message, message_size, "無法切換到新韌體");
         epd_flash_end();
         return err;
     }
-    set_message(message, message_size, "安装完成，即将重新启动");
+    set_message(message, message_size, "安裝完成，即將重新啟動");
     ESP_LOGI(TAG, "OTA image %s (%u bytes) written to %s", info.candidate_version,
              (unsigned)info.image_size, target->label);
     epd_flash_end();

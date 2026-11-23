@@ -10,6 +10,8 @@
 
 extern const uint8_t lock_start[] asm("_binary_lock_4bpp_kbz_start");
 extern const uint8_t lock_end[] asm("_binary_lock_4bpp_kbz_end");
+extern const uint8_t startup_start[] asm("_binary_startup_4bpp_kbz_start");
+extern const uint8_t startup_end[] asm("_binary_startup_4bpp_kbz_end");
 extern const uint8_t avatar_start[] asm("_binary_avatar_4bpp_bin_start");
 extern const uint8_t avatar_end[] asm("_binary_avatar_4bpp_bin_end");
 
@@ -24,7 +26,11 @@ static size_t image_size(const uint8_t *data, size_t bytes) {
 }
 
 static const uint8_t *image_data(ui_builtin_image_t image, size_t *bytes) {
-    if (image == UI_BUILTIN_IMAGE_LOCK || image == UI_BUILTIN_IMAGE_LOADING) {
+    if (image == UI_BUILTIN_IMAGE_LOADING) {
+        *bytes = (size_t)(startup_end - startup_start);
+        return startup_start;
+    }
+    if (image == UI_BUILTIN_IMAGE_LOCK) {
         *bytes = (size_t)(lock_end - lock_start);
         return lock_start;
     }

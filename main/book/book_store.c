@@ -128,7 +128,7 @@ esp_err_t book_store_upload_root(book_store_root_t* out) {
 
 size_t book_store_file_limit(const book_store_root_t* root) {
     if (root == NULL) return 0;
-    return root->is_flash ? BOOK_STORE_FLASH_FILE_MAX : SIZE_MAX;
+    return root->is_flash ? BOOK_STORE_FLASH_FILE_MAX : BOOK_STORE_SD_FILE_MAX;
 }
 
 uint64_t book_store_free_bytes(const book_store_root_t* root) {

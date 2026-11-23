@@ -103,24 +103,25 @@ async function edit(t,action,name){
     const path=root+'/'+relative;
     if(!/\.(?:c|h|cpp|html|json|md|txt)$/.test(path)||!fs.statSync(path).isFile())continue;
     let text=fs.readFileSync(path,'utf8').replaceAll('LicenseRef-Kiikoread-Personal-Study-1.0','');
-    if(path==='main/settings/settings.c')text=text.replace('strcmp(name, "kiikoread")','');
+    if(path.replaceAll('\\','/')==='main/settings/settings.c')text=text.replace('strcmp(name, "kiikoread")','');
     assert.doesNotMatch(text,/kiikoread/i,'Unexpected old firmware brand in '+path);
   }
   const board=fs.readFileSync('components/board_support/include/board_hardware.h','utf8');
-  for(const name of ['BOARD_PRODUCT_NAME','BOARD_DEVICE_NAME'])assert.match(board,new RegExp('#define '+name+' "mogo"'));
+  assert.match(board,/#define BOARD_PRODUCT_NAME "Fan"/);
+  assert.match(board,/#define BOARD_DEVICE_NAME "FAN"/);
   const transferHeader=fs.readFileSync('components/wifi_transfer/include/wifi_transfer.h','utf8');
   const password=transferHeader.match(/#define WIFI_TRANSFER_PASSWORD "([^"]+)"/)[1];
-  assert.equal(password,'mogo1234');assert.ok(password.length>=8&&password.length<=63);
+  assert.equal(password,'FAN12345');assert.ok(password.length>=8&&password.length<=63);
   const transfer=fs.readFileSync('components/wifi_transfer/wifi_transfer.c','utf8');
-  assert.match(transfer,/"mogo-%02X%02X", mac\[4\], mac\[5\]/);
+  assert.match(transfer,/"FAN-%02X%02X", mac\[4\], mac\[5\]/);
   assert.match(transfer,/strcpy\(\(char \*\)wifi\.ap\.password, WIFI_TRANSFER_PASSWORD\)/);
-  assert.match(html,/<title>mogo · WiFi 传书<\/title>/);
-  assert.match(html,/<span>mogo<span class="brand-note">WiFi 传书/);
+  assert.match(html,/<title>FAN · WiFi 傳書<\/title>/);
+  assert.match(html,/<span>FAN<span class="brand-note">WiFi 傳書/);
   assert.doesNotMatch(html,/kiikoread/i);
-  assert.match(html,/浏览 TF 卡/);assert.doesNotMatch(html,/图片对比|编辑书架名称/);
+   assert.match(html,/瀏覽 TF 卡/);assert.doesNotMatch(html,/圖片對比|編輯書架名稱/);
   assert.doesNotMatch(html,/(?:src|href)="https?:/);
   let t=await setup();
-  assert.match(t.get('storage').textContent,/TF 卡已就绪/);assert.equal(t.get('entries').children.length,2);
+  assert.match(t.get('storage').textContent,/TF 卡已就緒/);assert.equal(t.get('entries').children.length,2);
   t.get('entries').children[0].children[0].children[2].onclick();await flush();await flush();
   assert.equal(t.get('path').textContent,'/books');assert.match(t.state.gets.at(-1),/path=books/);
   await edit(t,'rename','新封面.jpg');
@@ -134,25 +135,25 @@ async function edit(t,action,name){
   assert.ok(t.get('filePicker').accept.split(',').includes('.mobi'));
   for(const [kind,name,endpoint]of[['book','海边的信.epub','/upload'],['book','测试书.MOBI','/upload'],['font','思源宋体.otf','/font-upload'],['picture','封面.jpeg','/image-upload']]){
     await t.context.sendFiles([file(name)],kind,{book:'books',font:'fonts',picture:'pictures'}[kind]);
-    assert.ok(t.state.sent.at(-1).url.startsWith(endpoint+'?name='));assert.match(t.get('uploadResult').textContent,/已保存 1 个文件/);
+    assert.ok(t.state.sent.at(-1).url.startsWith(endpoint+'?name='));assert.match(t.get('uploadResult').textContent,/已儲存 1 個檔案/);
   }
   const longMobi='字'.repeat(70)+'Book.mobi';
   await t.context.sendFiles([file(longMobi)],'file','books');
-  assert.equal(new URL('http://mogo'+t.state.sent.at(-1).url).searchParams.get('path'),'books/'+longMobi);
+   assert.equal(new URL('http://fan'+t.state.sent.at(-1).url).searchParams.get('path'),'books/'+longMobi);
   const cjkStem='书'.repeat(75);
   const fits=file(cjkStem+'%a.epub',1), oversized=file(cjkStem+'%ab.epub',1);
   for(const mode of ['ap','sta']) {
     t=await setup({mode,responses:[{status:200,body:{ok:true}},{status:200,body:{ok:true}},{status:409,body:{error:'重名'}},{network:true},{status:200,body:{ok:true}}]});
     await t.context.navigate('books');
-    assert.match(t.get('uploadLimit').textContent,/232 个 UTF-8 字节/);
+    assert.match(t.get('uploadLimit').textContent,/232 個 UTF-8 位元組/);
     await t.context.sendFiles([oversized,fits,file('正常.txt',1)],'book','books');
     assert.equal(t.state.sent.length,2);assert.equal(t.run('records[0].status'),'error');
     assert.equal(t.run('records.slice(1).every(entry=>entry.status==="complete")'),true);
-    assert.equal(new URL('http://mogo'+t.state.sent[0].url).searchParams.get('name'),fits.name);
+     assert.equal(new URL('http://fan'+t.state.sent[0].url).searchParams.get('name'),fits.name);
     const failed=t.get('queueList').children[0];
-    assert.match(failed.textContent,/233 \/ 232.*未发送/);
+     assert.match(failed.textContent,/233 \/ 232.*未傳送/);
     await failed.children.at(-1).click();
-    assert.equal(t.get('editor').open,true);assert.match(t.get('editorLabel').textContent,/\.epub 不变/);
+     assert.equal(t.get('editor').open,true);assert.match(t.get('editorLabel').textContent,/\.epub 不變/);
     assert.match(t.get('editorNameBudget').textContent,/233 \/ 232/);
     await t.context.submitEditor();
     assert.equal(t.state.sent.length,2);assert.equal(t.get('editor').open,true);
@@ -161,7 +162,7 @@ async function edit(t,action,name){
     await t.context.submitEditor();
     assert.equal(t.get('editor').open,false);assert.equal(t.state.sent.length,4);
     assert.equal(t.state.prompts.at(-1).split('\n').at(-1),'books/修改后的名字 %.epub');
-    assert.equal(new URL('http://mogo'+t.state.sent[3].url).searchParams.get('overwrite'),'1');
+     assert.equal(new URL('http://fan'+t.state.sent[3].url).searchParams.get('overwrite'),'1');
     await t.context.navigate('pictures');
     await t.get('queueList').children[0].children.at(-1).click();
     assert.equal(t.state.sent[4].url,t.state.sent[2].url);assert.equal(t.run('records[0].status'),'complete');
@@ -172,23 +173,23 @@ async function edit(t,action,name){
   for(const [kind,ext] of [['font','.ttf'],['picture','.jpg']]){
     const limit='字'.repeat(38)+'aa'+ext;
     await t.context.sendFiles([file(limit,1),file('a'+limit,1)],kind);
-    assert.match(t.get('queueList').children.at(-1).textContent,/121 \/ 120.*未发送/);
+     assert.match(t.get('queueList').children.at(-1).textContent,/121 \/ 120.*未傳送/);
   }
   assert.equal(t.state.sent.length,2);
   const folder='books/书';
   const full='a'.repeat(228);
   await t.context.sendFiles([file(full+'a',1),file(full,1)],'file',folder);
   assert.equal(t.state.sent.length,3);
-  assert.match(t.get('queueList').children.at(-2).textContent,/229 \/ 228.*未发送/);
-  assert.equal(new URL('http://mogo'+t.state.sent[2].url).searchParams.get('path'),folder+'/'+full);
+   assert.match(t.get('queueList').children.at(-2).textContent,/229 \/ 228.*未傳送/);
+   assert.equal(new URL('http://fan'+t.state.sent[2].url).searchParams.get('path'),folder+'/'+full);
   t=await setup({legacyInfo:true});
   await t.context.sendFiles([fits],'book','books');assert.equal(t.state.sent.length,0);
-  assert.match(t.get('queueList').textContent,/232 \/ 120/);
+   assert.match(t.get('queueList').textContent,/232 \/ 120/);
   for(const mode of ['ap','sta']){
     t=await setup({mode});assert.equal(t.get('signatureText').value,'慢慢阅读');
     for(const value of ['我的 Pico','']){
       t.get('signatureText').value=value;await t.get('signatureSave').onclick();assert.equal(t.state.signature,value);
-      assert.equal(t.get('signatureResult').textContent,value?'签名已保存，mogo 状态栏已更新':'签名已清除');
+       assert.equal(t.get('signatureResult').textContent,value?'簽名已儲存，FAN 狀態列已更新':'簽名已清除');
     }
     for(const value of ['字'.repeat(32),'换行\n签名','\u007f']){t.get('signatureText').value=value;await t.get('signatureSave').onclick();}
     assert.equal(t.state.signatures.length,2);
@@ -219,12 +220,12 @@ async function edit(t,action,name){
   await t.context.sendFiles([t.run('records[0].file')],'file','books/原目录',t.run('records[0]'));
   assert.equal(t.state.sent[0].url,t.state.sent[1].url);assert.equal(t.run('records.length'),1);assert.equal(t.run('records[0].status'),'complete');
   t=await setup({infoErrorAfter:3});await t.context.sendFiles([file('已保存.txt')],'file','');
-  assert.equal(t.run('records[0].status'),'complete');assert.match(t.get('uploadResult').textContent,/已保存 1 个文件/);
+  assert.equal(t.run('records[0].status'),'complete');assert.match(t.get('uploadResult').textContent,/已儲存 1 個檔案/);
   t=await setup({isFlash:true});assert.equal(t.get('chooseFiles').disabled,true);assert.equal(t.state.gets.length,0);assert.equal(t.get('signatureSave').disabled,false);
   t=await setup({signatureError:true});assert.equal(t.get('signatureSave').disabled,true);assert.equal(t.get('signatureRetry').hidden,false);
   t=await setup({directory:(path,page,json)=>json({pages:2,total:21,items:[file('第'+page+'页.txt',12)]})});
   await t.get('next').onclick();assert.match(t.state.gets.at(-1),/page=1/);assert.equal(t.get('pageState').textContent,'2 / 2');
-  t.get('search').value='无匹配';t.get('search').oninput();assert.equal(t.get('entries').children.length,0);assert.match(t.get('listState').textContent,/本页/);
+  t.get('search').value='無匹配';t.get('search').oninput();assert.equal(t.get('entries').children.length,0);assert.match(t.get('listState').textContent,/本頁/);
   let release;
   t=await setup({directory:(path,page,json)=>path==='slow'?new Promise(resolve=>release=()=>resolve(json({pages:1,total:1,items:[file('过时.txt')]}))):json({pages:1,total:1,items:[file('当前.txt')]})});
   const stale=t.context.navigate('slow');await t.context.navigate('fast');release();await stale;
@@ -251,7 +252,7 @@ async function edit(t,action,name){
   assert.equal(t.get('queueList').children.length,24);assert.equal(t.get('expandQueue').disabled,false);
   assert.equal(t.get('queueFollow').disabled,false);assert.equal(t.get('search').disabled,false);assert.equal(t.get('sort').disabled,false);
   assert.equal(t.get('chooseFiles').disabled,true);assert.equal(t.get('newFolder').disabled,true);
-  assert.equal(t.get('queueCurrentName').textContent,'字体01.ttf');assert.equal(t.get('queuePosition').textContent,'第 1 / 24 项');
+  assert.equal(t.get('queueCurrentName').textContent,'字体01.ttf');assert.equal(t.get('queuePosition').textContent,'第 1 / 24 項');
   t.get('expandQueue').onclick();assert.equal(t.get('expandQueue').attributes['aria-expanded'],'true');
   t.get('sort').onclick();assert.equal(t.run('descending'),true);assert.equal(t.state.sent.length,1);
   const firstRow=t.get('queueList').children[0];t.get('queueList').scrollTop=150;
@@ -260,13 +261,13 @@ async function edit(t,action,name){
   assert.equal(t.get('queueList').children[0],firstRow);assert.equal(t.get('queueList').scrollTop,150);
   t.state.clock=4500;t.state.tick();assert.equal(t.get('queueSpeed').textContent,'0 B/s');
   pending[0].xhr.upload.onprogress({loaded:1048575,total:1048576});
-  assert.equal(t.run('records[0].progress'),99);assert.equal(t.get('queueState').textContent,'正在上传');
+   assert.equal(t.run('records[0].progress'),99);assert.equal(t.get('queueState').textContent,'正在上傳');
   pending[0].xhr.upload.onprogress({loaded:1048576,total:1048576});
-  assert.equal(t.get('queueState').textContent,'等待设备确认');assert.equal(t.get('queueSpeed').textContent,'—');
+  assert.equal(t.get('queueState').textContent,'等待裝置確認');assert.equal(t.get('queueSpeed').textContent,'—');
   assert.equal(t.run('records[0].status'),'uploading');
   pending[0].finish();await flush();await flush();
-  assert.equal(t.get('queuePosition').textContent,'第 2 / 24 项');assert.equal(t.get('queueCurrentName').textContent,'字体02.ttf');
-  assert.equal(t.get('queueList').scrollTop,150);assert.match(t.get('queueProcessed').textContent,/已处理 1 \/ 24/);
+  assert.equal(t.get('queuePosition').textContent,'第 2 / 24 項');assert.equal(t.get('queueCurrentName').textContent,'字体02.ttf');
+  assert.equal(t.get('queueList').scrollTop,150);assert.match(t.get('queueProcessed').textContent,/已處理 1 \/ 24/);
   for(let i=1;i<24;i++) {
     pending[i].xhr.upload.onprogress({loaded:1048576,total:1048576});
     if(i===23) assert.equal(t.get('queueProgress').attributes['aria-valuenow'],'99');
@@ -280,7 +281,7 @@ async function edit(t,action,name){
   assert.equal(t.get('wallpaperSend').disabled,false);t.get('cropZoom').value='1.5';t.get('cropZoom').oninput();
   const before=t.run('[cropX,cropY]');t.get('cropPreview').onpointerdown({pointerId:1,clientX:100,clientY:100});
   t.get('cropPreview').onpointermove({pointerId:1,clientX:120,clientY:90});t.get('cropPreview').onpointerup();assert.notDeepEqual(t.run('[cropX,cropY]'),before);
-  await t.get('wallpaperSend').onclick();assert.match(t.state.sent.at(-1).url,/^\/image-upload\?name=pico-wallpaper-.+&wallpaper=1$/);assert.match(t.get('wallpaperResult').textContent,/已设为壁纸锁屏/);
+  await t.get('wallpaperSend').onclick();assert.match(t.state.sent.at(-1).url,/^\/image-upload\?name=pico-wallpaper-.+&wallpaper=1$/);assert.match(t.get('wallpaperResult').textContent,/已設為桌布鎖屏/);
   t.run("location.hash='#signature';route()");assert.equal(t.get('files-view').hidden,true);assert.equal(t.get('signature-view').hidden,false);
   t.get('signatureText').value='<b>纯文本</b>';t.get('signatureText').oninput();assert.equal(t.get('signaturePreview').textContent,'<b>纯文本</b>');
   const symbols=new Set([...html.matchAll(/<symbol id="([^"]+)"/g)].map(match=>match[1]));

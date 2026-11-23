@@ -99,8 +99,8 @@ static const char *memory_check_pool(mm_pool_t pool, size_t min_free, size_t min
     const mm_failure_t result = mm_check_capacity(pool, min_free, min_block);
     if (result == MM_FAIL_NONE) return NULL;
     if (pool == MM_POOL_INTERNAL)
-        return result == MM_FAIL_FRAGMENTED ? "片内连续内存不足，请稍后重试" : "片内可用内存不足，请稍后重试";
-    return result == MM_FAIL_FRAGMENTED ? "PSRAM 连续内存不足，请稍后重试" : "PSRAM 可用内存不足，请稍后重试";
+        return result == MM_FAIL_FRAGMENTED ? "片內連續記憶體不足，請稍後重試" : "片內可用記憶體不足，請稍後重試";
+    return result == MM_FAIL_FRAGMENTED ? "PSRAM 連續記憶體不足，請稍後重試" : "PSRAM 可用記憶體不足，請稍後重試";
 }
 static const char *memory_check(size_t internal_min, size_t internal_block, size_t external_min) {
     const char *error = memory_check_pool(MM_POOL_INTERNAL, internal_min, internal_block);
@@ -110,7 +110,7 @@ static bool release_nonessential_resources(void) {
     app_weather_cancel_join();
     app_time_service_cancel();
     if (!storage_jobs_quiesce(2000)) {
-        state(PICO_UPDATE_FAILED, "后台资源仍在使用，请稍后重试");
+        state(PICO_UPDATE_FAILED, "後臺資源仍在使用，請稍後重試");
         return false;
     }
     return true;
@@ -189,34 +189,34 @@ static bool layout_valid(void) {
 static const char *network_unavailable_notice(esp_err_t error) {
     const char *hint = memory_peak_hint(error);
     if (hint) return hint;
-    if (error == ESP_ERR_NO_MEM) return "网络启动内存不足，请稍后重试";
+    if (error == ESP_ERR_NO_MEM) return "網路啟動記憶體不足，請稍後重試";
     network_status_t network;
     network_service_get_status(&network);
     if (network.route == NETWORK_ROUTE_CELLULAR) {
-        if (!network.cellular_capability_known) return "正在检测移动网络，请稍后重试";
-        if (!network.cellular_capable) return "未检测到4G模块，请选择Wi-Fi联网";
-        if (s_network_use == NETWORK_USE_OTA && !network.cellular_enabled) return "已选择4G，请先开启移动网络";
+        if (!network.cellular_capability_known) return "正在檢測行動網路，請稍後重試";
+        if (!network.cellular_capable) return "未檢測到4G模組，請選擇Wi-Fi聯網";
+        if (s_network_use == NETWORK_USE_OTA && !network.cellular_enabled) return "已選擇4G，請先開啟行動網路";
         switch (network.cellular_state) {
-            case CELLULAR_SERVICE_NO_SIM: return "未检测到SIM卡，请检查移动网络";
-            case CELLULAR_SERVICE_SIM_NOT_READY: return "SIM卡未就绪，请检查移动网络";
-            case CELLULAR_SERVICE_NO_REGISTRATION: return "移动网络注册失败，请检查网络设置";
-            case CELLULAR_SERVICE_ERROR: return "移动网络连接失败，请稍后重试";
+            case CELLULAR_SERVICE_NO_SIM: return "未檢測到SIM卡，請檢查行動網路";
+            case CELLULAR_SERVICE_SIM_NOT_READY: return "SIM卡未就緒，請檢查行動網路";
+            case CELLULAR_SERVICE_NO_REGISTRATION: return "行動網路註冊失敗，請檢查網路設定";
+            case CELLULAR_SERVICE_ERROR: return "行動網路連線失敗，請稍後重試";
             default: break;
         }
     } else {
         wifi_transfer_status_t wifi;
         wifi_transfer_get_status(&wifi);
         if (wifi.mode == WIFI_TRANSFER_MODE_AP && wifi.state != WIFI_TRANSFER_STOPPED)
-            return "设备热点不能联网，请退出热点后重试";
+            return "裝置熱點不能聯網，請退出熱點後重試";
         if (network.route == NETWORK_ROUTE_WIFI || !network.cellular_enabled || !network.cellular_capable) {
             char ssid[33]; bool configured = false;
             if (wifi_transfer_get_saved_wifi(ssid, &configured) == ESP_OK && !configured)
-                return "尚未保存Wi-Fi，请先在网络设置中配网";
+                return "尚未儲存Wi-Fi，請先在網路設定中配網";
         }
     }
-    if (error == ESP_ERR_INVALID_STATE) return "网络正在使用或切换，请稍后重试";
-    if (error == ESP_ERR_TIMEOUT) return "网络连接超时，请重试";
-    return "联网失败，请检查所选网络后重试";
+    if (error == ESP_ERR_INVALID_STATE) return "網路正在使用或切換，請稍後重試";
+    if (error == ESP_ERR_TIMEOUT) return "網路連線超時，請重試";
+    return "聯網失敗，請檢查所選網路後重試";
 }
 #endif
 static bool ota_cancelled(void) { return atomic_load(&s_cancel); }
@@ -245,7 +245,7 @@ static bool online(bool *owned) {
     if (time(NULL) < 1704067200) {
         uint32_t utc = 0;
         if (network_service_sync_time_on_lease(&s_network_lease, &utc, ota_cancelled) != ESP_OK) {
-            state(PICO_UPDATE_FAILED, "网络对时失败，请对时后重试");
+            state(PICO_UPDATE_FAILED, "網路對時失敗，請對時後重試");
             return false;
         }
         app_time_service_note_success(utc);
@@ -261,13 +261,13 @@ static bool online(bool *owned) {
     if (!(status.mode == WIFI_TRANSFER_MODE_STA && status.network_ready)) {
         char ssid[33]; bool saved = false;
         if (wifi_transfer_get_saved_wifi(ssid, &saved) != ESP_OK || !saved) {
-            state(PICO_UPDATE_FAILED, "请先在网络设置中启用可用的联网方式"); return false;
+            state(PICO_UPDATE_FAILED, "請先在網路設定中啟用可用的聯網方式"); return false;
         }
         wifi_transfer_stop();
         wifi_transfer_cfg_t cfg = {.mode = WIFI_TRANSFER_MODE_STA, .network_only = true};
         *owned = true;
         if (wifi_transfer_start(&cfg) != ESP_OK) {
-            state(PICO_UPDATE_FAILED, "WiFi 连接失败，请重试"); return false;
+            state(PICO_UPDATE_FAILED, "WiFi 連線失敗，請重試"); return false;
         }
     }
     int64_t deadline = esp_timer_get_time() + 30000000;
@@ -278,7 +278,7 @@ static bool online(bool *owned) {
             if (time(NULL) < 1704067200) {
                 uint32_t utc;
                 if (wifi_transfer_sync_time_online(&utc) != ESP_OK) {
-                    state(PICO_UPDATE_FAILED, "网络对时失败，请对时后重试"); return false;
+                    state(PICO_UPDATE_FAILED, "網路對時失敗，請對時後重試"); return false;
                 }
                 // 主机时钟已准，后台对时不必为了同一件事再开一次无线。
                 // The host clock is accurate now, so background sync need not open the radio for
@@ -290,7 +290,7 @@ static bool online(bool *owned) {
         if (status.state == WIFI_TRANSFER_ERROR || esp_timer_get_time() >= deadline) break;
         vTaskDelay(pdMS_TO_TICKS(100));
     }
-    if (!atomic_load(&s_cancel)) state(PICO_UPDATE_FAILED, "网络连接超时，请重试");
+    if (!atomic_load(&s_cancel)) state(PICO_UPDATE_FAILED, "網路連線超時，請重試");
     return false;
 #endif
 }
@@ -405,7 +405,7 @@ static bool check_feed(void) {
     char *json = heap_caps_malloc(8193, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     pico_release_t *release = heap_caps_calloc(1, sizeof(*release), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!json || !release) {
-        state(PICO_UPDATE_FAILED, "PSRAM 分配失败，无法检查更新");
+        state(PICO_UPDATE_FAILED, "PSRAM 分配失敗，無法檢查更新");
         goto failed;
     }
     char url[192]; snprintf(url, sizeof(url), "%s?t=%lld", PICO_OTA_FEED_URL, (long long)time(NULL));
@@ -444,17 +444,17 @@ static bool check_feed(void) {
     const esp_app_desc_t *running = esp_app_get_description();
     if (strcmp(release->project, running->project_name) || !layout_valid() ||
         pico_version_compare(running->version, release->minimum_base_version) < 0) {
-        state(PICO_UPDATE_FAILED, "基础包不兼容，请先通过官网完整刷机"); goto failed;
+        state(PICO_UPDATE_FAILED, "基礎包不相容，請先透過官網完整刷機"); goto failed;
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY);
     memcpy(&s_status->release, release, sizeof(*release));
     xSemaphoreGive(s_mutex);
     state(pico_version_compare(release->version, running->version) > 0 ? PICO_UPDATE_AVAILABLE : PICO_UPDATE_LATEST,
-          pico_version_compare(release->version, running->version) > 0 ? "发现新版本，可下载安装" : "当前已是最新版本");
+          pico_version_compare(release->version, running->version) > 0 ? "發現新版本，可下載安裝" : "當前已是最新版本");
     heap_caps_free(json); heap_caps_free(release);
     return true;
 invalid_feed:
-    state(PICO_UPDATE_FAILED, "更新服务器连接失败或清单无效，请稍后重试");
+    state(PICO_UPDATE_FAILED, "更新伺服器連線失敗或清單無效，請稍後重試");
 failed:
     heap_caps_free(json); heap_caps_free(release);
     return false;
@@ -478,13 +478,13 @@ static bool download(void) {
     uint8_t *buffer = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     uint8_t *header = heap_caps_malloc(288, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     if (!release || !buffer || !header) {
-        state(PICO_UPDATE_FAILED, "内存分配失败，无法下载升级包");
+        state(PICO_UPDATE_FAILED, "記憶體分配失敗，無法下載升級包");
         goto failed;
     }
     xSemaphoreTake(s_mutex, portMAX_DELAY); *release = s_status->release; xSemaphoreGive(s_mutex);
     const esp_partition_t *target = esp_ota_get_next_update_partition(NULL);
     if (!layout_valid() || !target || target == esp_ota_get_running_partition() || release->size > target->size) {
-        state(PICO_UPDATE_FAILED, "基础包不兼容，请通过官网完整刷机"); goto failed;
+        state(PICO_UPDATE_FAILED, "基礎包不相容，請透過官網完整刷機"); goto failed;
     }
     int code = -1; int64_t length = -1;
     esp_http_client_handle_t client = NULL;
@@ -562,14 +562,14 @@ static bool download(void) {
     }
     if (error != ESP_OK) {
         if (begun) flash_finish(handle, true);
-        state(PICO_UPDATE_FAILED, "下载中断或校验失败，当前版本保持不变"); goto failed;
+        state(PICO_UPDATE_FAILED, "下載中斷或校驗失敗，當前版本保持不變"); goto failed;
     }
     error = flash_finish(handle, false);
-    if (error != ESP_OK) { state(PICO_UPDATE_FAILED, "固件校验失败，当前版本保持不变"); goto failed; }
+    if (error != ESP_OK) { state(PICO_UPDATE_FAILED, "韌體校驗失敗，當前版本保持不變"); goto failed; }
     // 后台仅验证镜像；主线程处理最终启动切换，取消时不影响当前槽。
     // The worker verifies only; the main task commits boot, so cancellation cannot change the running slot.
     xSemaphoreTake(s_mutex, portMAX_DELAY); s_verified = target; xSemaphoreGive(s_mutex);
-    state(PICO_UPDATE_READY, "校验通过，即将重启安装");
+    state(PICO_UPDATE_READY, "校驗透過，即將重啟安裝");
     heap_caps_free(release); heap_caps_free(buffer); heap_caps_free(header);
     return true;
 failed:
@@ -599,7 +599,7 @@ static void worker(void *arg) {
 #else
     if (owned) wifi_transfer_stop();
 #endif
-    if (atomic_load(&s_cancel)) state(PICO_UPDATE_CANCELLED, "已取消，当前版本保持不变");
+    if (atomic_load(&s_cancel)) state(PICO_UPDATE_CANCELLED, "已取消，當前版本保持不變");
     xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; ++s_status->revision; xSemaphoreGive(s_mutex);
     xSemaphoreGive(s_done);
     vTaskDelete(NULL);
@@ -659,12 +659,12 @@ static esp_err_t start(bool downloading, bool automatic) {
     s_status->busy = true; s_status->received = 0;
     xSemaphoreGive(s_mutex);
     state(downloading ? PICO_UPDATE_DOWNLOADING : PICO_UPDATE_CHECKING,
-          downloading ? "正在下载，短暂断网会自动重连" : "正在连接并检查更新");
+          downloading ? "正在下載，短暫斷網會自動重連" : "正在連線並檢查更新");
     BaseType_t task_result = xTaskCreate(worker, "mogo_ota", kOtaTaskStackBytes, (void *)(uintptr_t)peak, 4, NULL);
     if (task_result != pdPASS) {
         memory_peak_finish(peak);
         xSemaphoreTake(s_mutex, portMAX_DELAY); s_status->busy = false; xSemaphoreGive(s_mutex);
-        state(PICO_UPDATE_FAILED, "内存不足，无法创建更新任务"); return ESP_ERR_NO_MEM;
+        state(PICO_UPDATE_FAILED, "記憶體不足，無法建立更新任務"); return ESP_ERR_NO_MEM;
     }
     s_joinable = true;
     return ESP_OK;
@@ -679,7 +679,7 @@ void pico_online_cancel_join(void) {
         xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false;
     }
     s_verified = NULL;
-    if (s_status && s_status->state == PICO_UPDATE_READY) state(PICO_UPDATE_CANCELLED, "已取消，当前版本保持不变");
+    if (s_status && s_status->state == PICO_UPDATE_READY) state(PICO_UPDATE_CANCELLED, "已取消，當前版本保持不變");
 }
 esp_err_t pico_online_commit(void) {
     if (s_joinable) { xSemaphoreTake(s_done, portMAX_DELAY); s_joinable = false; }
@@ -693,6 +693,6 @@ esp_err_t pico_online_commit(void) {
     epd_flash_end();
     pico_online_display_end(held);
     s_verified = NULL;
-    if (error != ESP_OK) state(PICO_UPDATE_FAILED, "启动切换失败，当前版本保持不变");
+    if (error != ESP_OK) state(PICO_UPDATE_FAILED, "啟動切換失敗，當前版本保持不變");
     return error;
 }

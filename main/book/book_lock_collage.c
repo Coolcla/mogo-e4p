@@ -590,7 +590,7 @@ static bool captions_draw(uint8_t *fb, unsigned count) {
     const int title_px = ttf_em_height_px(48), unit_px = ttf_em_height_px(27);
     snprintf(name, sizeof(name), "%s", app_settings_device_name());
     do {
-        snprintf(title, sizeof(title), "%s 的书架", name);
+        snprintf(title, sizeof(title), "%s 的書架", name);
         if (ttf_text_width_px(title_px, title) <= 600) break;
         truncate_name(name);
     } while (name[0]);

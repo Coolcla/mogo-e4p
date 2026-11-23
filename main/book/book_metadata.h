@@ -10,5 +10,6 @@
 
 bool book_metadata_supported(const char *path);
 esp_err_t book_metadata_read(const char *path, char *title, size_t title_cap, char *author, size_t author_cap);
+esp_err_t book_metadata_identifier(const char *path, char *identifier, size_t identifier_cap);
 esp_err_t book_metadata_cached(const char *path, char *title, size_t title_cap, char *author, size_t author_cap);
 esp_err_t book_metadata_cover_bounded(const char *path, uint8_t **data, size_t *size, bool *png, size_t budget);

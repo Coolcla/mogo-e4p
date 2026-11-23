@@ -12,7 +12,7 @@ typedef struct { int32_t serial; int16_t year; int8_t month; uint8_t days; } cal
 typedef struct { uint16_t offset; uint8_t cycle; } calendar_month_cycle_t;
 #include "assets/calendar_data.h"
 #define COUNT(a) (sizeof(a)/sizeof((a)[0]))
-static const char *const month_names[] = {"正月","二月","三月","四月","五月","六月","七月","八月","九月","十月","冬月","腊月"};
+static const char *const month_names[] = {"正月","二月","三月","四月","五月","六月","七月","八月","九月","十月","冬月","臘月"};
 static const char *const day_names[] = {"初一","初二","初三","初四","初五","初六","初七","初八","初九","初十","十一","十二","十三","十四","十五","十六","十七","十八","十九","二十","廿一","廿二","廿三","廿四","廿五","廿六","廿七","廿八","廿九","三十"};
 static int days_in_month(int y,int m) {
     static const uint8_t days[]={31,28,31,30,31,30,31,31,30,31,30,31};
@@ -53,9 +53,9 @@ bool calendar_date(int year,int month,int day,calendar_date_t *out) {
         .day_cycle=(offset+54)%60};
     unsigned pair=(unsigned)(out->month_cycle*60+out->day_cycle);
     out->yi=calendar_yiji[calendar_yiji_pairs[pair][0]];out->ji=calendar_yiji[calendar_yiji_pairs[pair][1]];
-    static const char *const wealth[]={"东北","东北","西南","西南","正北","正北","正东","正东","正南","正南"};
-    static const char *const animals[]={"鼠","牛","虎","兔","龙","蛇","马","羊","猴","鸡","狗","猪"};
-    static const char *const sha[]={"南","东","北","西"};
+    static const char *const wealth[]={"東北","東北","西南","西南","正北","正北","正東","正東","正南","正南"};
+    static const char *const animals[]={"鼠","牛","虎","兔","龍","蛇","馬","羊","猴","雞","狗","豬"};
+    static const char *const sha[]={"南","東","北","西"};
     out->wealth=wealth[out->day_cycle%10];out->clash=animals[(out->day_cycle+6)%12];out->sha=sha[out->day_cycle%4];
     unsigned spirit=(unsigned)(out->month_cycle%12*60+out->day_cycle);
     unsigned role=(unsigned)(out->month_cycle%12*12+out->day_cycle%12);
@@ -70,8 +70,8 @@ bool calendar_date(int year,int month,int day,calendar_date_t *out) {
 bool calendar_from_utc(int64_t ms,calendar_date_t *out) {
     if(out)memset(out,0,sizeof(*out));
     if(ms<INT64_C(1704067200000)||ms>=INT64_C(4102416000000))return false;
-    time_t civil=(time_t)(ms/1000+8*3600);struct tm tm={0};
-    return gmtime_r(&civil,&tm)&&calendar_date(tm.tm_year+1900,tm.tm_mon+1,tm.tm_mday,out);
+    time_t utc=(time_t)(ms/1000);struct tm local={0};
+    return localtime_r(&utc,&local)&&calendar_date(local.tm_year+1900,local.tm_mon+1,local.tm_mday,out);
 }
 void calendar_lunar_text(const calendar_date_t *d,bool short_label,char *out,unsigned capacity) {
     if(!out||!capacity)return;
@@ -79,5 +79,5 @@ void calendar_lunar_text(const calendar_date_t *d,bool short_label,char *out,uns
     if(short_label)for(int i=0;i<2;++i){int day=0;const char *term=calendar_term(d->year,d->month,i,&day);if(day==d->day){snprintf(out,capacity,"%s",term);return;}}
     int month=d->lunar_month<0?-d->lunar_month:d->lunar_month;
     if(short_label&&d->lunar_day!=1)snprintf(out,capacity,"%s",day_names[d->lunar_day-1]);
-    else snprintf(out,capacity,"%s%s%s%s",short_label?"":"农历",d->lunar_month<0?"闰":"",month_names[month-1],short_label?"":day_names[d->lunar_day-1]);
+    else snprintf(out,capacity,"%s%s%s%s",short_label?"":"農曆",d->lunar_month<0?"閏":"",month_names[month-1],short_label?"":day_names[d->lunar_day-1]);
 }

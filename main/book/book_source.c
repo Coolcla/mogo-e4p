@@ -117,6 +117,9 @@ uint32_t book_chapter_byte_offset(size_t i) {
     return s_epub ? book_epub_chapter_byte_offset(s_epub, i) : i < s_book.count ? s_book.entries[i].offset : 0;
 }
 book_kind_t book_kind(void) { return s_mobi ? BOOK_KIND_MOBI : s_epub ? BOOK_KIND_EPUB : BOOK_KIND_TXT; }
+bool book_chapter_vertical(size_t chapter) {
+    return s_epub && book_epub_chapter_vertical(s_epub, chapter);
+}
 esp_err_t book_chapter_image(size_t chapter, const char *src, uint8_t **data, size_t *size, bool *png) {
     if (s_mobi) return book_mobi_image(s_mobi, chapter, src, data, size, png);
     return s_epub ? book_epub_image(s_epub, chapter, src, data, size, png) : ESP_ERR_NOT_SUPPORTED;

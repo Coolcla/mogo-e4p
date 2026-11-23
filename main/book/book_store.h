@@ -17,6 +17,7 @@
 #include "book_path.h"
 
 #define BOOK_STORE_FLASH_FILE_MAX (1024U * 1024U)
+#define BOOK_STORE_SD_FILE_MAX (50U * 1024U * 1024U)
 #define BOOK_STORE_ROOT_MAX 3
 
 typedef struct {
@@ -34,7 +35,7 @@ esp_err_t book_store_roots(book_store_root_t out[BOOK_STORE_ROOT_MAX], int* n);
 bool book_store_roots_degraded(void);
 /// 选择上传目录；SD 已挂载时不回退掩盖其目录错误。/ Select upload root; do not hide a mounted SD directory error.
 esp_err_t book_store_upload_root(book_store_root_t* out);
-/// 单文件限制；SD 为 SIZE_MAX。/ File limit; SIZE_MAX for SD.
+/// 單檔限制；內建 1 MiB、TF 卡 50 MiB。/ Per-file limit; 1 MiB for flash, 50 MiB for SD.
 size_t book_store_file_limit(const book_store_root_t* root);
 /// 查询实时剩余容量，错误返回 0。/ Query current free capacity, returning zero on error.
 uint64_t book_store_free_bytes(const book_store_root_t* root);

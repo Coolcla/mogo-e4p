@@ -174,8 +174,8 @@ void book_shelf_categories_set_sort(book_shelf_categories_t *state, bool recent_
 }
 
 const char *book_shelf_categories_name(const book_shelf_categories_t *state, int index) {
-    if (index == 1) return "未分类";
-    if (!state->entries || index < 2 || index >= state->count) return "全部书籍";
+    if (index == 1) return "未分類";
+    if (!state->entries || index < 2 || index >= state->count) return "全部書籍";
     if (state->collection) return state->entries[index].path;
     const char *slash = strrchr(state->entries[index].path, '/');
     return slash ? slash + 1 : state->entries[index].path;

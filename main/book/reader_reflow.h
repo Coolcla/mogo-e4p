@@ -50,3 +50,6 @@ bool reader_reflow_indent(const reader_reflow_t *reflow, int em, int adjustment)
 /// Write settings and reflow under the held lock; restore old settings/layout on failure. Caller unlocks, reports failure and handles images/progress on success.
 /// 书内样式先构建后保存，保存失败也恢复原布局。/ Book styles persist only after rebuilding and restore the layout on write failure too.
 bool reader_reflow_option_locked(const reader_reflow_t *reflow, int kind, bool previous, size_t offset);
+/// Commit follow-book/horizontal/vertical while preserving the current source byte anchor.
+bool reader_reflow_direction_locked(const reader_reflow_t *reflow, uint8_t direction,
+                                    bool previous_vertical, bool next_vertical, size_t offset);

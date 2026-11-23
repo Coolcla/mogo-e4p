@@ -144,7 +144,7 @@ bool home_library_quiesce(unsigned timeout_ms) {
 bool home_library_recent(bool recent) {
     if (recent == app_home_library_recent()) return true;
     if (!app_home_library_set_recent(recent)) {
-        snprintf(s_notice, sizeof(s_notice), "设置保存失败，请稍后重试"); return false;
+        snprintf(s_notice, sizeof(s_notice), "設定儲存失敗，請稍後重試"); return false;
     }
     (void)reconcile_covers(NULL); s_need_generation = true; s_notice[0] = 0; return true;
 }
@@ -168,7 +168,7 @@ static void scan(library_job_t *job) {
     nvs_handle_t hidden = 0, progress = 0;
     esp_err_t error = nvs_open("rp_shelf", NVS_READONLY, &hidden);
     if (error != ESP_OK && error != ESP_ERR_NVS_NOT_FOUND) {
-        job->notice = "书架状态读取失败，请稍后重试"; return;
+        job->notice = "書架狀態讀取失敗，請稍後重試"; return;
     }
     error = nvs_open("rp_books", NVS_READONLY, &progress);
     request.progress = progress;
@@ -192,8 +192,8 @@ static void scan(library_job_t *job) {
                 (!job->flash && !strncmp(entries[i].path, "/flash/", 7))) entries[i].removed = true;
     }
     if (!scan_cancelled(job)) {
-        if (truncated) job->notice = "书目较多，暂不能完整读取";
-        else if (unreadable) job->notice = "书库暂不可用，请稍后重试";
+        if (truncated) job->notice = "書目較多，暫不能完整讀取";
+        else if (unreadable) job->notice = "書庫暫不可用，請稍後重試";
         else {
             if (job->work == LIBRARY_FULL) {
                 book_mini_library_update(&job->model, entries, (size_t)count, job->shuffle, random_value, NULL);
@@ -210,7 +210,7 @@ static void scan(library_job_t *job) {
             }
             job->updated = true;
             job->complete = !skipped;
-            if (skipped) job->notice = "部分书目无法读取";
+            if (skipped) job->notice = "部分書目無法讀取";
         }
     }
     if (hidden) nvs_close(hidden);
@@ -315,7 +315,7 @@ static bool poll_scan(void) {
     }
     const bool repaint = s_work >= LIBRARY_PROGRESS;
     s_work = LIBRARY_NONE; s_shuffle = false;
-    if (repaint) snprintf(s_notice, sizeof(s_notice), "书目较多，暂不能完整读取");
+    if (repaint) snprintf(s_notice, sizeof(s_notice), "書目較多，暫不能完整讀取");
     return repaint;
 }
 

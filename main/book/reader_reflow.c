@@ -137,3 +137,20 @@ bool reader_reflow_option_locked(const reader_reflow_t *reflow, int kind, bool p
     }
     return ok;
 }
+
+bool reader_reflow_direction_locked(const reader_reflow_t *reflow, uint8_t direction,
+                                    bool previous_vertical, bool next_vertical, size_t offset) {
+    if (direction > 2 || direction == app_settings_book_direction()) return false;
+    book_layout_set_vertical(next_vertical);
+    reflow->refresh_lead();
+    bool ok = reflow->build();
+    if (!ok) {
+        book_layout_set_vertical(previous_vertical);
+        reflow->refresh_lead();
+        (void)reflow->build();
+        return false;
+    }
+    reflow->position->page = book_layout_page_for_offset(offset);
+    app_settings_set_book_direction((app_book_layout_direction_t)direction);
+    return true;
+}

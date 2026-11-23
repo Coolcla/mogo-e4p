@@ -62,6 +62,7 @@
 #include "network_service.h"
 #include "memory_manager.h"
 #include "app_lifecycle.h"
+#include "weather_service.h"
 
 static const char* TAG = "read_pico";
 extern const app_desc_t app_boot_recovery;
@@ -115,7 +116,7 @@ static bool images_match_panel(void) {
 // 中文：每行带时间、开机秒数、codepoint、gid、字号、原因、PSRAM 余量和字体路径。
 // English: each line carries the time, uptime, codepoint, gid, pixel size, reason, free PSRAM
 // and the active face.
-#define GLYPH_DIAG_PATH "/sdcard/mogo-font.log"
+#define GLYPH_DIAG_PATH "/sdcard/fan-font.log"
 static void glyph_failure_note(uint32_t codepoint, int gid, int pixel_height,
                                ttf_font_failure_t reason) {
     static unsigned logged;
@@ -167,6 +168,7 @@ void app_main(void) {
 #endif
     ESP_LOGI(TAG, "startup reset=%d stack=%u", (int)reset, (unsigned)uxTaskGetStackHighWaterMark(NULL));
     app_settings_init();
+    app_weather_init();
     int screen_x, screen_y;
     app_settings_screen_offset(&screen_x, &screen_y);
     display_apply_screen_offset(screen_x, screen_y);

@@ -275,6 +275,13 @@ void app_settings_set_book_fonts(bool on);
 /// body layout and illustration pagination are affected.
 bool app_settings_book_vertical(void);
 void app_settings_set_book_vertical(bool on);
+typedef enum {
+    APP_BOOK_LAYOUT_FOLLOW = 0,
+    APP_BOOK_LAYOUT_HORIZONTAL = 1,
+    APP_BOOK_LAYOUT_VERTICAL = 2,
+} app_book_layout_direction_t;
+app_book_layout_direction_t app_settings_book_direction(void);
+void app_settings_set_book_direction(app_book_layout_direction_t direction);
 /// 章节题头字号：章名字号 px 八档，编号恒为它的一半，带内几何按它缩放；默认档等于历史尺寸。
 /// 上限受 294 px 题头带约束：84 px 时细线离带底只剩 2 px，78 px 保留 13 px，取 78 为产品上限。
 /// Chapter heading size: eight levels of chapter-title px with the label always half of it, scaling

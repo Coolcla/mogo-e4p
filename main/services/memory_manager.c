@@ -324,7 +324,7 @@ void mm_get_clean_report(mm_clean_report_t *out) {
 
 const char *mm_owner_name(mm_owner_t owner) {
     static const char *const names[MM_OWNER_COUNT] = {
-        "系统/显示", "阅读/字体", "UI 缓存", "网络传输", "文件任务", "未追踪/外部",
+        "系統/顯示", "閱讀/字型", "UI 快取", "網路傳輸", "檔案任務", "未追蹤/外部",
     };
     return owner >= 0 && owner < MM_OWNER_COUNT ? names[owner] : "未知";
 }

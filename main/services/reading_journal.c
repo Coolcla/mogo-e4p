@@ -247,8 +247,8 @@ bool app_reading_journal_next_scene(void) {
 const reading_journal_model_t *app_reading_journal_model(void) { return &s_model; }
 const reading_journal_date_t *app_reading_journal_today(void) { return &s_today; }
 const char *app_reading_journal_notice(void) {
-    if (!s_today.serial) return "请先校准日期和时间";
-    if (s_capacity_error) return "记录空间不足，部分记录未保存";
-    if (s_storage_error) return "记录暂未保存，请检查内置存储";
+    if (!s_today.serial) return "請先校準日期和時間";
+    if (s_capacity_error) return "記錄空間不足，部分記錄未儲存";
+    if (s_storage_error) return "記錄暫未儲存，請檢查內建儲存";
     return "";
 }

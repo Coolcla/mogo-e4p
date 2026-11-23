@@ -45,7 +45,7 @@ void ui_reader_notice_draw(uint8_t *fb, const char *message, unsigned system_fon
     EpdRect badge = {card.x + 28, card.y + 24, 140 + notice_extra(scale, 80), badge_height};
     ui_fill_round_rect(fb, badge, 6, UI_GRAY_BLACK);
     ui_text_box(fb, (EpdRect){badge.x + 10, badge.y + 2, badge.width - 20, badge.height - 4},
-                22 * (int)scale / 100, "阅读提示", EPD_DRAW_ALIGN_CENTER, true);
+                22 * (int)scale / 100, "閱讀提示", EPD_DRAW_ALIGN_CENTER, true);
     ui_draw_icon(fb, card.x + card.width - 52, badge.y + badge.height / 2, 36, UI_ICON_BOOK_OPEN, UI_GRAY_BLACK);
 
     int title_y = badge.y + badge.height + 16;

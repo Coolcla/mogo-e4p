@@ -64,6 +64,7 @@ uint32_t book_total_bytes(void);
 uint32_t book_chapter_byte_offset(size_t i);
 /// 当前类型；关闭时默认 TXT。/ Current kind, defaulting to TXT when closed.
 book_kind_t book_kind(void);
+bool book_chapter_vertical(size_t chapter);
 
 /// 按书源能力启用章节题头，MOBI 不伪装为 EPUB。/ Enable chapter headings by capability without disguising MOBI as EPUB.
 static inline bool book_has_chapter_headings(void) { return book_kind() != BOOK_KIND_TXT; }

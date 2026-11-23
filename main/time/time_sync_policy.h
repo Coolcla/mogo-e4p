@@ -31,7 +31,7 @@
 /// Records more than a day ahead of the clock mean the clock moved back; drop them and sync again.
 #define APP_TIME_SYNC_BACKWARD_TOLERANCE_SEC (24u * 3600u)
 
-/// 时钟是否有效（不是"从没对过时"的 1970 附近）。/ Whether the wall clock is plausible.
+/// 时钟是否有效（不是"從沒對過時"的 1970 附近）。/ Whether the wall clock is plausible.
 static inline bool app_time_sync_clock_valid(uint32_t now) {
     return now >= APP_TIME_SYNC_CLOCK_FLOOR;
 }
@@ -44,7 +44,7 @@ static inline bool app_time_sync_record_usable(uint32_t now, uint32_t stamp) {
 }
 
 /// 现在是否该联网校时。last_ok/last_try 为 0 表示从未成功 / 从未尝试；记录超前（时钟刚被调回）
-/// 按"刚校过"处理，避免追赶式重复联网。
+/// 按"剛校過"处理，避免追赶式重复联网。
 /// Whether a network sync is due now; zero last_ok/last_try mean never succeeded / never tried. A
 /// record ahead of the clock is treated as fresh so a backwards clock cannot cause a retry storm.
 static inline bool app_time_sync_due(uint32_t now, uint32_t last_ok, uint32_t last_try) {

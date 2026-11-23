@@ -156,7 +156,7 @@ void ui_power_dialog_draw_controls(uint8_t *fb, const ui_power_dialog_t *dialog,
     ui_fill_round_rect(fb, track, UI_POWER_TRACK_H / 2, 0xe0);
     ui_draw_control_frame(fb, track, UI_POWER_TRACK_H / 2, 0x60);
     ui_text_box(fb, (EpdRect){254, UI_POWER_TRACK_Y + 28, 302, 56}, 30,
-        "滑动关机", EPD_DRAW_ALIGN_CENTER, false);
+        "滑動關機", EPD_DRAW_ALIGN_CENTER, false);
     int cx = UI_POWER_THUMB_X + dialog->position;
     epd_fill_circle(cx, UI_POWER_THUMB_Y, UI_POWER_THUMB_R, UI_GRAY_WHITE, fb);
     epd_draw_circle(cx, UI_POWER_THUMB_Y, UI_POWER_THUMB_R, UI_GRAY_BLACK, fb);
@@ -170,12 +170,12 @@ void ui_power_dialog_draw(uint8_t *fb, const ui_power_dialog_t *dialog) {
     if (!fb || !dialog) return;
     ui_clear_page(fb);
     ui_text_box(fb, (EpdRect){48, 166, UI_LOCK_WIDTH - 96, 84}, 44,
-        "电源选项", EPD_DRAW_ALIGN_CENTER, false);
+        "電源選項", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_box(fb, (EpdRect){72, 458, UI_LOCK_WIDTH - 144, 48}, 24,
-        "向右滑动，松手后关机", EPD_DRAW_ALIGN_CENTER, false);
+        "向右滑動，鬆手後關機", EPD_DRAW_ALIGN_CENTER, false);
     ui_power_dialog_draw_controls(fb, dialog, ui_power_dialog_rect());
     ui_text_box(fb, (EpdRect){UI_POWER_RESTART_X - 90, 1044, 180, 54}, 28,
-        "重启", EPD_DRAW_ALIGN_CENTER, false);
+        "重啟", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_box(fb, (EpdRect){UI_POWER_CANCEL_X - 90, 1044, 180, 54}, 28,
         "取消", EPD_DRAW_ALIGN_CENTER, false);
 }
@@ -184,8 +184,8 @@ void ui_power_final_draw(uint8_t *fb, bool restarting) {
     ui_clear_page(fb);
     const int cx = UI_LOCK_WIDTH / 2;
     ui_draw_icon(fb, cx, 486, 72, restarting ? UI_ICON_ROTATE_CW : UI_ICON_POWER, UI_GRAY_BLACK);
-    ui_text(fb, cx, 548, 48, restarting ? "正在重启" : "mogo 已关机", EPD_DRAW_ALIGN_CENTER, false);
-    if (!restarting) ui_text(fb, cx, 624, 26, "长按电源键开机", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text(fb, cx, 548, 48, restarting ? "正在重啟" : "EP4已關機", EPD_DRAW_ALIGN_CENTER, false);
+    if (!restarting) ui_text(fb, cx, 624, 26, "長按電源鍵開機", EPD_DRAW_ALIGN_CENTER, false);
 }
 
 void ui_power_shutdown_prepare(uint8_t *fb) {
@@ -208,7 +208,7 @@ void ui_power_shutdown_prepare(uint8_t *fb) {
     if (!ok) { ui_power_final_draw(fb, false); return; }
     if (value->show_hint) {
         epd_fill_rect((EpdRect){132, 1080, 420, 100}, 255, fb);
-        ui_text(fb, 342, 1096, 27, "mogo 已关机", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text(fb, 342, 1140, 24, "长按电源键开机", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text(fb, 342, 1096, 27, "EP4已關機", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text(fb, 342, 1140, 24, "長按電源鍵開機", EPD_DRAW_ALIGN_CENTER, false);
     }
 }

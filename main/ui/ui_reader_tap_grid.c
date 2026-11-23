@@ -32,12 +32,12 @@ void ui_reader_tap_grid_draw(uint8_t *fb, const EpdRect cells[9], const char *co
         ui_text_box(fb,label,28,labels[i],EPD_DRAW_ALIGN_CENTER,false);
     }
     ui_fill_rect_fast((EpdRect){0,0,width,106},UI_GRAY_WHITE,fb);
-    ui_text_box(fb,(EpdRect){140,14,404,48},30,"九宫格翻页",EPD_DRAW_ALIGN_CENTER,false);
-    ui_text_box(fb,(EpdRect){140,64,404,32},18,error&&error[0]?error:"点选区域，设置它的功能",EPD_DRAW_ALIGN_CENTER,false);
+    ui_text_box(fb,(EpdRect){140,14,404,48},30,"九宮格翻頁",EPD_DRAW_ALIGN_CENTER,false);
+    ui_text_box(fb,(EpdRect){140,64,404,32},18,error&&error[0]?error:"點選區域，設定它的功能",EPD_DRAW_ALIGN_CENTER,false);
     EpdRect cancel=ui_reader_tap_cancel_rect(),save=ui_reader_tap_save_rect();
     ui_text_box(fb,cancel,25,"取消",EPD_DRAW_ALIGN_CENTER,false);
     ui_fill_round_rect(fb,save,16,UI_GRAY_BLACK);
-    ui_text_box(fb,save,25,"保存",EPD_DRAW_ALIGN_CENTER,true);
+    ui_text_box(fb,save,25,"儲存",EPD_DRAW_ALIGN_CENTER,true);
 }
 
 void ui_reader_tap_picker_draw(uint8_t *fb, unsigned cell, const char *const options[UI_READER_TAP_ACTION_COUNT], int selected) {
@@ -45,7 +45,7 @@ void ui_reader_tap_picker_draw(uint8_t *fb, unsigned cell, const char *const opt
     ui_draw_control_frame(fb,(EpdRect){12,494,660,722},26,UI_GRAY_BLACK);
     EpdRect back=ui_reader_tap_picker_back_rect();
     ui_draw_icon(fb,back.x+30,back.y+34,32,UI_ICON_CHEVRON_LEFT,UI_GRAY_BLACK);
-    char title[48];snprintf(title,sizeof(title),"区域 %u 的功能",cell+1);
+    char title[48];snprintf(title,sizeof(title),"區域 %u 的功能",cell+1);
     ui_text_box(fb,(EpdRect){162,522,462,64},30,title,EPD_DRAW_ALIGN_LEFT,false);
     for(unsigned i=0;i<UI_READER_TAP_ACTION_COUNT;++i){
         EpdRect r=ui_reader_tap_option_rect(i);bool active=(int)i==selected;

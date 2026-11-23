@@ -50,7 +50,7 @@ void ui_lock_clock_draw(uint8_t *fb, const ui_lock_clock_face_t *face) {
     } else {
         for (int row = 0; row < 2; ++row) for (int column = 0; column < 2; ++column)
             ui_fill_rect_fast((EpdRect){222+column*151,392+row*208,88,20},UI_GRAY_BLACK,fb);
-        centered(fb,800,26,"请先校准时间",2);
+        centered(fb,800,26,"請先校準時間",2);
     }
     ui_nav_battery_draw(fb,322,914);
 }

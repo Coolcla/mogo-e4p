@@ -71,13 +71,27 @@ idf_build_get_property(image_python PYTHON)
 set(builtin_image_dir "${CMAKE_CURRENT_BINARY_DIR}/builtin_images")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_LIST_DIR}/assets/lock_4bpp.bin"
+    "${CMAKE_CURRENT_LIST_DIR}/assets/startup_4bpp.bin"
+    "${CMAKE_CURRENT_LIST_DIR}/assets/builtin.ttf"
     "${CMAKE_CURRENT_LIST_DIR}/assets/weather_backgrounds.bin"
+    "${CMAKE_CURRENT_LIST_DIR}/../tools/compress_builtin_font.py"
     "${CMAKE_CURRENT_LIST_DIR}/../tools/compress_builtin_images.py")
 execute_process(COMMAND "${image_python}" "${CMAKE_CURRENT_LIST_DIR}/../tools/compress_builtin_images.py"
     --source "${CMAKE_CURRENT_LIST_DIR}/assets" --output "${builtin_image_dir}"
     RESULT_VARIABLE builtin_image_result)
 if(NOT builtin_image_result EQUAL 0)
     message(FATAL_ERROR "Built-in image compression failed")
+endif()
+execute_process(COMMAND "${image_python}" "${CMAKE_CURRENT_LIST_DIR}/../tools/compress_builtin_font.py"
+    --source "${CMAKE_CURRENT_LIST_DIR}/assets/builtin.ttf"
+    --output "${builtin_image_dir}/builtin.ttf.z"
+    RESULT_VARIABLE builtin_font_result)
+if(NOT builtin_font_result EQUAL 0)
+    message(FATAL_ERROR "Built-in font compression failed")
+endif()
+file(SIZE "${builtin_image_dir}/builtin.ttf.z" builtin_font_packed_size)
+if(builtin_font_packed_size GREATER 716800)
+    message(FATAL_ERROR "Compressed built-in font exceeds the 700 KiB app budget")
 endif()
 file(SIZE "${CMAKE_CURRENT_LIST_DIR}/assets/weather_backgrounds.bin" weather_background_size)
 if(NOT weather_background_size EQUAL 310464)
@@ -92,7 +106,6 @@ idf_component_register(
         "apps/app_boot_recovery.c"
         "ota/ota_update.c"
         "ota/ota_online.c"
-        "ota/ota_auto.c"
         "ota/ota_release.c"
         "display/display.c"
         "display/display_orientation.c"
@@ -121,11 +134,14 @@ idf_component_register(
         "services/shutdown_wallpaper.c"
         "services/weather_model.c"
         "services/weather_service.c"
+        "services/webdav_service.c"
         "services/reading_journal_model.c"
         "services/reading_journal.c"
+        "services/reading_sync_service.c"
         "services/home_library.c"
         "power/sleep.c"
         "time/time_service.c"
+        "time/timezone.c"
         "lock/lock_pin.c"
         "lock/lock_pin_flow.c"
         "lock/lock_screen.c"
@@ -255,8 +271,9 @@ idf_component_register(
         "boot" "display" "lock" "power" "ota" "settings" "time" "diagnostics"
     EMBED_FILES
         "${builtin_image_dir}/lock_4bpp.kbz"
+        "${builtin_image_dir}/startup_4bpp.kbz"
         "assets/avatar_4bpp.bin"
-        "assets/builtin.ttf"
+        "${builtin_image_dir}/builtin.ttf.z"
         "${builtin_image_dir}/weather_backgrounds.wbr"
         "assets/ui-hanzi.bin"
         "assets/display-test.png"

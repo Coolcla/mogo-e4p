@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 static const char *const weekdays[]={"星期日","星期一","星期二","星期三","星期四","星期五","星期六"};
-static const char *const animals[]={"鼠","牛","虎","兔","龙","蛇","马","羊","猴","鸡","狗","猪"};
+static const char *const animals[]={"鼠","牛","虎","兔","龍","蛇","馬","羊","猴","雞","狗","豬"};
 static void text(uint8_t *fb,int x,int y,int px,const char *s,enum EpdFontFlags align,bool white) {
     ui_text_fixed_vc(fb,x,y,px,s,align,white);
 }
@@ -136,9 +136,9 @@ static void stems(const calendar_date_t *d,char *out,unsigned capacity) {
 }
 static void folk(uint8_t *fb,const calendar_date_t *d,int x,int right,int y) {
     char s[96];
-    snprintf(s,sizeof(s),"冲%s（%s）· 煞%s",d->clash,calendar_cycle_name((d->day_cycle+54)%60),d->sha);
+    snprintf(s,sizeof(s),"衝%s（%s）· 煞%s",d->clash,calendar_cycle_name((d->day_cycle+54)%60),d->sha);
     fitted(fb,x,y,24,(right-x)*2/3,s,EPD_DRAW_ALIGN_LEFT,false);
-    snprintf(s,sizeof(s),"财神 · %s",d->wealth);text(fb,right,y,24,s,EPD_DRAW_ALIGN_RIGHT,false);
+    snprintf(s,sizeof(s),"財神 · %s",d->wealth);text(fb,right,y,24,s,EPD_DRAW_ALIGN_RIGHT,false);
 }
 static void season(uint8_t *fb,const calendar_date_t *d,int y) {
     for(int i=0;i<2;++i){
@@ -157,7 +157,7 @@ static void yiji(uint8_t *fb,const char *words,int x,int top,int width,int count
         ++items;p=end?end+1:p+n;
     }
     if(*p)strcat(rows[1],"…");
-    if(!rows[0][0])snprintf(rows[0],sizeof(rows[0]),"无");
+    if(!rows[0][0])snprintf(rows[0],sizeof(rows[0]),"無");
     for(int i=0;i<2;++i)if(rows[i][0])fitted(fb,x,top+i*(px+10),px,width,rows[i],EPD_DRAW_ALIGN_LEFT,false);
 }
 static void badge(uint8_t *fb,int x,int y,int size,bool yi) {
@@ -182,7 +182,7 @@ static int almanac_words(uint8_t *fb,const char *words,int x,int y,int width,int
         memcpy(rows[row]+offset,p,length);rows[row][offset+length]=0;
         p=end?end+1:p+length;
     }
-    if(!rows[0][0]&&row==0)snprintf(rows[0],sizeof(rows[0]),"无");
+    if(!rows[0][0]&&row==0)snprintf(rows[0],sizeof(rows[0]),"無");
     if(height)y+=(height-row*34)/2;
     for(int i=0;i<=row;++i)if(rows[i][0])text(fb,x,y+i*34,px,rows[i],align,false);
     return row+1;
@@ -233,7 +233,7 @@ static void almanac_details(uint8_t *fb,const calendar_date_t *d) {
     almanac_cut_frame(fb,(EpdRect){57,738,570,123},9,UI_GRAY_BLACK);
     almanac_cut_frame(fb,(EpdRect){61,742,562,115},7,UI_GRAY_BLACK);
     almanac_plaque(fb,(EpdRect){266,721,152,36},"三神吉位",24);
-    const char *const labels[]={"财神","喜神","福神"};
+    const char *const labels[]={"財神","喜神","福神"};
     const char *const positions[]={d->wealth,d->joy,d->fortune};
     for(int i=0;i<3;++i){
         int x=152+i*190;
@@ -247,7 +247,7 @@ static void almanac_details(uint8_t *fb,const calendar_date_t *d) {
     }
     almanac_cut_frame(fb,(EpdRect){56,884,572,181},10,UI_GRAY_BLACK);
     almanac_cut_frame(fb,(EpdRect){60,888,564,173},8,UI_GRAY_BLACK);
-    const char *const titles[]={"吉神宜趋","凶煞宜忌"};
+    const char *const titles[]={"吉神宜趨","凶煞宜忌"};
     const char *const spirits[]={d->auspicious,d->inauspicious};
     for(int i=0;i<2;++i){
         almanac_plaque(fb,(EpdRect){74,903+i*92,122,40},titles[i],24);
@@ -261,7 +261,7 @@ static void almanac_details(uint8_t *fb,const calendar_date_t *d) {
     almanac_plaque(fb,(EpdRect){450,1083,66,32},"建除",22);
     snprintf(s,sizeof(s),"%s日",d->officer);text(fb,532,1099,26,s,EPD_DRAW_ALIGN_LEFT,false);
     almanac_cut_frame(fb,(EpdRect){148,1125,388,33},7,UI_GRAY_BLACK);
-    snprintf(s,sizeof(s),"冲%s（%s）· 煞%s",d->clash,calendar_cycle_name((d->day_cycle+54)%60),d->sha);
+    snprintf(s,sizeof(s),"衝%s（%s）· 煞%s",d->clash,calendar_cycle_name((d->day_cycle+54)%60),d->sha);
     text(fb,342,1141,26,s,EPD_DRAW_ALIGN_CENTER,false);
 }
 static void grid(uint8_t *fb,const calendar_date_t *d,bool large) {
@@ -288,12 +288,12 @@ static void grid(uint8_t *fb,const calendar_date_t *d,bool large) {
 }
 void ui_calendar_draw(uint8_t *fb,const calendar_date_t *d,bool monthly) {
     memset(fb,255,UI_LOCK_WIDTH*UI_LOCK_HEIGHT/2);
-    text(fb,44,42,24,"mogo",EPD_DRAW_ALIGN_LEFT,false);
-    text(fb,640,42,24,monthly?"万年历":"老黄历",EPD_DRAW_ALIGN_RIGHT,false);
+    text(fb,44,42,24,"FAN",EPD_DRAW_ALIGN_LEFT,false);
+    text(fb,640,42,24,monthly?"萬年曆":"老黃曆",EPD_DRAW_ALIGN_RIGHT,false);
     if(!d||!d->year){
-        text(fb,342,522,48,"请校准时间",EPD_DRAW_ALIGN_CENTER,false);
-        text(fb,342,590,26,"设置 → 日期与时间",EPD_DRAW_ALIGN_CENTER,false);
-        text(fb,342,644,24,"校准后重新锁屏即可显示日历",EPD_DRAW_ALIGN_CENTER,false);
+        text(fb,342,522,48,"請校準時間",EPD_DRAW_ALIGN_CENTER,false);
+        text(fb,342,590,26,"設定 → 日期與時間",EPD_DRAW_ALIGN_CENTER,false);
+        text(fb,342,644,24,"校準後重新鎖屏即可顯示日曆",EPD_DRAW_ALIGN_CENTER,false);
         return;
     }
     char s[96],lunar[64];calendar_lunar_text(d,false,lunar,sizeof(lunar));

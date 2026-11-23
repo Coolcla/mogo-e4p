@@ -502,6 +502,18 @@ esp_err_t board_sd_get_info(board_sd_info_t* info) {
     return err;
 }
 
+esp_err_t board_sd_get_usb_export_config(sdmmc_host_t* host, sdmmc_slot_config_t* slot) {
+    if (host == NULL || slot == NULL) return ESP_ERR_INVALID_ARG;
+    portENTER_CRITICAL(&state_lock);
+    const bool ready = cached_info.mounted && health_host_valid && sd_dma_relay != NULL;
+    if (ready) {
+        *host = health_host;
+        *slot = health_slot;
+    }
+    portEXIT_CRITICAL(&state_lock);
+    return ready ? ESP_OK : ESP_ERR_INVALID_STATE;
+}
+
 bool board_sd_is_mounted(void) {
     board_sd_info_t info = {0};
     const esp_err_t err = board_sd_get_info(&info);

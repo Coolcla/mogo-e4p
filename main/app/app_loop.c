@@ -45,6 +45,7 @@
 #include "../diagnostics/reader_perf.h"
 #include "app_loop.h"
 #include "network_service.h"
+#include "reading_sync_service.h"
 #if CONFIG_APP_LOCK_SLEEP_TRACE
 #include "../diagnostics/lock_sleep_trace.h"
 #endif
@@ -87,7 +88,6 @@
 #include "time_service.h"
 #include "weather_service.h"
 #include "home_components.h"
-#include "ota_auto.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
 #include "ui_nav.h"
@@ -929,11 +929,6 @@ void app_loop_run(const app_loop_config_t* config) {
             app_weather_reap_cancelled();
             network_service_poll();
             TD_TIME("transfer_poll", wifi_transfer_service_poll());
-            pico_ota_auto_poll(!app_weather_busy() && !touch.touched && ctx.now_ms - last_input_ms >= 10000 &&
-                !current->holds_pmu && !usb_storage_active() && !ble_pt_connected() &&
-                current != &app_transfer && !power_dialog_open && !menu_open &&
-                (current != &app_device_settings || app_navigation_main_page_ready(&ctx, current)) &&
-                !app_quick_layer_is_open() && !ctx.request_app && !ctx.request_return && !ctx.request_menu);
             // 后台对时是系统服务（同 app_media_poll / 字体重试），守卫在 time_service 内部；
             // 空闲门控沿用上游：触压、近期输入、独占 PMU 的页面、USB 与联网升级期间不动。
             // Background sync is a system service like app_media_poll or the font retry, with its
@@ -941,6 +936,8 @@ void app_loop_run(const app_loop_config_t* config) {
             // pages holding the PMU, USB or an online update.
             app_time_service_poll(!app_weather_busy() && !touch.touched && ctx.now_ms - last_input_ms >= 10000 &&
                 !current->holds_pmu && !usb_storage_active() && !pico_online_busy() && !ble_pt_connected());
+            if (!app_weather_busy() && !app_time_service_busy() && !usb_storage_active() && !pico_online_busy())
+                app_reading_sync_poll();
         }
         bool selected_from_menu = false;
         const bool power_input_owned = power_dialog_open;
@@ -1391,20 +1388,6 @@ void app_loop_run(const app_loop_config_t* config) {
             ctx.request_return = false;
             ctx.request_app = NULL;
             ctx.request_menu = false;
-        }
-        if (pico_ota_auto_pending() && !power_dialog_open && !menu_open && !quick_input_owned &&
-            !app_quick_layer_is_open() && !touch.touched && !ui_click_feedback_active() &&
-            !usb_storage_active() && !ble_pt_connected() && !current->holds_pmu && current != &app_transfer &&
-            (current == &app_device_settings || app_navigation_main_page_ready(&ctx, current) ||
-             (current == &app_book && app_book_reader_body_visible())) &&
-            !ctx.request_return && !ctx.request_app && !ctx.request_menu &&
-            app_device_settings_offer_update(current == &app_device_settings)) {
-            pico_ota_auto_acknowledge();
-            if (current == &app_device_settings) present_page(&ctx, current, &gesture, APP_REDRAW_PAGE);
-            else {
-                app_navigation_capture_reader_return(current);
-                ctx.request_app = &app_device_settings;
-            }
         }
         // 非天气主页面只静默更新缓存；切页、独占页面及系统覆盖层让路，不等待天气联网退出。
         // Non-weather root pages update only the cache; yield to navigation, exclusive pages and overlays without joining weather.

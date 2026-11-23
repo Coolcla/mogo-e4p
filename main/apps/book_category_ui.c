@@ -150,8 +150,8 @@ void book_category_ui_books(book_category_ui_t *ui, uint32_t target, bool select
 }
 static void submit(book_category_ui_t *ui) {
     char clean[BOOK_COLLECTION_NAME_BYTES];
-    if (ui_keyboard_pending()) { copy(ui->notice, sizeof(ui->notice), "请先选择候选字"); return; }
-    if (!book_collection_name(ui->draft, clean)) { copy(ui->notice, sizeof(ui->notice), "名称须为1至24字，且不能重复系统分类"); return; }
+    if (ui_keyboard_pending()) { copy(ui->notice, sizeof(ui->notice), "請先選擇候選字"); return; }
+    if (!book_collection_name(ui->draft, clean)) { copy(ui->notice, sizeof(ui->notice), "名稱須為1至24字，且不能重複系統分類"); return; }
     ui->command = ui->renaming ? CATEGORY_RENAME : CATEGORY_CREATE;
 }
 static void pager(uint8_t *fb, int page, int count, int y) {
@@ -162,19 +162,19 @@ static void pager(uint8_t *fb, int page, int count, int y) {
 }
 static void draw_books(const book_category_ui_t *ui, const book_shelf_categories_t *c, uint8_t *fb) {
     char title[160];
-    if (ui->review) copy(title, sizeof(title), "已选图书");
-    else snprintf(title, sizeof(title), "添加到「%s」", name_of(c, ui->destination));
+    if (ui->review) copy(title, sizeof(title), "已選圖書");
+    else snprintf(title, sizeof(title), "新增到「%s」", name_of(c, ui->destination));
     text(fb, (EpdRect){112, 80, 432, 80}, 34, title, false);
     ui_draw_control_frame(fb,(EpdRect){568,80,80,80},8,0x50);
     ui_draw_icon(fb,608,120,34,UI_ICON_SEARCH,0);
     int rows = book_category_ui_rows(true), n = book_category_ui_book_count(ui);
     EpdRect filter=book_selection_rect(BOOK_SELECTION_FILTER);
     if(!ui->review)ui_draw_control_frame(fb,filter,8,0x50);
-    text(fb,(EpdRect){52,184,280,76},26,ui->review?"全部已选":name_of(c,ui->filter),false);
+    text(fb,(EpdRect){52,184,280,76},26,ui->review?"全部已選":name_of(c,ui->filter),false);
     if(!ui->review)ui_draw_icon(fb,360,222,26,UI_ICON_CHEVRON_DOWN,0);
     if(ui->query[0] && !ui->review)text(fb,(EpdRect){416,184,232,76},24,ui->query,false);
-    book_selection_button(fb,select_rect(false),22,"全选本页",n>0,false);
-    char results[64]; snprintf(results, sizeof(results), "全选结果 (%d)", n);
+    book_selection_button(fb,select_rect(false),22,"全選本頁",n>0,false);
+    char results[64]; snprintf(results, sizeof(results), "全選結果 (%d)", n);
     book_selection_button(fb,select_rect(true),22,results,n>0,false);
     if(ui->notice[0])text(fb,(EpdRect){36,380,612,56},22,ui->notice,false);
     int page = book_shelf_saved_page(ui->page, n, rows);
@@ -193,51 +193,51 @@ static void draw_books(const book_category_ui_t *ui, const book_shelf_categories
         ui_hairline(fb, r.y + r.height - 1, 36, 612, 0xb0);
     }
     if (!n) {
-        text(fb, (EpdRect){36, 492, 612, 80}, 28, ui->review ? "尚未选择图书" : "当前筛选没有可添加图书", true);
-        if (!ui->review) button(fb, (EpdRect){180, 610, 324, 76}, "全部书籍");
+        text(fb, (EpdRect){36, 492, 612, 80}, 28, ui->review ? "尚未選擇圖書" : "當前篩選沒有可新增圖書", true);
+        if (!ui->review) button(fb, (EpdRect){180, 610, 324, 76}, "全部書籍");
     }
     unsigned selected = book_shelf_selected_count(ui->books, ui->count);
     char count[64];snprintf(count,sizeof(count),"%d / %d",page+1,n?(n+rows-1)/rows:1);
     book_selection_pager_draw(fb,count,page,n?(n+rows-1)/rows:1);
-    snprintf(count,sizeof(count),"%s %u 本",ui->review?"返回选书":"已选",selected);
+    snprintf(count,sizeof(count),"%s %u 本",ui->review?"返回選書":"已選",selected);
     book_selection_button(fb,book_selection_rect(BOOK_SELECTION_REVIEW),26,count,true,false);
-    snprintf(count,sizeof(count),"%s %u 本",ui->selecting_only?"归类":"添加",selected);
+    snprintf(count,sizeof(count),"%s %u 本",ui->selecting_only?"歸類":"新增",selected);
     book_selection_button(fb,book_selection_rect(BOOK_SELECTION_SUBMIT),28,count,selected!=0,true);
 }
 void book_category_ui_draw(const book_category_ui_t *ui, const book_shelf_categories_t *c, uint8_t *fb) {
     ui_clear_page(fb); ui_nav_status(fb); ui_nav_back(fb, 36, 79);
     if (ui->screen == CATEGORY_BOOKS) { draw_books(ui, c, fb); return; }
     if (ui->screen == CATEGORY_BOOK_INFO) {
-        text(fb, (EpdRect){116, 79, 446, 60}, 34, "图书信息", true);
+        text(fb, (EpdRect){116, 79, 446, 60}, 34, "圖書資訊", true);
         const book_shelf_entry_t *b = &ui->books[ui->book_info];
         full_text(fb, (EpdRect){36, 210, 612, 590}, 32, b->name);
         full_text(fb, (EpdRect){36, 822, 612, 150}, 26, name_of(c, b->category_id));
-        button(fb, (EpdRect){180, 1004, 324, 80}, b->selected ? "取消选择" : "选择图书");
+        button(fb, (EpdRect){180, 1004, 324, 80}, b->selected ? "取消選擇" : "選擇圖書");
         return;
     }
-    const char *title = ui->screen == CATEGORY_EDIT ? (ui->renaming ? "修改分类" : "新增分类") :
-        ui->screen == CATEGORY_ACTIONS ? "分类操作" : ui->screen == CATEGORY_CONFIRM ? "删除分类" :
-        ui->screen == CATEGORY_ORDER ? "调整顺序" : ui->screen == CATEGORY_FILTER ? "筛选分类" :
-        ui->screen == CATEGORY_SELECTED_ACTIONS ? "已选操作" : ui->picker ? "归入分类" : "管理分类";
+    const char *title = ui->screen == CATEGORY_EDIT ? (ui->renaming ? "修改分類" : "新增分類") :
+        ui->screen == CATEGORY_ACTIONS ? "分類操作" : ui->screen == CATEGORY_CONFIRM ? "刪除分類" :
+        ui->screen == CATEGORY_ORDER ? "調整順序" : ui->screen == CATEGORY_FILTER ? "篩選分類" :
+        ui->screen == CATEGORY_SELECTED_ACTIONS ? "已選操作" : ui->picker ? "歸入分類" : "管理分類";
     text(fb, (EpdRect){116, 79, 446, 60}, 34, title, true);
     ui_hairline(fb, 200, 36, 612, 0x70);
     text(fb, (EpdRect){36, 150, 612, 44}, 22, ui->notice, false);
-    if (ui->blocked) { button(fb, (EpdRect){180, 448, 324, 80}, "重试读取"); return; }
+    if (ui->blocked) { button(fb, (EpdRect){180, 448, 324, 80}, "重試讀取"); return; }
     if(ui->screen==CATEGORY_SELECTED_ACTIONS){
         text(fb,(EpdRect){36,222,612,76},34,name_of(c,ui->source),true);
-        button(fb,(EpdRect){36,332,612,88},"移出本类");
-        button(fb,(EpdRect){36,444,612,88},"归类");
+        button(fb,(EpdRect){36,332,612,88},"移出本類");
+        button(fb,(EpdRect){36,444,612,88},"歸類");
         return;
     }
     if (ui->screen == CATEGORY_EDIT) {
         ui_draw_icon(fb, 620, 108, 36, UI_ICON_CHECK, 0);
-        text(fb, (EpdRect){36, 220, 612, 56}, 28, "分类名称", false);
+        text(fb, (EpdRect){36, 220, 612, 56}, 28, "分類名稱", false);
         ui_text_input_draw(fb, &ui->input, field(), 30, false, NULL); ui_keyboard_draw(fb, 560); return;
     }
     if (ui->screen == CATEGORY_ACTIONS || ui->screen == CATEGORY_CONFIRM || ui->screen == CATEGORY_ORDER) {
         text(fb, (EpdRect){36, 222, 612, 76}, 34, name_of(c, ui->source), true);
         if (ui->screen == CATEGORY_ACTIONS) {
-            const char *labels[] = {"添加图书", "修改名称", "调整顺序", "删除分类"};
+            const char *labels[] = {"新增圖書", "修改名稱", "調整順序", "刪除分類"};
             for (int i = 0; i < 4; ++i) button(fb, (EpdRect){36, 332 + i * 112, 612, 88}, labels[i]);
         } else if (ui->screen == CATEGORY_ORDER) {
             ui_draw_icon(fb, 342, 412, 46, UI_ICON_CHEVRON_UP, 0);
@@ -245,10 +245,10 @@ void book_category_ui_draw(const book_category_ui_t *ui, const book_shelf_catego
             char position[64]; snprintf(position, sizeof(position), "%d / %d", book_shelf_categories_index(c, ui->source) - 1, book_shelf_categories_available(c) - 2);
             text(fb, (EpdRect){36, 672, 612, 72}, 28, position, true);
         } else {
-            char count[80]; snprintf(count, sizeof(count), "其中 %d 本书将变为未分类", book_shelf_categories_count(c, book_shelf_categories_index(c, ui->source)));
+            char count[80]; snprintf(count, sizeof(count), "其中 %d 本書將變為未分類", book_shelf_categories_count(c, book_shelf_categories_index(c, ui->source)));
             command_text(fb, (EpdRect){36, 352, 612, 80}, 28, count, true);
-            command_text(fb, (EpdRect){36, 458, 612, 72}, 26, "原文件与阅读记录不变", true);
-            button(fb, (EpdRect){36, 650, 278, 80}, "取消"); button(fb, (EpdRect){338, 650, 310, 80}, "删除分类");
+            command_text(fb, (EpdRect){36, 458, 612, 72}, 26, "原檔案與閱讀記錄不變", true);
+            button(fb, (EpdRect){36, 650, 278, 80}, "取消"); button(fb, (EpdRect){338, 650, 310, 80}, "刪除分類");
         }
         return;
     }
@@ -265,7 +265,7 @@ void book_category_ui_draw(const book_category_ui_t *ui, const book_shelf_catego
         ui_hairline(fb, r.y + r.height - 1, 36, 612, 0xb0);
     }
     if (!ui->picker && ui->screen == CATEGORY_LIST && book_shelf_categories_available(c) == 2)
-        text(fb, (EpdRect){36, 420, 612, 100}, 28, "暂无分类", true);
+        text(fb, (EpdRect){36, 420, 612, 100}, 28, "暫無分類", true);
     pager(fb, ui->page, pages(ui, c), 982);
 }
 ui_keyboard_update_t book_category_ui_input_paint(book_category_ui_t *ui, uint8_t *fb) {

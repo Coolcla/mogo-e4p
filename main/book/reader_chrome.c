@@ -68,7 +68,7 @@ static void slot_text(const reader_chrome_data_t *d, app_reader_slot_item_t item
         snprintf(buf, cap, "%u/%u", d->page + 1, d->page_count);
         break;
     case APP_READER_SLOT_PAGE_PROGRESS:
-        snprintf(buf, cap, "%u/%u · 全书 %u%%", d->page + 1, d->page_count, d->percent);
+        snprintf(buf, cap, "%u/%u · 全書 %u%%", d->page + 1, d->page_count, d->percent);
         break;
     case APP_READER_SLOT_PERCENT:
         snprintf(buf, cap, "%u%%", d->percent);
@@ -264,16 +264,16 @@ static void slot_place(unsigned i, int left_x, int right_x,
 }
 const char *reader_chrome_item_label(app_reader_slot_item_t item) {
     static const char *const labels[APP_READER_SLOT_COUNT] = {
-        [APP_READER_SLOT_BLANK] = "不显示",
-        [APP_READER_SLOT_TITLE] = "书名",
-        [APP_READER_SLOT_CHAPTER] = "章节名",
-        [APP_READER_SLOT_PAGE] = "本章页码",
-        [APP_READER_SLOT_PAGE_PROGRESS] = "页码·全书进度",
-        [APP_READER_SLOT_PERCENT] = "全书进度",
-        [APP_READER_SLOT_CLOCK] = "时间",
-        [APP_READER_SLOT_BATTERY] = "电量",
+        [APP_READER_SLOT_BLANK] = "不顯示",
+        [APP_READER_SLOT_TITLE] = "書名",
+        [APP_READER_SLOT_CHAPTER] = "章節名",
+        [APP_READER_SLOT_PAGE] = "本章頁碼",
+        [APP_READER_SLOT_PAGE_PROGRESS] = "頁碼·全書進度",
+        [APP_READER_SLOT_PERCENT] = "全書進度",
+        [APP_READER_SLOT_CLOCK] = "時間",
+        [APP_READER_SLOT_BATTERY] = "電量",
         [APP_READER_SLOT_DATE] = "日期星期",
-        [APP_READER_SLOT_ICON_BATTERY] = "电量图标",
+        [APP_READER_SLOT_ICON_BATTERY] = "電量圖示",
     };
     return labels[item >= 0 && item < APP_READER_SLOT_COUNT ? item : APP_READER_SLOT_BLANK];
 }

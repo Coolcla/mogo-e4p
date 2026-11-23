@@ -27,22 +27,9 @@
 #include "ttf_font.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32S31)
-#define USB_SD_CLK GPIO_NUM_24
-#define USB_SD_CMD GPIO_NUM_25
-#define USB_SD_D0 GPIO_NUM_20
-#define USB_SD_D1 GPIO_NUM_21
-#define USB_SD_D2 GPIO_NUM_22
-#define USB_SD_D3 GPIO_NUM_23
-#define USB_SD_WIDTH 4
 #define USB_ANA_SW_GPIO GPIO_NUM_36
 #else
-#define USB_SD_CLK GPIO_NUM_38
-#define USB_SD_CMD GPIO_NUM_42
-#define USB_SD_D0 GPIO_NUM_44
-#define USB_SD_D1 GPIO_NUM_NC
-#define USB_SD_D2 GPIO_NUM_NC
-#define USB_SD_D3 GPIO_NUM_NC
-#define USB_SD_WIDTH 1
+#define USB_ANA_SW_GPIO GPIO_NUM_NC
 #endif
 
 static const char *TAG = "usb_storage";
@@ -119,20 +106,22 @@ esp_err_t usb_storage_start(void) {
     if (s_cleanup_pending) return ESP_ERR_INVALID_STATE;
     if (s_active) return ESP_OK;
     board_sd_info_t info = {0};
-    if (board_sd_get_info(&info) != ESP_OK || !info.mounted) return ESP_ERR_INVALID_STATE;
+    // SD probing is asynchronous. Preserve its busy result so app_transfer can
+    // retry instead of turning the first connection attempt into a hard failure.
+    esp_err_t info_err = board_sd_get_info(&info);
+    if (info_err != ESP_OK) return info_err;
+    if (!info.mounted) return ESP_ERR_INVALID_STATE;
+    // Reuse the board's cache-safe internal DMA relay; MSC reads can target TinyUSB buffers
+    // that are not safe for the S31 SDMMC engine to access directly.
+    sdmmc_host_t host;
+    sdmmc_slot_config_t slot;
+    esp_err_t err = board_sd_get_usb_export_config(&host, &slot);
+    if (err != ESP_OK) return err;
+    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
     // 字体文件在 SD 上，先关闭句柄再卸载。/ Close the SD-backed font before unmounting.
     if (!ttf_font_is_builtin()) ttf_font_open_builtin();
-    esp_err_t err = board_sd_sync();
+    err = board_sd_sync();
     if (err != ESP_OK) return err;
-    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-    // USB export uses the same bus as the card; S31 runs 4-bit at 20 MHz.
-    host.max_freq_khz = SDMMC_FREQ_DEFAULT;
-    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
-    slot.width = USB_SD_WIDTH;
-    slot.clk = USB_SD_CLK; slot.cmd = USB_SD_CMD; slot.d0 = USB_SD_D0;
-    slot.d1 = USB_SD_D1; slot.d2 = USB_SD_D2; slot.d3 = USB_SD_D3;
-    slot.cd = slot.wp = GPIO_NUM_NC;
-    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     ana_sw(false);
     err = sdmmc_host_init();
     if (err != ESP_OK) goto fail;
@@ -157,6 +146,9 @@ esp_err_t usb_storage_start(void) {
     err = tinyusb_msc_new_storage_sdmmc(&storage, &s_storage);
     if (err != ESP_OK) goto fail;
     tinyusb_config_t usb = TINYUSB_DEFAULT_CONFIG();
+    // MSC callbacks run SDMMC command handling from TinyUSB's task; 4 KiB is too tight
+    // for the high-speed request and nested SD read/write path on this target.
+    usb.task.size = 8192;
     release_serial_phy();
     err = tinyusb_driver_install(&usb);
     if (err != ESP_OK) goto fail;

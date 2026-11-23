@@ -831,7 +831,7 @@ static esp_err_t init_lcd_peripheral() {
     lcd_ll_enable_trans_buffer(lcd.hal.dev, true);
     esp_clk_tree_enable_src((soc_module_clk_t)LCD_CLK_SRC_DEFAULT, true);
     PERIPH_RCC_ATOMIC() {
-        lcd_ll_select_clk_src(lcd.hal.dev, LCD_CLK_SRC_DEFAULT);
+        lcd_ll_select_clk_src(0, LCD_CLK_SRC_DEFAULT);
     }
 #else
     // enable APB to access LCD registers
@@ -1052,7 +1052,7 @@ void epd_lcd_set_pixel_clock_MHz(int frequency) {
 #if defined(CONFIG_IDF_TARGET_ESP32S31)
     PERIPH_RCC_ATOMIC() {
         lcd_ll_set_group_clock_coeff(
-            lcd.hal.dev, (int)clk_div.integer, (int)clk_div.denominator, (int)clk_div.numerator
+            0, (int)clk_div.integer, (int)clk_div.denominator, (int)clk_div.numerator
         );
     }
     // HAL 只写了 HP 分频。LCD 寄存器里 clk_en 默认 0（时钟门关闭），

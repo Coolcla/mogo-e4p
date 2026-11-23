@@ -188,9 +188,8 @@ static void clock_text(char *clock, size_t capacity) {
     time_t now = status_time();
     snprintf(clock,capacity,"--:--");
     if (now > 1704067200) {
-        time_t china = now + 8 * 3600;
         struct tm date;
-        if (gmtime_r(&china, &date)) snprintf(clock, capacity, "%02d:%02d", date.tm_hour, date.tm_min);
+        if (localtime_r(&now, &date)) snprintf(clock, capacity, "%02d:%02d", date.tm_hour, date.tm_min);
     }
 }
 void ui_nav_clock_draw(uint8_t *fb) {
@@ -207,10 +206,9 @@ void ui_nav_date_text(char *date, size_t capacity) {
     date[0] = 0;
     time_t now = status_time();
     if (now <= 1704067200) return;
-    time_t china = now + 8 * 3600;
     struct tm day;
-    if (!gmtime_r(&china, &day)) return;
-    static const char *const weekdays[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
+    if (!localtime_r(&now, &day)) return;
+    static const char *const weekdays[] = {"週日", "週一", "週二", "週三", "週四", "週五", "週六"};
     snprintf(date, capacity, "%02d-%02d %s", day.tm_mon + 1, day.tm_mday, weekdays[day.tm_wday % 7]);
 }
 void ui_nav_battery_draw(uint8_t *fb, int x, int cy) {
@@ -267,8 +265,7 @@ void ui_nav_status(uint8_t *fb) {
     }
     available = 2 * (group_left - 12 - width / 2);
     if (available < signature_width) signature_width = available > 0 ? available : 0;
-    char signature[96];
-    snprintf(signature, sizeof(signature), "%s", app_settings_status_signature());
+    char signature[96] = {0};
     status_fit_signature(signature, signature_width);
     if (signature[0]) ui_text_fixed_vc(fb, width / 2, status_center_y, UI_STATUS_SIGNATURE_PX,
                                       signature, EPD_DRAW_ALIGN_CENTER, false);

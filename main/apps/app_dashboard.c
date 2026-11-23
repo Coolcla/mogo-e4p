@@ -459,7 +459,7 @@ static int title_lines(uint8_t *fb,int top,const char *text,uint8_t background) 
 static void render_reading(uint8_t *fb,unsigned slot) {
     const int top=home_region(slot).y;
     home_book_t *b=featured();
-    label(fb,36,top+35,26,"最近阅读",EPD_DRAW_ALIGN_LEFT,0);
+    label(fb,36,top+35,26,"最近閱讀",EPD_DRAW_ALIGN_LEFT,0);
     ui_fill_rect_fast((EpdRect){36,top+61,86,5},UI_GRAY_BLACK,fb);
     ui_fill_rect_fast((EpdRect){122,top+64,526,2},UI_GRAY_BLACK,fb);
     for(int i=0;i<3;++i)ui_fill_rect_fast((EpdRect){608+i*12,top+22+i*4,5,24-i*4},UI_GRAY_BLACK,fb);
@@ -471,16 +471,16 @@ static void render_reading(uint8_t *fb,unsigned slot) {
             label_on(fb,248,top+(rows==2?222:181),25,author,EPD_DRAW_ALIGN_LEFT,0,UI_GRAY_WHITE);
         }
         unsigned pct=b->has_progress?b->progress.pct:0;if(pct>100)pct=100;
-        label_on(fb,248,top+245,20,"已读",EPD_DRAW_ALIGN_LEFT,0,UI_GRAY_WHITE);
+        label_on(fb,248,top+245,20,"已讀",EPD_DRAW_ALIGN_LEFT,0,UI_GRAY_WHITE);
         char value[16];snprintf(value,sizeof(value),"%u%%",pct);
         int px=64;while(px>32&&ui_text_fixed_width_px(px,value)>220)--px;
         label_on(fb,248,top+290,px,value,EPD_DRAW_ALIGN_LEFT,0,UI_GRAY_WHITE);
         EpdRect track={248,top+325,220,4};ui_fill_rect_fast(track,UI_GRAY_LIGHT,fb);
         track.width=220*pct/100;
         if(track.width)ui_fill_rect_fast(track,0,fb);
-        label_on(fb,612,top+322,27,"继续阅读",EPD_DRAW_ALIGN_RIGHT,0,UI_GRAY_WHITE);
+        label_on(fb,612,top+322,27,"繼續閱讀",EPD_DRAW_ALIGN_RIGHT,0,UI_GRAY_WHITE);
         ui_draw_icon(fb,635,top+322,25,UI_ICON_CHEVRON_RIGHT,0);
-    } else label_on(fb,342,top+230,23,"打开一本书后，会在这里继续阅读",EPD_DRAW_ALIGN_CENTER,0,UI_GRAY_WHITE);
+    } else label_on(fb,342,top+230,23,"開啟一本書後，會在這裡繼續閱讀",EPD_DRAW_ALIGN_CENTER,0,UI_GRAY_WHITE);
     if(s_excerpt[0]) {
         for(int i=0;i<2;++i) {
             ui_fill_rect_fast((EpdRect){36+i*14,top+365,9,15},UI_GRAY_BLACK,fb);
@@ -760,7 +760,7 @@ static display_rect_t area_hint(app_ctx_t *ctx) {(void)ctx;return display_rect_f
 static void home_before_lock(app_ctx_t *ctx){(void)ctx;mini_cancel();home_library_pause();app_weather_cancel();(void)app_reading_journal_flush();}
 static void home_exit(app_ctx_t *ctx){home_before_lock(ctx);home_library_leave();ui_weather_release();book_cover_jobs_cancel(s_cover_generation);s_cover_generation=0;}
 const app_desc_t app_dashboard={
-    .title="首页 Home",.detail="继续阅读",.enter_full=false,.owns_keys=true,.menu_handle_enabled=no_menu_handle,
+    .title="首頁 Home",.detail="繼續閱讀",.enter_full=false,.owns_keys=true,.menu_handle_enabled=no_menu_handle,
     .main_page_visible=main_page_visible,.on_enter=on_enter,.on_exit=home_exit,.on_before_lock=home_before_lock,.on_media_lost=on_media_lost,.on_media_ready=on_media_ready,
     .render=render,.present=present,.on_tick=on_tick,.on_gesture=on_gesture,.area_hint=area_hint,
 };

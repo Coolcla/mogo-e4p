@@ -208,7 +208,7 @@ static void css_declarations(writer_t* w, const char* at, const char* end, css_s
         } else if (kn == 11 && !strncasecmp(key, "font-family", 11)) {
             style->family = font_family_slot(w, value, vn);
             style->mask |= CSS_FAMILY;
-            // 只有真的解析出字体才开 run 表：认得名字才值得逐段记，否则白花内存。
+            // 只有真的解析出字型才開 run 表：認得名字才值得逐段記，否則白花記憶體。
             // Runs start only once a name really resolves; an unmatched family is not worth
             // recording span by span.
             if (style->family != 0) w->family_rules = true;
@@ -229,7 +229,7 @@ static void css_add_rule(writer_t* w, const char* selector, size_t len, const cs
     for (size_t i = 0; i < len; ++i) {
         unsigned char c = (unsigned char)selector[i];
         if (ascii_space(c) || c == '>') { scoped = true; token = true; continue; }
-        // 不支持的选择器整体忽略，绝不把局部规则降成全局规则。
+        // 不支援的選擇器整體忽略，絕不把區域性規則降成全域性規則。
         // Ignore unsupported selectors as a whole, never broaden a scoped rule into a global rule.
         if (!(name_char(c) && c != ':') && c != '.' && c != '#' && c != '*') return;
         if (token) { if (++parts > 9) return; token = false; if (c != '.' && c != '#' && c != '*') ++specificity; }
@@ -263,8 +263,8 @@ static void css_parse_rules(writer_t* w, const char* at, const char* end) {
         const char* shut = memchr(open + 1, '}', (size_t)(end - open - 1));
         if (!shut) break;
         css_style_t style = {0};
-        // at-rule 里的 font-family 是在给字体本身命名（@font-face），不是正文选字体；
-        // 采进来只会让每个块都白记一段 run，而且选择器本来就会被下面的规则过滤掉。
+        // at-rule 裡的 font-family 是在給字型本身命名（@font-face），不是正文選字型；
+        // 採進來只會讓每個塊都白記一段 run，而且選擇器本來就會被下面的規則過濾掉。
         // A font-family inside an at-rule (@font-face) names the face itself rather than
         // selecting one for body text; taking it would add a useless run to every block, and
         // the selector is rejected by the rule filter anyway.
@@ -683,7 +683,7 @@ static bool block_tag(const char* name) {
     return false;
 }
 
-// 识别常见惰性图片属性及 SVG 引用，并解码路径中的 XML 实体。
+// 識別常見惰性圖片屬性及 SVG 引用，並解碼路徑中的 XML 實體。
 // Recognize common lazy image attributes and SVG references, decoding XML entities in paths.
 static bool image_attr(const char* at, const char* end, bool object,
                        char path[HTML_IMAGE_PATH_MAX + 1]) {
@@ -759,7 +759,7 @@ static esp_err_t add_image(writer_t* w, const char* path) {
     return err;
 }
 
-// 仅把 body 的单图背景当成页首插图；不继承为段落背景，也不改变用户阅读背景。
+// 僅把 body 的單圖背景當成頁首插圖；不繼承為段落背景，也不改變使用者閱讀背景。
 // Preserve a body's single-image background as an illustration, not an inherited paragraph backdrop.
 static esp_err_t body_background(writer_t *w, const char *attrs, const char *end) {
     css_style_t style = style_for(w, "body", attrs, end);
@@ -859,7 +859,7 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                     } else skip[0] = 0;
                     continue;
                 }
-                // 在块结束之前保留其来源；关闭容器后不影响后面的正文块。
+                // 在塊結束之前保留其來源；關閉容器後不影響後面的正文塊。
                 // Preserve provenance until the block ends; closing a container must not taint later body text.
                 if (closing) {
                     if (w.depth == w.link_depth) {
@@ -877,9 +877,9 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                 } else if (!self_closing && !void_tag(name) &&
                            !name_equal(name, "head") && !name_equal(name, "script") && !name_equal(name, "style")) {
                     ++w.depth;
-                    // 内联标签也会换字体（<span class="num">），所以每层都算一次；本层没声明
-                    // 就继承父层。没有 font-family 规则、标签也不带 style 时整段跳过，
-                    // 正文一分钱不花；带 style 的标签只看属性、不跑整套选择器匹配。
+                    // 內聯標籤也會換字型（<span class="num">），所以每層都算一次；本層沒宣告
+                    // 就繼承父層。沒有 font-family 規則、標籤也不帶 style 時整段跳過，
+                    // 正文一分錢不花；帶 style 的標籤只看屬性、不跑整套選擇器匹配。
                     // Inline tags switch faces too, so every level resolves; a level without a
                     // declaration inherits its parent's. With no font-family rule and no style
                     // attribute the step is skipped and body text pays nothing; a styled tag is
@@ -908,7 +908,7 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                     if (!w.link_depth && name_equal(name, "a") &&
                         attr_value(html + at, html + end, "href", &href, &href_len) && href_len) {
                         w.link_depth = w.depth;
-                        // 起点与锚点同一条公式：块间分隔符还没写进正文时先算上它。
+                        // 起點與錨點同一條公式：塊間分隔符還沒寫進正文時先算上它。
                         // Same formula as anchors: count the block separator before it is written.
                         w.link_start = w.text.len + (!w.active && w.text.count ? 1 : 0);
                         w.link_href_len = href_len > HTML_LINK_HREF_MAX ? HTML_LINK_HREF_MAX : href_len;
@@ -935,7 +935,7 @@ esp_err_t html_to_blocks_with_css_target(const char* html, size_t len,
                     bool line_break = name_equal(name, "br");
                     err = finish_block(&w, line_break);
                     if (err != ESP_OK) goto fail;
-                    // br 仅换行；整段结束时才加段后距，不重复段前距和首行缩进。
+                    // br 僅換行；整段結束時才加段後距，不重複段前距和首行縮排。
                     // A br continues alignment and defers the trailing margin until paragraph end.
                     if (line_break)
                         w.current_style = (css_style_t){.mask = w.current_style.mask & (CSS_ALIGN | CSS_AFTER),

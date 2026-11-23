@@ -5,12 +5,13 @@
 #pragma once
 #include "ui_text_input.h"
 typedef enum { UI_KEYBOARD_NONE, UI_KEYBOARD_CHANGED, UI_KEYBOARD_DONE } ui_keyboard_result_t;
-/// 绑定编辑缓冲区；九宫格只输入拼音，密码模式只用英文全键盘、数字和符号。
-/// Bind the editor; T9 is Pinyin-only, passwords use English QWERTY, digits and symbols.
+/// 綁定編輯緩衝區；一般輸入使用注音與 QWERTY，密碼僅使用英文、數字及符號。
+/// Bind the editor; normal input uses Zhuyin and QWERTY, passwords use English, digits and symbols.
 void ui_keyboard_begin(ui_text_edit_t *edit, bool ascii_only);
-/// 清除拼音、候选与编辑指针。/ Clear composition, candidates and the editor pointer.
+/// 清除注音組字、候選與編輯指標。/ Clear Zhuyin composition, candidates and the editor pointer.
 void ui_keyboard_end(void);
-/// 固定 636×510 键盘，纯绘制，使用系统字体。/ Paint a fixed 636x510 keyboard using system typography only.
+/// 固定 636×510 iOS 式鍵盤：左右候選箭頭下方是數字列，再往下為注音／QWERTY 鍵。
+/// Paint a fixed 636x510 keyboard with numbers below candidate arrows and above Zhuyin/QWERTY keys.
 void ui_keyboard_draw(uint8_t *fb, int top);
 /// 松手触发按键；时间参数保留兼容，不再使用英文九宫格连续点按。
 /// Activate on release; keep the time argument for compatibility without English T9 multi-tap.
@@ -23,13 +24,13 @@ bool ui_keyboard_release(void);
 void ui_keyboard_hold_start(int x, int y, int top, int64_t now_ms);
 /// 松手、滑动、切页或中断取消连续删除。/ Cancel repeat on release, movement, page changes or interruptions.
 void ui_keyboard_hold_cancel(void);
-/// 单指按住 500ms 后每 120ms 删除一位，优先删拼音；每轮最多删一次，不补发积压。
-/// After a 500ms single-finger hold, delete Pinyin first, then text every 120ms; no catch-up bursts.
+/// 單指按住 500ms 後每 120ms 刪除一位，先刪注音組字，再刪文字；不補發積壓。
+/// After a 500ms hold, delete one Zhuyin symbol or text character every 120ms; no catch-up bursts.
 ui_keyboard_result_t ui_keyboard_hold_tick(bool held, int x, int y, int64_t now_ms);
 /// 词栏累计三次变化且无触摸停顿 400ms 后，安排一次局部灰阶整理；离页自动取消。
 /// After three word-strip changes and a 400ms touch-free pause, request one local gray settle; exit cancels it.
 ui_keyboard_result_t ui_keyboard_idle_tick(bool touching, int64_t now_ms);
-/// 尚未确认的拼音不可保存。/ Unconfirmed Pinyin prevents saving.
+/// 尚未確認的注音組字不可保存。/ Unconfirmed Zhuyin composition prevents saving.
 bool ui_keyboard_pending(void);
 /// 左右滑动候选页，边界不循环。/ Swipe candidate pages without wrapping at the edges.
 bool ui_keyboard_page(int direction);
@@ -39,7 +40,7 @@ typedef struct {
     bool field;         ///< 已重绘输入值或光标 / Input value or caret was repainted
     bool settle;        ///< 仅词栏的全像素 GL16，不使用差分或整屏刷新 / Full-pixel GL16 for the word strip only, never a differential or whole-screen refresh
 } ui_keyboard_update_t;
-/// 只重绘变化的输入框、拼音、候选或键盘；仅从事件回调调用。
-/// Paint changed field, composition, candidates or keyboard only; call from event handlers only.
+/// 只重繪變化的輸入框、注音組字、候選或鍵盤；僅從事件回呼呼叫。
+/// Paint changed field, Zhuyin composition, candidates or keyboard only; call from event handlers only.
 ui_keyboard_update_t ui_keyboard_update(uint8_t *fb, int top, EpdRect field, int px,
                                         bool masked, const char *suffix, bool force_field);

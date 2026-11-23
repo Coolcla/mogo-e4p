@@ -20,6 +20,14 @@
 **[官网](https://mogo.mantake.shop)** &nbsp;·&nbsp; **[下载固件](https://github.com/chopper1026/mogo-e4p/releases/latest)** &nbsp;·&nbsp; **[网页刷机](https://mogo.mantake.shop/flash)**<br>
 **[使用说明](https://mogo.mantake.shop/docs/firmware/manual/)** &nbsp;·&nbsp; **[更新日志](docs/CHANGELOG.md)** &nbsp;·&nbsp; **[开发文档](#开发文档)**
 
+**Fan 客製整合版說明：**[繁體中文 README](README-FAN.md)（本機建置設定、功能差異、映像雜湊與驗收範圍）
+
+## Fan 整合版
+
+目前工作區另外包含一組基於本 repo 建置的 Fan 整合設定：繁體中文介面與注音輸入、直排標點和字距處理、Wi-Fi 定位與 Open-Meteo 天氣、自訂伺服器的 WebDAV、繁化姬書籍轉換，以及 Readest／KOReader 閱讀進度同步。OTA 使用者入口在此配置中隱藏；E4P／ESP32-S31 硬體目標和 OTA 分區相容資料保留。
+
+本機產生的 `outputs/fan.bin` 和 `outputs/fan-no-dfs.bin` 目前不是正式 GitHub Release，也尚未刷寫或完成實機驗收。請先看 [Fan 整合版 README](README-FAN.md) 的建置配置、SHA-256 與驗收狀態；本頁其餘產品說明描述上游基礎功能。
+
 <br>
 
 <a href="assets/readme/overview.png"><img src="assets/readme/overview.png" width="900" alt="mogo 当前源码界面预览：天气组件、今日阅读记录和当月阅读日历"></a>

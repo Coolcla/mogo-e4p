@@ -5,6 +5,15 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ## 未发布 / Unreleased
 
+### Fan 本地整合 / Fan local integration · 2026-11-22
+
+- 新增 Fan E4P 整合建置，保留 E4P／ESP32-S31 硬體目標與 OTA 分區相容資料；更新開機圖、裝置個人資料、繁體中文介面及 `wght=500` 內建字型。/ Add a Fan E4P build profile while retaining E4P/ESP32-S31 hardware identity and OTA partition compatibility; update the startup image, profile, Traditional Chinese UI and built-in `wght=500` font.
+- 閱讀設定新增跟隨書籍、橫排及直排；改善直排標點、字距、EPUB/TXT 排版位置保存，並調整 QWERTY／注音／數字鍵盤。/ Add book-default, horizontal and vertical layout choices; improve vertical punctuation, spacing and EPUB/TXT position preservation, and revise QWERTY/Zhuyin/numeric keyboards.
+- 新增 BeaconDB Wi-Fi 定位、Nominatim 地名反查、Open-Meteo 天氣與本地時區顯示；新增自訂伺服器 WebDAV 瀏覽、傳輸與檔案管理。/ Add BeaconDB Wi-Fi location, Nominatim place lookup, Open-Meteo weather and local-time display, plus custom-server WebDAV browsing, transfer and file management.
+- 新增 Readest Cloud 與 KOReader KOSync 閱讀進度同步；修正 KOSync 書籍識別取樣，使其符合 KOReader partial MD5。/ Add Readest Cloud and KOReader KOSync reading-position sync; align KOSync document hashing with KOReader partial MD5.
+- 改善 USB 儲存裝置交接、Wi-Fi 傳書上限及網路工作連線生命週期；繁化姬書籍轉換目前暫緩，未編入此版韌體。/ Improve USB storage handoff, Wi-Fi transfer limits and network-job connection lifecycle; book conversion through 繁化姬 is paused and omitted from this firmware.
+- 產生 DFS 與固定 CPU 頻率兩份 0x0 起始合併映像，附 SHA-256 與建置資訊；僅完成建置，尚未刷寫或做實機驗收。/ Produce DFS and fixed-frequency 0x0-start merged images with SHA-256 and build records; build validation is complete, but the device has not been flashed or accepted on hardware.
+
 ## v1.1.8 · 2026-11-22
 
 - CloudZao 暂未获取到绑定码时提示：若设备已绑定，先在 CloudZao App 或小程序解绑再试。/ If CloudZao cannot issue a pairing code, the device suggests unlinking it in the CloudZao app or mini-program if already linked.

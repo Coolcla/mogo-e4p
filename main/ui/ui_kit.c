@@ -1744,7 +1744,7 @@ void ui_draw_full_image(uint8_t* framebuffer, const uint8_t* image) {
     epd_draw_rotated_image(area, image, framebuffer);
 }
 
-#define UI_SAMPLE_TEXT "滚滚长江东逝水"
+#define UI_SAMPLE_TEXT "滾滾長江東逝水"
 
 const ui_sample_line_t ui_sample_lines[] = {
     { 72, UI_SAMPLE_TEXT },

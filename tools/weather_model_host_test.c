@@ -64,6 +64,41 @@ static void forecast_rejections(void) {
     cJSON_ReplaceItemInObject(root,"serveUntil",cJSON_CreateString("2026-11-02T06:20:00.835869030Z"));
     assert(parse_result(root,now)==WEATHER_PARSE_OK);cJSON_Delete(root);
 }
+static void openmeteo_conditions(void) {
+    static const struct {int code; const char *text; weather_scene_t scene;} cases[]={
+        {0,"晴朗",WEATHER_SCENE_SUN}, {1,"大致晴朗",WEATHER_SCENE_SUN},
+        {2,"局部多雲",WEATHER_SCENE_CLOUD}, {3,"陰天",WEATHER_SCENE_OVERCAST},
+        {45,"有霧",WEATHER_SCENE_FOG}, {48,"霧淞",WEATHER_SCENE_FOG},
+        {51,"毛毛雨",WEATHER_SCENE_RAIN}, {53,"中度毛毛雨",WEATHER_SCENE_RAIN},
+        {55,"強毛毛雨",WEATHER_SCENE_RAIN}, {56,"輕度凍毛毛雨",WEATHER_SCENE_RAIN},
+        {57,"強凍毛毛雨",WEATHER_SCENE_RAIN}, {61,"小雨",WEATHER_SCENE_RAIN},
+        {63,"中雨",WEATHER_SCENE_RAIN}, {65,"大雨",WEATHER_SCENE_RAIN},
+        {66,"輕度凍雨",WEATHER_SCENE_RAIN}, {67,"強凍雨",WEATHER_SCENE_RAIN},
+        {71,"小雪",WEATHER_SCENE_SNOW}, {73,"中雪",WEATHER_SCENE_SNOW},
+        {75,"大雪",WEATHER_SCENE_SNOW}, {77,"雪粒",WEATHER_SCENE_SNOW},
+        {80,"小陣雨",WEATHER_SCENE_RAIN}, {81,"中陣雨",WEATHER_SCENE_RAIN},
+        {82,"強陣雨",WEATHER_SCENE_RAIN}, {85,"小陣雪",WEATHER_SCENE_SNOW},
+        {86,"強陣雪",WEATHER_SCENE_SNOW}, {95,"雷雨",WEATHER_SCENE_STORM},
+        {96,"雷雨伴小冰雹",WEATHER_SCENE_STORM}, {97,"強雷雨",WEATHER_SCENE_STORM},
+        {99,"雷雨伴大冰雹",WEATHER_SCENE_STORM},
+    };
+    const int64_t day0=weather_timestamp("2026-11-01T16:00:00Z"), day1=day0+86400;
+    char json[2048];
+    for(unsigned i=0;i<sizeof(cases)/sizeof(*cases);++i){
+        int n=snprintf(json,sizeof(json),
+            "{\"latitude\":%.4f,\"longitude\":%.4f,\"timezone\":\"%s\",\"utc_offset_seconds\":28800,"
+            "\"daily\":{\"time\":[%lld,%lld],\"weather_code\":[%d,%d],"
+            "\"temperature_2m_min\":[12,13],\"temperature_2m_max\":[22,23],"
+            "\"relative_humidity_2m_mean\":[68,70],\"sunrise\":[null,null],\"sunset\":[null,null]}}",
+            city.lat,city.lon,city.timezone,(long long)day0,(long long)day1,cases[i].code,cases[i].code);
+        assert(n>0&&(size_t)n<sizeof(json));
+        weather_forecast_t f={0};
+        assert(weather_openmeteo_forecast_parse(json,(size_t)n,now,&city,&f)==WEATHER_PARSE_OK);
+        assert(f.days[0].code==cases[i].code&&!strcmp(f.days[0].condition,cases[i].text));
+        assert(f.days[1].code==cases[i].code&&!strcmp(f.days[1].condition,cases[i].text));
+        assert(weather_scene(cases[i].code)==cases[i].scene);
+    }
+}
 static void http_dates(void) {
     const char *dates[]={
         "Thu, 01 Jan 2026 00:30:00 GMT", "Sun, 01 Feb 2026 00:30:00 GMT",
@@ -100,6 +135,7 @@ int main(void) {
     http_dates();
     now=weather_timestamp("2026-11-02T00:30:00Z");assert(now);
     assert(weather_location_parse(WEATHER_TEST_CITY,strlen(WEATHER_TEST_CITY),&city));
+    openmeteo_conditions();
     weather_forecast_t f={0};
     assert(weather_forecast_parse(WEATHER_TEST_FORECAST,strlen(WEATHER_TEST_FORECAST),now,&city,&f));
     forecast_rejections();

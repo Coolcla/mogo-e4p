@@ -4,7 +4,7 @@
  *
  * 中文：崩溃日志。最近若干条带时间戳的短文本留在 RTC 内存里，软复位不清它，
  * 于是崩溃后的第一次开机能把这些行原样列在屏幕上。这台设备没有随手可用的串口，
- * 崩溃前发生了什么只有这里说得清。面包屑只回答"最后一步是哪个事件"，这里回答"那之前都发生了什么"。
+ * 崩溃前发生了什么只有这里说得清。面包屑只回答"最後一步是哪個事件"，这里回答"那之前都發生了什麼"。
  *
  * English: Crash log. The last few timestamped short lines live in RTC memory, which a soft reset
  * leaves alone, so the first boot after a crash can list them on screen. This board has no

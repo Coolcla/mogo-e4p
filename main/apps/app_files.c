@@ -7,7 +7,7 @@
  * 用户修订：文件管理直接显示 WiFi、热点、USB；有接入 ID 时并排显示 CloudZao。
  * User revision: show direct WiFi, hotspot and USB routes, alongside CloudZao when an integration ID is configured.
  * 用户授权新输入法：文件改名使用共用九宫格/全键盘及常亮光标；离页释放候选。
- * Authorized keyboard revision: rename uses shared T9/QWERTY and a steady caret; exit frees candidates.
+ * File rename uses shared Zhuyin/QWERTY input and a steady caret; exit frees candidates.
  * 用户修订：输入只刷新变化区域，布局切换局部灰阶，避免打字累计整屏清残影。
  * User revision: input refreshes changed regions; layout switches use local grayscale, without accumulating whole-page cleanup.
  * 用户修订：存储卡未挂载时点信息区手动重挂；保留格式化二次确认。
@@ -54,6 +54,7 @@
 #include "esp_log.h"
 #include "esp_heap_caps.h"
 #include "esp_attr.h"
+#include "webdav_service.h"
 
 #define FILE_ROWS 9
 typedef struct { char path[288]; char name[128]; off_t size; bool is_dir; } file_item_t;
@@ -96,6 +97,7 @@ static void files_free(void) {
 }
 static int s_count, s_folder, s_page;
 static int s_requested_folder = -1;
+static bool s_requested_webdav_books;
 static int s_counts[3];
 static bool s_scan_pending;
 static int s_pager_pressed=UI_PAGER_NONE;
@@ -113,7 +115,10 @@ static bool s_sd_format_confirm;
 // 格式化尝试的反馈，显示在卡片的信息行上；为空时回到提示语。
 // Feedback from a format attempt, shown on the card's info line; empty falls back to the hint.
 static char s_sd_notice[64];
-typedef enum { FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MOVE } file_view_t;
+typedef enum {
+    FILE_VIEW_LIST, FILE_VIEW_ACTIONS, FILE_VIEW_RENAME, FILE_VIEW_MOVE,
+    FILE_VIEW_WEBDAV, FILE_VIEW_WEBDAV_AUTH,
+} file_view_t;
 static file_view_t s_view;
 static file_item_t s_selected;
 static bool s_delete_confirm;
@@ -121,9 +126,18 @@ static int s_move_origin_folder, s_move_origin_page;
 static char s_move_origin_dir[288];
 static char s_editor[121], s_editor_ext[16], s_editor_notice[96];
 static ui_text_edit_t s_editor_input;
+static char s_webdav_server[APP_WEBDAV_SERVER_MAX], s_webdav_username[64], s_webdav_password[128];
+static ui_text_edit_t s_webdav_server_input, s_webdav_user_input, s_webdav_password_input;
+static unsigned s_webdav_field;
+static bool s_webdav_pending_upload, s_webdav_refresh_pending;
+static bool s_webdav_password_visible, s_webdav_open_after_download;
+static char s_webdav_download_path[288], s_webdav_download_name[128];
+static char s_webdav_path[256] = "/";
+static unsigned s_webdav_revision;
 static void scan_folder(int folder);
+static void open_selected(app_ctx_t *ctx);
 
-static const char *const names[] = {"书籍", "图片", "字体", "TF 卡目录"};
+static const char *const names[] = {"書籍", "圖片", "字型", "TF 卡目錄"};
 static const char *folder_root(int folder) {
     if (folder == 0) return app_settings_books_dir();
     if (folder == 1) return "/sdcard/pictures";
@@ -131,11 +145,11 @@ static const char *folder_root(int folder) {
     return s_dir;
 }
 static int visible_rows(void) { return s_view == FILE_VIEW_MOVE ? 7 : FILE_ROWS; }
-static int root_rows(void) { return 6; }
+static int root_rows(void) { return 7; }
 // 绘制、分页和触摸使用同一行几何；移动页保留七行与原操作栏。
 // Share row geometry across drawing and hits; retain seven rows and the move toolbar.
 static EpdRect file_row_rect(int row) {
-    if (s_folder < 0) return (EpdRect){36, 488 + row * 84, 612, 84};
+    if (s_folder < 0) return (EpdRect){36, 488 + row * 72, 612, 72};
     if (s_view == FILE_VIEW_MOVE) return (EpdRect){36, 214 + row * 88, 612, 88};
     return (EpdRect){36, 215 + row * 86, 612, 86};
 }
@@ -153,7 +167,7 @@ static int file_pager_pages(void) {
     return s_count?1+(s_count-1)/rows:1;
 }
 static void draw_file_pager(uint8_t *fb) {
-    char label[48];snprintf(label,sizeof(label),"第 %d 页 · 共 %d 页",s_page+1,file_pager_pages());
+    char label[48];snprintf(label,sizeof(label),"第 %d 頁 · 共 %d 頁",s_page+1,file_pager_pages());
     ui_pager_draw(fb,label,s_page,file_pager_pages(),false,s_pager_pressed);
 }
 static app_redraw_t file_pager_paint(app_ctx_t *ctx) {
@@ -181,9 +195,9 @@ static bool file_pager_event(app_ctx_t *ctx,const ui_gesture_event_t *ev,app_red
 }
 static int home_transfer_count(void) {
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-    return cloudzao_available() ? 4 : 3;
+    return cloudzao_available() ? 5 : 4;
 #else
-    return 3;
+    return 4;
 #endif
 }
 
@@ -211,7 +225,7 @@ static void draw_cloudzao_logo(uint8_t *fb, int cx, int cy) {
 static EpdRect storage_card_rect(void) { return (EpdRect){36, 87, 612, 126}; }
 
 // 需要格式化：卡在、没挂上、而且不是超时。超时是接触或供电问题，格式化解决不了，那种情况下
-// 说"格式化可能可以解决"会把用户带偏。
+// 说"格式化可能可以解決"会把用户带偏。
 // Needs formatting: the card is present, will not mount, and the failure is not a timeout. A
 // timeout is a contact or power problem that formatting cannot fix, so offering it there would
 // point the user at the wrong thing.
@@ -393,31 +407,33 @@ static app_redraw_t move_selected(void) {
     }
     char destination[288];
     if (snprintf(destination, sizeof(destination), "%s/%s", s_dir, s_selected.name) >= sizeof(destination)) {
-        snprintf(s_message, sizeof(s_message), "目标路径过长"); return APP_REDRAW_PAGE;
+        snprintf(s_message, sizeof(s_message), "目標路徑過長"); return APP_REDRAW_PAGE;
     }
     if (!strcmp(destination, s_selected.path)) {
-        snprintf(s_message, sizeof(s_message), "已在此文件夹"); return APP_REDRAW_PAGE;
+        snprintf(s_message, sizeof(s_message), "已在此資料夾"); return APP_REDRAW_PAGE;
     }
     if (!moved_settings_fit(s_selected.path, destination)) {
-        snprintf(s_message, sizeof(s_message), "设置路径过长，无法移动"); return APP_REDRAW_PAGE;
+        snprintf(s_message, sizeof(s_message), "設定路徑過長，無法移動"); return APP_REDRAW_PAGE;
     }
     esp_err_t err = file_tree_move(s_selected.path, destination);
     if (err != ESP_OK) {
-        snprintf(s_message, sizeof(s_message), err == ESP_ERR_INVALID_STATE ? "目标已有同名项目" :
-                 err == ESP_ERR_INVALID_ARG ? "不能移入自身文件夹" : "移动失败，请检查 TF 卡");
+        snprintf(s_message, sizeof(s_message), err == ESP_ERR_INVALID_STATE ? "目標已有同名專案" :
+                 err == ESP_ERR_INVALID_ARG ? "不能移入自身資料夾" : "移動失敗，請檢查 TF 卡");
         return APP_REDRAW_PAGE;
     }
     sync_moved_settings(s_selected.path, destination);
     notify_moved_tree(s_selected.path, destination, 0);
     book_store_notify_changed();
     leave_move(true);
-    snprintf(s_message, sizeof(s_message), "移动完成");
+    snprintf(s_message, sizeof(s_message), "移動完成");
     return APP_REDRAW_PAGE;
 }
 
 void app_files_request_folder(int folder) {
     if (folder >= 0 && folder < 3) s_requested_folder = folder;
 }
+
+void app_files_request_webdav_books(void) { s_requested_webdav_books = true; }
 
 static bool supported(int folder, const char *name) {
     if (!name[0] || name[0] == '.' || !strncmp(name, "._", 2)) return false;
@@ -446,7 +462,14 @@ static void scan_folder(int folder) {
     s_message[0] = 0;
     s_scan_retry_ms = 0;
     board_sd_get_info(&s_sd);
-    if (!s_sd.mounted) { snprintf(s_message, sizeof(s_message), "TF 卡尚未挂载"); return; }
+    if (folder == 3 && s_folder < 0 && s_view == FILE_VIEW_LIST) {
+        file_item_t remote = {.is_dir = true};
+        snprintf(remote.path, sizeof(remote.path), "@webdav");
+        snprintf(remote.name, sizeof(remote.name), "WebDAV 傳輸");
+        if (files_alloc(1)) s_files[s_count++] = remote;
+        else snprintf(s_message, sizeof(s_message), "記憶體不足，無法載入 WebDAV 入口");
+    }
+    if (!s_sd.mounted) { snprintf(s_message, sizeof(s_message), "TF 卡尚未掛載"); return; }
     const char *root = folder_root(folder);
     errno = 0;
     DIR *dir = opendir(root);
@@ -454,9 +477,9 @@ static void scan_folder(int folder) {
         // 「没有这个目录」和「卡读不出来」不能给同一个结论。
         // "No such directory" and "the card cannot be read" are different answers.
         if (errno == ENOENT || errno == ENOTDIR)
-            snprintf(s_message, sizeof(s_message), "目录不存在：%.60s", root);
+            snprintf(s_message, sizeof(s_message), "目錄不存在：%.60s", root);
         else {
-            snprintf(s_message, sizeof(s_message), "TF 卡读取失败，请稍后重试");
+            snprintf(s_message, sizeof(s_message), "TF 卡讀取失敗，請稍後重試");
             s_scan_retry_ms = esp_timer_get_time() / 1000 + FILE_SCAN_RETRY_MS;
         }
         return;
@@ -492,7 +515,7 @@ static void scan_folder(int folder) {
             closedir(dir);
             files_free();
             s_count = 0;
-            snprintf(s_message, sizeof(s_message), "内存不足，无法加载目录");
+            snprintf(s_message, sizeof(s_message), "記憶體不足，無法載入目錄");
             return;
         }
         s_files[s_count++] = candidate;
@@ -502,7 +525,7 @@ static void scan_folder(int folder) {
     // Retry only when most entries failed: one odd entry must not repaint the page every 1.5 s.
     if (failed && (s_count == 0 || failed > s_count)) {
         s_scan_retry_ms = esp_timer_get_time() / 1000 + FILE_SCAN_RETRY_MS;
-        if (!s_count) snprintf(s_message, sizeof(s_message), "TF 卡读取失败，请稍后重试");
+        if (!s_count) snprintf(s_message, sizeof(s_message), "TF 卡讀取失敗，請稍後重試");
     }
     if (s_count > 1) qsort(s_files, s_count, sizeof(s_files[0]), compare_files);
     if (folder >= 0 && folder < 3) s_counts[folder] = s_count;
@@ -535,7 +558,7 @@ static void file_icon(uint8_t *fb, int x, int y, bool folder) {
 }
 
 static void file_detail(char *dst, size_t cap, const file_item_t *item) {
-    if (item->is_dir) snprintf(dst, cap, "文件夹");
+    if (item->is_dir) snprintf(dst, cap, "資料夾");
     else if (item->size >= 1024 * 1024) snprintf(dst, cap, "%.1f MB", item->size / 1048576.0);
     else if (item->size >= 1024) snprintf(dst, cap, "%.1f KB", item->size / 1024.0);
     else snprintf(dst, cap, "%lld B", (long long)item->size);
@@ -596,8 +619,8 @@ static void draw_file_row(uint8_t *fb, int row, int index) {
     int cy = rect.y + rect.height / 2;
     ui_draw_icon(fb, 58, cy, 40, item->is_dir ? UI_ICON_FOLDER : UI_ICON_FILE, UI_GRAY_BLACK);
     const char *tag = s_folder < 0 ? NULL :
-        !strcmp(item->path, app_settings_books_dir()) ? "书籍目录" :
-        !strcmp(item->path, app_settings_fonts_dir()) ? "字体目录" : NULL;
+        !strcmp(item->path, app_settings_books_dir()) ? "書籍目錄" :
+        !strcmp(item->path, app_settings_fonts_dir()) ? "字型目錄" : NULL;
     char name[160], detail[48];
     int px = ui_text_effective_px(23);
     file_list_name(name, item, px, 492);
@@ -619,7 +642,7 @@ static void draw_file_row(uint8_t *fb, int row, int index) {
 
 static void editor_start(void) {
     if (strlen(s_selected.name) >= sizeof(s_editor)) {
-        snprintf(s_message, sizeof(s_message), "名称过长，无法在设备上编辑");
+        snprintf(s_message, sizeof(s_message), "名稱過長，無法在裝置上編輯");
         return;
     }
     copy_utf8(s_editor, sizeof(s_editor), s_selected.name);
@@ -635,11 +658,233 @@ static void editor_start(void) {
     s_view = FILE_VIEW_RENAME;
 }
 
+static ui_text_edit_t *webdav_active_input(void) {
+    if (s_webdav_field == 0) return &s_webdav_server_input;
+    return s_webdav_field == 1 ? &s_webdav_user_input : &s_webdav_password_input;
+}
 
+static EpdRect webdav_field_rect(unsigned field) {
+    return (EpdRect){36, 202 + (int)field * 92, 612, 58};
+}
 
+static EpdRect webdav_input_rect(unsigned field) {
+    EpdRect rect = webdav_field_rect(field);
+    if (field == 2) rect.width -= 96;
+    return rect;
+}
 
+static EpdRect webdav_password_toggle_rect(void) {
+    EpdRect rect = webdav_field_rect(2);
+    return (EpdRect){rect.x + rect.width - 88, rect.y + 7, 80, rect.height - 14};
+}
 
+static void webdav_auth_keyboard(unsigned field) {
+    if (field > 2) return;
+    s_webdav_field = field;
+    ui_text_edit_t *active = webdav_active_input();
+    size_t capacity = field == 0 ? sizeof(s_webdav_server) : field == 1 ? sizeof(s_webdav_username) : sizeof(s_webdav_password);
+    char *buffer = field == 0 ? s_webdav_server : field == 1 ? s_webdav_username : s_webdav_password;
+    ui_text_edit_init(active, buffer, capacity);
+    ui_keyboard_begin(active, true);
+}
 
+static void webdav_auth_start(bool upload_after_auth) {
+    ui_keyboard_end();
+    memset(s_webdav_server, 0, sizeof(s_webdav_server));
+    memset(s_webdav_username, 0, sizeof(s_webdav_username));
+    memset(s_webdav_password, 0, sizeof(s_webdav_password));
+    (void)app_webdav_get_config(s_webdav_server, sizeof(s_webdav_server),
+                                s_webdav_username, sizeof(s_webdav_username),
+                                s_webdav_password, sizeof(s_webdav_password));
+    ui_text_edit_init(&s_webdav_server_input, s_webdav_server, sizeof(s_webdav_server));
+    ui_text_edit_init(&s_webdav_user_input, s_webdav_username, sizeof(s_webdav_username));
+    ui_text_edit_init(&s_webdav_password_input, s_webdav_password, sizeof(s_webdav_password));
+    s_webdav_pending_upload = upload_after_auth;
+    s_webdav_password_visible = false;
+    s_editor_notice[0] = 0;
+    s_view = FILE_VIEW_WEBDAV_AUTH;
+    webdav_auth_keyboard(0);
+}
+
+static bool webdav_encode_name(const char *name, char *out, size_t capacity) {
+    static const char hex[] = "0123456789ABCDEF";
+    size_t used = 0;
+    if (!name || !*name) return false;
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+        bool plain = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+            (*p >= '0' && *p <= '9') || *p == '-' || *p == '_' || *p == '.' || *p == '~';
+        size_t need = plain ? 1 : 3;
+        if (used + need >= capacity) return false;
+        if (plain) out[used++] = (char)*p;
+        else { out[used++] = '%'; out[used++] = hex[*p >> 4]; out[used++] = hex[*p & 15]; }
+    }
+    out[used] = 0;
+    return true;
+}
+
+static bool webdav_upload_selected(void) {
+    if (s_selected.is_dir || !app_webdav_configured()) return false;
+    char encoded[384], remote[256];
+    if (!webdav_encode_name(s_selected.name, encoded, sizeof(encoded))) return false;
+    int n = snprintf(remote, sizeof(remote), "%s%s%s", s_webdav_path,
+                     s_webdav_path[strlen(s_webdav_path) - 1] == '/' ? "" : "/", encoded);
+    if (n < 0 || (size_t)n >= sizeof(remote)) return false;
+    if (!storage_jobs_quiesce(2000)) {
+        snprintf(s_message, sizeof(s_message), "TF 卡正在使用，請稍後再上傳");
+        return false;
+    }
+    if (!app_webdav_upload(s_selected.path, remote)) {
+        snprintf(s_message, sizeof(s_message), "無法開始 WebDAV 上傳");
+        return false;
+    }
+    snprintf(s_message, sizeof(s_message), "正在上傳至 WebDAV…");
+    return true;
+}
+
+static bool webdav_connect(void) {
+    if (!app_webdav_configure(s_webdav_server, s_webdav_username, s_webdav_password)) {
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "請輸入有效的 HTTPS 伺服器網址、使用者名稱與密碼");
+        return false;
+    }
+    s_webdav_path[0] = '/'; s_webdav_path[1] = 0;
+    ui_keyboard_end();
+    s_webdav_refresh_pending = false;
+    if (s_webdav_pending_upload) {
+        s_webdav_pending_upload = false;
+        s_view = FILE_VIEW_ACTIONS;
+        s_webdav_revision = 0;
+        (void)webdav_upload_selected();
+        return true;
+    }
+    s_folder = 4;
+    s_view = FILE_VIEW_WEBDAV;
+    s_webdav_revision = 0;
+    (void)app_webdav_list(s_webdav_path);
+    return true;
+}
+
+static bool webdav_download_destination(const char *name, bool import_book,
+                                       char *out, size_t capacity) {
+    if (!name || !name[0] || !strcmp(name, ".") || !strcmp(name, "..") ||
+        strchr(name, '/') || strchr(name, '\\') || strchr(name, ':')) return false;
+    char directory[128];
+    if (import_book) {
+        book_store_root_t root = {0};
+        if (book_store_upload_root(&root) != ESP_OK || root.is_flash) return false;
+        copy_utf8(directory, sizeof(directory), root.path);
+    } else snprintf(directory, sizeof(directory), "/sdcard/WebDAV");
+    if (!import_book && mkdir(directory, 0755) != 0 && errno != EEXIST) return false;
+    struct stat directory_stat;
+    if (stat(directory, &directory_stat) || !S_ISDIR(directory_stat.st_mode)) return false;
+    const char *dot = strrchr(name, '.');
+    size_t stem_length = dot && dot != name ? (size_t)(dot - name) : strlen(name);
+    const char *extension = stem_length < strlen(name) ? name + stem_length : "";
+    for (unsigned suffix = 0; suffix < 10000; ++suffix) {
+        int written = suffix == 0
+            ? snprintf(out, capacity, "%s/%s", directory, name)
+            : snprintf(out, capacity, "%s/%.*s (%u)%s", directory, (int)stem_length,
+                       name, suffix, extension);
+        if (written < 0 || (size_t)written >= capacity) return false;
+        struct stat existing;
+        if (stat(out, &existing) == 0) continue;
+        if (errno == ENOENT) return true;
+        return false;
+    }
+    return false;
+}
+
+static bool webdav_download_selected(bool import_book) {
+    if (s_selected.is_dir) { snprintf(s_message, sizeof(s_message), "資料夾不能直接下載"); return false; }
+    if (!s_sd.mounted) { snprintf(s_message, sizeof(s_message), "下載需要已掛載的 TF 卡"); return false; }
+    if (import_book && !is_book_path(s_selected.name)) {
+        snprintf(s_message, sizeof(s_message), "只可匯入 EPUB、TXT 或 MOBI 圖書"); return false;
+    }
+    char local[288];
+    if (!webdav_download_destination(s_selected.name, import_book, local, sizeof(local))) {
+        snprintf(s_message, sizeof(s_message), import_book ? "無法建立圖書目錄中的新檔案" :
+                 "無法建立 TF 卡 WebDAV 下載檔案"); return false;
+    }
+    if (!storage_jobs_quiesce(2000) || !app_webdav_download(s_selected.path, local)) {
+        snprintf(s_message, sizeof(s_message), "無法開始下載，請確認 TF 卡空間"); return false;
+    }
+    s_webdav_open_after_download = import_book;
+    if (import_book) {
+        copy_utf8(s_webdav_download_path, sizeof(s_webdav_download_path), local);
+        copy_utf8(s_webdav_download_name, sizeof(s_webdav_download_name), s_selected.name);
+    }
+    s_view = FILE_VIEW_WEBDAV;
+    s_webdav_revision = 0;
+    s_webdav_refresh_pending = true;
+    snprintf(s_message, sizeof(s_message), import_book ? "正在匯入圖書，完成後開啟…" :
+             "正在下載至 TF 卡 /WebDAV");
+    return true;
+}
+
+static void webdav_open_root(void) {
+    if (!app_webdav_configured()) {
+        webdav_auth_start(false);
+        return;
+    }
+    s_webdav_path[0] = '/'; s_webdav_path[1] = 0;
+    s_folder = 4;
+    s_view = FILE_VIEW_WEBDAV;
+    s_webdav_revision = 0;
+    s_webdav_refresh_pending = false;
+    (void)app_webdav_list(s_webdav_path);
+}
+
+static void webdav_sync_view(void) {
+    app_webdav_status_t status;
+    app_webdav_status(&status);
+    if (status.revision == s_webdav_revision) return;
+    s_webdav_revision = status.revision;
+    copy_utf8(s_message, sizeof(s_message), status.notice);
+    if (status.state == APP_WEBDAV_BUSY && !s_message[0])
+        snprintf(s_message, sizeof(s_message), "%s",
+                 s_view == FILE_VIEW_ACTIONS ? "正在上傳…" : "正在載入遠端目錄…");
+    if (s_view != FILE_VIEW_WEBDAV || status.state == APP_WEBDAV_BUSY ||
+        status.state == APP_WEBDAV_FAILED) return;
+    files_free();
+    s_count = s_page = 0;
+    if (status.state == APP_WEBDAV_READY) {
+        for (unsigned i = 0; i < status.count; ++i) {
+            app_webdav_item_t remote;
+            if (!app_webdav_item(i, &remote) || !files_alloc((size_t)s_count + 1)) break;
+            file_item_t *item = &s_files[s_count++];
+            memset(item, 0, sizeof(*item));
+            copy_utf8(item->path, sizeof(item->path), remote.path);
+            copy_utf8(item->name, sizeof(item->name), remote.name);
+            item->size = (off_t)remote.size;
+            item->is_dir = remote.is_dir;
+        }
+    }
+}
+
+static bool webdav_remote_view(void) { return s_folder == 4; }
+
+static unsigned action_button_count(void) {
+    if (webdav_remote_view()) {
+        if (s_selected.is_dir) return 3;
+        return is_book_path(s_selected.name) ? 5 : 4;
+    }
+    if (s_selected.is_dir) return 5;
+    return 6;
+}
+
+static EpdRect action_button_rect(unsigned count, unsigned index) {
+    unsigned rows = (count + 1) / 2;
+    int height = (358 - (int)(rows - 1) * 12) / (int)rows;
+    if (height > 100) height = 100;
+    const bool span = (count & 1u) && index == count - 1;
+    return (EpdRect){span ? 40 : 40 + (int)(index & 1u) * 308,
+        648 + (int)(index / 2) * (height + 12), span ? 604 : 296, height};
+}
+
+static int action_button_hit(unsigned count, int x, int y) {
+    for (unsigned i = 0; i < count; ++i)
+        if (ui_rect_hit(action_button_rect(count, i), x, y)) return (int)i;
+    return -1;
+}
 
 static void render_actions(uint8_t *fb) {
     // S03：保留当前目录作背景，只叠加文件操作底部面板。/ S03: keep the directory visible and overlay a file-action sheet.
@@ -659,34 +904,60 @@ static void render_actions(uint8_t *fb) {
     if (s_message[0]) ui_text(fb, 50, 608, 20, s_message, EPD_DRAW_ALIGN_LEFT, false);
     if (s_delete_confirm) {
         ui_text_vc(fb, 342, 712, s_selected.is_dir ? 23 : 28,
-                   s_selected.is_dir ? "将删除文件夹内所有内容，无法恢复" : "删除后无法恢复，是否继续？",
+                   s_selected.is_dir && !webdav_remote_view() ? "將刪除資料夾內所有內容，無法恢復" : "刪除後無法恢復，是否繼續？",
                    EPD_DRAW_ALIGN_CENTER, false);
-        ui_draw_button(fb, (EpdRect){50, 788, 278, 76}, "取消", false);
-        ui_draw_button(fb, (EpdRect){356, 788, 278, 76}, "确认删除", true);
-    } else {
-        static const char *labels[] = {"重命名", "复制", "移动", "删除"};
-        for (int i = 0; i < 4; ++i) {
-            EpdRect button = {40 + (i % 2) * 312, 648 + (i / 2) * 122, 292, 100};
-            ui_fill_round_rect(fb, button, 20, 0xe8);
-            ui_draw_control_frame(fb, button, 20, 0x60);
-            ui_text_vc(fb, button.x + button.width / 2, button.y + 50, 25,
-                       labels[i], EPD_DRAW_ALIGN_CENTER, false);
-        }
-        ui_text_vc(fb, 342, 900, 20, "长按文件或文件夹打开操作", EPD_DRAW_ALIGN_CENTER, false);
-        ui_fill_round_rect(fb, (EpdRect){40, 930, 604, 76}, 26, 0xe0);
-        ui_text_vc(fb, 342, 968, 23, "取消", EPD_DRAW_ALIGN_CENTER, false);
+        ui_draw_button(fb, (EpdRect){40, 788, 296, 76}, "取消", false);
+        ui_draw_button(fb, (EpdRect){348, 788, 296, 76}, "確認刪除", true);
+        return;
     }
+    const char *remote_dir_labels[] = {"重新命名", "刪除", "取消"};
+    const char *remote_file_labels[] = {"下載", "重新命名", "刪除", "取消"};
+    const char *remote_book_labels[] = {"匯入並開啟", "下載", "重新命名", "刪除", "取消"};
+    const char *folder_labels[] = {"重新命名", "複製", "移動", "刪除", "取消"};
+    const char *file_labels[] = {"重新命名", "複製", "移動", "刪除", "上傳 WebDAV", "取消"};
+    unsigned count = action_button_count();
+    const char *const *labels = webdav_remote_view()
+        ? s_selected.is_dir ? remote_dir_labels
+          : is_book_path(s_selected.name) ? remote_book_labels : remote_file_labels
+        : s_selected.is_dir ? folder_labels : file_labels;
+    for (unsigned i = 0; i < count; ++i)
+        ui_draw_button(fb, action_button_rect(count, i), labels[i], false);
 }
 
 static void render_rename(uint8_t *fb) {
     ui_nav_back(fb, 36, 79);
-    ui_text_vc(fb, 342, 107, 34, "重命名", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(fb, 342, 107, 34, "重新命名", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_vc(fb, 646, 107, 25, "完成", EPD_DRAW_ALIGN_RIGHT, false);
     file_rule(fb, 36, 157, 612);
-    ui_text(fb, 36, 202, 22, "文件名", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 36, 202, 22, "檔名", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect field = {36, 242, 612, 82};
     ui_text_input_draw(fb, &s_editor_input, field, 29, false, s_editor_ext);
     if (s_editor_notice[0]) ui_text_fixed_vc(fb, 36, 510, 22, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+    ui_keyboard_draw(fb, 560);
+}
+
+static void render_webdav_auth(uint8_t *fb) {
+    ui_nav_back(fb, 36, 79);
+    ui_text_vc(fb, 342, 107, 32, "WebDAV 連線設定", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_vc(fb, 646, 107, 24, "連線", EPD_DRAW_ALIGN_RIGHT, false);
+    file_rule(fb, 36, 157, 612);
+    const char *labels[] = {"伺服器網址（HTTPS）", "使用者名稱", "密碼"};
+    for (unsigned field = 0; field < 3; ++field) {
+        EpdRect r = webdav_field_rect(field);
+        ui_text(fb, r.x, r.y - 25, 19, labels[field], EPD_DRAW_ALIGN_LEFT, false);
+        ui_fill_round_rect(fb, r, 9, field == s_webdav_field ? 0xf8 : 0xec);
+        ui_draw_control_frame(fb, r, 9, field == s_webdav_field ? 0x38 : 0x88);
+        ui_text_edit_t *input = field == 0 ? &s_webdav_server_input :
+            field == 1 ? &s_webdav_user_input : &s_webdav_password_input;
+        ui_text_input_draw(fb, input, webdav_input_rect(field), 23,
+                           field == 2 && !s_webdav_password_visible, NULL);
+        if (field == 2)
+            ui_draw_button(fb, webdav_password_toggle_rect(),
+                           s_webdav_password_visible ? "隱藏" : "顯示", false);
+    }
+    if (s_editor_notice[0])
+        ui_text_fixed_vc(fb, 36, 477, 18, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
+    else ui_text_fixed_vc(fb, 36, 477, 18, "設定會保存在裝置上；伺服器請包含 WebDAV 路徑。", EPD_DRAW_ALIGN_LEFT, false);
     ui_keyboard_draw(fb, 560);
 }
 
@@ -702,7 +973,7 @@ static void storage_amount(char *text,size_t size,uint64_t bytes) {
 }
 static void storage_usage(const board_sd_info_t *info,char *total,size_t total_size,char *usage,size_t usage_size) {
     storage_amount(total,total_size,info->space_valid?info->filesystem_bytes:info->capacity_bytes);
-    if (!storage_space_valid(info)) { snprintf(usage,usage_size,"空间统计暂不可用，请重新进入此页"); return; }
+    if (!storage_space_valid(info)) { snprintf(usage,usage_size,"空間統計暫不可用，請重新進入此頁"); return; }
     char used[24],available[24];
     storage_amount(used,sizeof(used),info->filesystem_bytes-info->free_bytes);
     storage_amount(available,sizeof(available),info->free_bytes);
@@ -711,7 +982,7 @@ static void storage_usage(const board_sd_info_t *info,char *total,size_t total_s
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     if (s_view == FILE_VIEW_ACTIONS) {
         file_view_t restore = s_view;
-        s_view = FILE_VIEW_LIST;
+        s_view = webdav_remote_view() ? FILE_VIEW_WEBDAV : FILE_VIEW_LIST;
         render(ctx, fb);
         s_view = restore;
         render_actions(fb);
@@ -725,10 +996,32 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_nav_draw(fb, 2);
         return;
     }
-    if (s_folder >= 0) {
+    if (s_view == FILE_VIEW_WEBDAV_AUTH) {
+        render_webdav_auth(fb);
+        ui_nav_draw(fb, 2);
+        return;
+    }
+    if (s_view == FILE_VIEW_WEBDAV) {
+        ui_nav_back(fb, 36, 79);
+        ui_text_box(fb, (EpdRect){112, 90, 410, 48}, 28, "WebDAV 傳輸", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_vc(fb, 646, 107, 21, "設定", EPD_DRAW_ALIGN_RIGHT, false);
+        char path[220];
+        snprintf(path, sizeof(path), "遠端目錄 %.190s", s_webdav_path);
+        fit_name(path, 18, 612);
+        ui_text_box(fb, (EpdRect){36, 151, 612, 42}, 17,
+                    s_message[0] ? s_message : path, EPD_DRAW_ALIGN_LEFT, false);
+        ui_fill_rect_fast((EpdRect){36, 211, 612, 2}, 0xc0, fb);
+        if (!s_count && !s_message[0])
+            ui_text_box(fb, (EpdRect){36, 342, 612, 48}, 20, "遠端目錄沒有檔案", EPD_DRAW_ALIGN_CENTER, false);
+        for (int row = 0; row < visible_rows(); ++row) {
+            int index = s_page * visible_rows() + row;
+            if (index >= s_count) break;
+            draw_file_row(fb, row, index);
+        }
+    } else if (s_folder >= 0) {
         ui_nav_back(fb, 36, 79);
         ui_text_box(fb, (EpdRect){112, 90, s_view == FILE_VIEW_MOVE ? 536 : 270, 48}, 28,
-                    s_view == FILE_VIEW_MOVE ? "选择目标文件夹" : names[s_folder], EPD_DRAW_ALIGN_LEFT, false);
+                    s_view == FILE_VIEW_MOVE ? "選擇目標資料夾" : names[s_folder], EPD_DRAW_ALIGN_LEFT, false);
         char path[144];
         snprintf(path, sizeof(path), "TF卡%s", folder_root(s_folder) + 7);
         fit_name(path, 18, 612);
@@ -737,13 +1030,13 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         int folders = 0, files = 0;
         for (int i = 0; i < s_count; ++i) s_files[i].is_dir ? ++folders : ++files;
         char summary[64];
-        if (folders) snprintf(summary, sizeof(summary), "%d 个文件夹 · %d 个文件", folders, files);
-        else snprintf(summary, sizeof(summary), "%d 个文件", files);
+        if (folders) snprintf(summary, sizeof(summary), "%d 個資料夾 · %d 個檔案", folders, files);
+        else snprintf(summary, sizeof(summary), "%d 個檔案", files);
         if (s_view != FILE_VIEW_MOVE)
             ui_text_box(fb, (EpdRect){398, 94, 250, 40}, 18, summary, EPD_DRAW_ALIGN_RIGHT, false);
         ui_fill_rect_fast((EpdRect){36, 211, 612, 2}, 0xc0, fb);
         if (!s_count && !s_message[0])
-            ui_text_box(fb, (EpdRect){36, 342, 612, 48}, 20, "此目录还没有文件", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text_box(fb, (EpdRect){36, 342, 612, 48}, 20, "此目錄還沒有檔案", EPD_DRAW_ALIGN_CENTER, false);
         for (int row = 0; row < visible_rows(); ++row) {
             int index = s_page * visible_rows() + row;
             if (index >= s_count) break;
@@ -752,12 +1045,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (s_view == FILE_VIEW_MOVE) {
             ui_draw_control_frame(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_BLACK);
             ui_draw_control_frame(fb, (EpdRect){355, 875, 293, 76}, 8, UI_GRAY_BLACK);
-            ui_text(fb, 182, 897, 24, "取消移动", EPD_DRAW_ALIGN_CENTER, false);
-            ui_text(fb, 501, 897, 24, "移动到此处", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text(fb, 182, 897, 24, "取消移動", EPD_DRAW_ALIGN_CENTER, false);
+            ui_text(fb, 501, 897, 24, "移動到此處", EPD_DRAW_ALIGN_CENTER, false);
         }
     } else {
         EpdRect storage = storage_card_rect();
-        ui_text_box(fb, (EpdRect){storage.x, storage.y + 10, 250, 40}, 21, "存储卡", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){storage.x, storage.y + 10, 250, 40}, 21, "儲存卡", EPD_DRAW_ALIGN_LEFT, false);
         char total[32], usage[80];
         if (s_sd.mounted) {
             storage_usage(&s_sd,total,sizeof(total),usage,sizeof(usage));
@@ -766,13 +1059,13 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             // Present but unreadable: say the filesystem is the problem and offer the way out.
             snprintf(total, sizeof(total), "需要格式化");
             snprintf(usage, sizeof(usage), "%s", s_sd_notice[0] ? s_sd_notice
-                     : (s_sd_format_confirm ? "将清空卡内全部数据，再点确认" : "格式化可能可以解决此问题"));
+                     : (s_sd_format_confirm ? "將清空卡內全部資料，再點確認" : "格式化可能可以解決此問題"));
         } else {
-            snprintf(total, sizeof(total), "未挂载");
+            snprintf(total, sizeof(total), "未掛載");
             // 探测失败不会自动重试，卡片本身就是重挂入口：提示语直接写出来。
             // A failed probe never retries on its own and the card is the remount entry: say so in the hint.
             snprintf(usage, sizeof(usage),
-                     s_scan_pending ? "正在尝试挂载…" : "请检查 TF 卡，点击重新挂载");
+                     s_scan_pending ? "正在嘗試掛載…" : "請檢查 TF 卡，點選重新掛載");
         }
         ui_text_box(fb, (EpdRect){348, storage.y + 10, 300, 40}, 20, total, EPD_DRAW_ALIGN_RIGHT, false);
         ui_text_box(fb, (EpdRect){storage.x, storage.y + 55, storage.width, 38}, 16, usage, EPD_DRAW_ALIGN_LEFT, false);
@@ -782,23 +1075,23 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             capacity.width = (int)((s_sd.filesystem_bytes - s_sd.free_bytes) * storage.width / s_sd.filesystem_bytes);
             if (capacity.width > 0) ui_fill_rect_fast(capacity, UI_GRAY_BLACK, fb);
         }
-        ui_text_box(fb, (EpdRect){36, 229, 612, 40}, 18, "传输文件", EPD_DRAW_ALIGN_LEFT, false);
-        static const char *const methods[] = {"WiFi传输", "热点传输", "USB传输",
+        ui_text_box(fb, (EpdRect){36, 229, 612, 40}, 18, "傳輸檔案", EPD_DRAW_ALIGN_LEFT, false);
+        static const char *const methods[] = {"WiFi傳輸", "熱點傳輸", "USB傳輸", "WebDAV 傳輸",
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
             "CloudZao",
 #endif
         };
-        static const char *const details[] = {"同一网络", "连接设备热点", "连接电脑",
+        static const char *const details[] = {"同一網路", "連線裝置熱點", "連線電腦", "連結 WebDAV",
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
             "接收推送",
 #endif
         };
-        static const ui_icon_t icons[] = {UI_ICON_WIFI, UI_ICON_RADIO_TOWER, UI_ICON_USB};
+        static const ui_icon_t icons[] = {UI_ICON_WIFI, UI_ICON_RADIO_TOWER, UI_ICON_USB, UI_ICON_FOLDER_INPUT};
         for (int i = 0; i < home_transfer_count(); ++i) {
             EpdRect card = home_transfer_rect(i);
             const int cx = card.x + card.width / 2;
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
-            if (i == 3) draw_cloudzao_logo(fb, cx, card.y + 28);
+            if (i == 4) draw_cloudzao_logo(fb, cx, card.y + 28);
             else
 #endif
                 ui_draw_icon(fb, cx, card.y + 28, 40, icons[i], UI_GRAY_BLACK);
@@ -808,12 +1101,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
                         16, details[i], EPD_DRAW_ALIGN_CENTER, false);
         }
         ui_fill_rect_fast((EpdRect){36, 422, 612, 2}, 0xc0, fb);
-        char summary[48]; snprintf(summary, sizeof(summary), "根目录 · %d 项", s_count);
+        char summary[48]; snprintf(summary, sizeof(summary), "根目錄 · %d 項", s_count);
         ui_text_box(fb, (EpdRect){36, 440, 440, 40}, 20, summary, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_box(fb, (EpdRect){500, 440, 148, 40}, 16, "名称 ↑", EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text_box(fb, (EpdRect){500, 440, 148, 40}, 16, "名稱 ↑", EPD_DRAW_ALIGN_RIGHT, false);
         int first = s_page * root_rows();
         if (!s_count) ui_text_box(fb, (EpdRect){36, 583, 612, 48}, 20,
-            s_message[0] ? s_message : s_sd.mounted ? "根目录为空" : "TF 卡未挂载", EPD_DRAW_ALIGN_CENTER, false);
+            s_message[0] ? s_message : s_sd.mounted ? "根目錄為空" : "TF 卡未掛載", EPD_DRAW_ALIGN_CENTER, false);
         for (int row = 0; row < root_rows(); ++row) {
             int index = first + row;
             if (index >= s_count) break;
@@ -825,9 +1118,15 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
 }
 
 static void on_enter(app_ctx_t *ctx) {
-    (void)ctx;
+    bool open_webdav_books = s_requested_webdav_books;
+    s_requested_webdav_books = false;
+    app_webdav_cancel();
+    s_webdav_pending_upload = false;
+    s_webdav_refresh_pending = false;
+    s_webdav_open_after_download = false;
+    s_webdav_revision = 0;
     s_pager_pressed=UI_PAGER_NONE;s_pager_paint_pending=false;
-    s_folder = s_requested_folder; s_requested_folder = -1;
+    s_folder = open_webdav_books ? 4 : s_requested_folder; s_requested_folder = -1;
     s_view = FILE_VIEW_LIST;
     s_delete_confirm = false;
     snprintf(s_dir, sizeof(s_dir), "/sdcard");
@@ -840,10 +1139,13 @@ static void on_enter(app_ctx_t *ctx) {
     s_sd_format_confirm = false;
     s_sd_notice[0] = 0;
     for (int i = 0; i < 3; ++i) s_counts[i] = count_root(i);
-    if (s_folder >= 0) scan_folder(s_folder);
+    if (s_folder == 4) webdav_open_root();
+    else if (s_folder >= 0) scan_folder(s_folder);
     else scan_folder(3);
+    (void)ctx;
 }
 static void on_media_lost(app_ctx_t *ctx) {
+    app_webdav_cancel();
     files_free();
     s_pager_pressed=UI_PAGER_NONE;s_pager_paint_pending=false;
     (void)ctx; ui_keyboard_end(); s_folder = -1; s_count = s_page = 0; s_scan_pending = false;
@@ -855,14 +1157,59 @@ static void on_media_ready(app_ctx_t *ctx) {
     s_scan_pending = true;
 }
 static app_redraw_t rename_paint(app_ctx_t *ctx, bool field);
+static app_redraw_t webdav_auth_paint(app_ctx_t *ctx, bool field);
 static app_redraw_t on_tick(app_ctx_t *ctx) {
-    if (s_view == FILE_VIEW_RENAME) {
+    if (s_view == FILE_VIEW_RENAME || s_view == FILE_VIEW_WEBDAV_AUTH) {
         if (ctx->consumed) return APP_REDRAW_NONE;
         bool held = !ctx->released && ctx->touch && ctx->touch->touched && ctx->touch->count == 1;
         if (ui_keyboard_hold_tick(held, ctx->touch ? ctx->touch->x : 0,
-            ctx->touch ? ctx->touch->y : 0, ctx->now_ms) == UI_KEYBOARD_CHANGED) return rename_paint(ctx, false);
+            ctx->touch ? ctx->touch->y : 0, ctx->now_ms) == UI_KEYBOARD_CHANGED)
+            return s_view == FILE_VIEW_RENAME ? rename_paint(ctx, false) : webdav_auth_paint(ctx, false);
         return ui_keyboard_idle_tick(ctx->touch && ctx->touch->touched, ctx->now_ms) == UI_KEYBOARD_CHANGED
-            ? rename_paint(ctx, false) : APP_REDRAW_NONE;
+            ? s_view == FILE_VIEW_RENAME ? rename_paint(ctx, false) : webdav_auth_paint(ctx, false)
+            : APP_REDRAW_NONE;
+    }
+    if (s_view == FILE_VIEW_WEBDAV || s_view == FILE_VIEW_ACTIONS) {
+        app_webdav_status_t status;
+        app_webdav_status(&status);
+        if (s_webdav_open_after_download && status.state != APP_WEBDAV_BUSY) {
+            s_webdav_open_after_download = false;
+            s_webdav_refresh_pending = false;
+            s_webdav_revision = status.revision;
+            if (status.state == APP_WEBDAV_READY) {
+                struct stat downloaded;
+                memset(&s_selected, 0, sizeof(s_selected));
+                copy_utf8(s_selected.path, sizeof(s_selected.path), s_webdav_download_path);
+                copy_utf8(s_selected.name, sizeof(s_selected.name), s_webdav_download_name);
+                if (!stat(s_selected.path, &downloaded) && S_ISREG(downloaded.st_mode))
+                    s_selected.size = downloaded.st_size;
+                else {
+                    snprintf(s_message, sizeof(s_message), "匯入完成，但找不到下載檔案");
+                    return APP_REDRAW_PAGE;
+                }
+                s_selected.is_dir = false;
+                book_store_notify_changed();
+                open_selected(ctx);
+                if (ctx->request_app) return APP_REDRAW_NONE;
+                snprintf(s_message, sizeof(s_message), "圖書已匯入，無法開啟此格式");
+            } else {
+                copy_utf8(s_message, sizeof(s_message),
+                          status.notice[0] ? status.notice : "WebDAV 圖書匯入失敗");
+            }
+            return APP_REDRAW_PAGE;
+        }
+        if (s_webdav_refresh_pending && status.state != APP_WEBDAV_BUSY) {
+            s_webdav_refresh_pending = false;
+            if (app_webdav_list(s_webdav_path)) {
+                app_webdav_status(&status);
+                s_webdav_revision = status.revision;
+                return APP_REDRAW_PAGE;
+            }
+        }
+        if (status.revision != s_webdav_revision) {
+            webdav_sync_view();
+            return APP_REDRAW_PAGE;
+        }
     }
     // 上一次扫描读错时到点自动重扫，用户不用离开再进来。
     // A scan that hit a read error reschedules itself; the user need not leave and re-enter.
@@ -892,7 +1239,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
 
 static void open_selected(app_ctx_t *ctx) {
     const char *ext = strrchr(s_selected.name, '.');
-    if (!ext) { snprintf(s_message, sizeof(s_message), "没有可用的打开方式"); return; }
+    if (!ext) { snprintf(s_message, sizeof(s_message), "沒有可用的開啟方式"); return; }
     if (!strcasecmp(ext, ".epub") || !strcasecmp(ext, ".txt") || !strcasecmp(ext, ".mobi")) {
         extern const app_desc_t app_book;
         if (app_book_request_open(s_selected.path)) ctx->request_app = &app_book;
@@ -903,12 +1250,25 @@ static void open_selected(app_ctx_t *ctx) {
         if (ttf_font_open(s_selected.path) == ESP_OK) {
             app_settings_set_system_font_path(s_selected.path);
             app_font_activate_system();
-            snprintf(s_message, sizeof(s_message), "已设为系统字体");
-        } else snprintf(s_message, sizeof(s_message), "字体无法加载");
-    } else snprintf(s_message, sizeof(s_message), "没有可用的打开方式");
+            snprintf(s_message, sizeof(s_message), "已設為系統字型");
+        } else snprintf(s_message, sizeof(s_message), "字型無法載入");
+    } else snprintf(s_message, sizeof(s_message), "沒有可用的開啟方式");
 }
 
 static void delete_selected(void) {
+    if (webdav_remote_view()) {
+        if (!app_webdav_delete(s_selected.path)) {
+            s_delete_confirm = false;
+            snprintf(s_message, sizeof(s_message), "無法開始遠端刪除");
+            return;
+        }
+        s_delete_confirm = false;
+        s_view = FILE_VIEW_WEBDAV;
+        s_webdav_refresh_pending = true;
+        s_webdav_revision = 0;
+        snprintf(s_message, sizeof(s_message), "正在刪除遠端檔案…");
+        return;
+    }
     char old_path[288]; copy_utf8(old_path, sizeof(old_path), s_selected.path);
     esp_err_t err = file_tree_delete(old_path, file_deleted, NULL);
     if (err != ESP_OK) {
@@ -916,19 +1276,19 @@ static void delete_selected(void) {
         repair_deleted_directories();
         book_store_notify_changed();
         rescan_current();
-        snprintf(s_message, sizeof(s_message), "删除未完成，请检查 TF 卡");
+        snprintf(s_message, sizeof(s_message), "刪除未完成，請檢查 TF 卡");
         return;
     }
     repair_deleted_directories();
     book_store_notify_changed();
     s_view = FILE_VIEW_LIST; s_delete_confirm = false;
     rescan_current();
-    snprintf(s_message, sizeof(s_message), s_selected.is_dir ? "文件夹已删除" : "文件已删除");
+    snprintf(s_message, sizeof(s_message), s_selected.is_dir ? "資料夾已刪除" : "檔案已刪除");
 }
 
 static app_redraw_t save_rename(void) {
     if (ui_keyboard_pending()) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "请先选择候选字");
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "請先選擇候選字");
         return APP_REDRAW_PAGE;
     }
     char *start = s_editor;
@@ -937,28 +1297,60 @@ static app_redraw_t save_rename(void) {
     size_t len = strlen(s_editor);
     while (len && (s_editor[len - 1] == ' ' || s_editor[len - 1] == '.')) s_editor[--len] = 0;
     if (!len || strchr(s_editor, '/') || strchr(s_editor, '\\') || strchr(s_editor, ':')) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "请输入有效文件名");
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "請輸入有效檔名");
         return APP_REDRAW_PAGE;
     }
     char name[128], destination[288];
-    if (snprintf(name, sizeof(name), "%s%s", s_editor, s_editor_ext) >= sizeof(name) ||
-        !sibling_path(name, destination)) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "文件名过长");
+    if (snprintf(name, sizeof(name), "%s%s", s_editor, s_editor_ext) >= sizeof(name)) {
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "檔名過長");
+        return APP_REDRAW_PAGE;
+    }
+    if (webdav_remote_view()) {
+        char encoded[384];
+        const char *slash = strrchr(s_selected.path, '/');
+        size_t parent = slash ? (size_t)(slash - s_selected.path) : 0;
+        if (!webdav_encode_name(name, encoded, sizeof(encoded)) || parent + 1 + strlen(encoded) +
+            (s_selected.is_dir ? 1u : 0u) >= sizeof(destination)) {
+            snprintf(s_editor_notice, sizeof(s_editor_notice), "檔名過長");
+            return APP_REDRAW_PAGE;
+        }
+        memcpy(destination, s_selected.path, parent);
+        destination[parent] = '/';
+        strcpy(destination + parent + 1, encoded);
+        if (s_selected.is_dir) strcat(destination, "/");
+        if (!strcmp(destination, s_selected.path)) {
+            ui_keyboard_end(); s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE;
+        }
+        if (!app_webdav_move(s_selected.path, destination)) {
+            snprintf(s_editor_notice, sizeof(s_editor_notice), "遠端重新命名無法開始");
+            return APP_REDRAW_PAGE;
+        }
+        copy_utf8(s_selected.path, sizeof(s_selected.path), destination);
+        copy_utf8(s_selected.name, sizeof(s_selected.name), name);
+        ui_keyboard_end();
+        s_view = FILE_VIEW_WEBDAV;
+        s_webdav_refresh_pending = true;
+        s_webdav_revision = 0;
+        snprintf(s_message, sizeof(s_message), "正在重新命名遠端項目…");
+        return APP_REDRAW_PAGE;
+    }
+    if (!sibling_path(name, destination)) {
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "檔名過長");
         return APP_REDRAW_PAGE;
     }
     if (!strcmp(destination, s_selected.path)) { s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }
     struct stat existing;
     if (stat(destination, &existing) == 0) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "同名文件已经存在");
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "同名檔案已經存在");
         return APP_REDRAW_PAGE;
     }
     char old_path[288]; copy_utf8(old_path, sizeof(old_path), s_selected.path);
     if (!moved_settings_fit(old_path, destination)) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "设置路径过长");
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "設定路徑過長");
         return APP_REDRAW_PAGE;
     }
     if (file_tree_move(old_path, destination) != ESP_OK) {
-        snprintf(s_editor_notice, sizeof(s_editor_notice), "重命名失败，请检查 TF 卡");
+        snprintf(s_editor_notice, sizeof(s_editor_notice), "重新命名失敗，請檢查 TF 卡");
         return APP_REDRAW_PAGE;
     }
     sync_moved_settings(old_path, destination);
@@ -968,40 +1360,181 @@ static app_redraw_t save_rename(void) {
     copy_utf8(s_selected.name, sizeof(s_selected.name), name);
     s_view = FILE_VIEW_ACTIONS;
     ui_keyboard_end();
-    snprintf(s_message, sizeof(s_message), "重命名完成");
+    snprintf(s_message, sizeof(s_message), "重新命名完成");
     return APP_REDRAW_PAGE;
 }
 
 static app_redraw_t action_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
-    if (ev->y0 < 430 || (ev->x0 >= 596 && ev->y0 < 510) || ev->y0 >= 918) {
-        s_view = FILE_VIEW_LIST; s_delete_confirm = false; rescan_current(); return APP_REDRAW_PAGE;
+    if (ev->y0 < 430 || (ev->x0 >= 596 && ev->y0 < 510)) {
+        s_view = webdav_remote_view() ? FILE_VIEW_WEBDAV : FILE_VIEW_LIST;
+        s_delete_confirm = false;
+        if (!webdav_remote_view()) rescan_current();
+        return APP_REDRAW_PAGE;
     }
     if (s_delete_confirm) {
-        if (ev->y0 >= 788 && ev->y0 < 864) {
-            if (ev->x0 < 342) s_delete_confirm = false;
-            else delete_selected();
-            return APP_REDRAW_PAGE;
-        }
-        return APP_REDRAW_NONE;
+        if (ui_rect_hit((EpdRect){40, 788, 296, 76}, ev->x0, ev->y0)) s_delete_confirm = false;
+        else if (ui_rect_hit((EpdRect){348, 788, 296, 76}, ev->x0, ev->y0)) delete_selected();
+        else return APP_REDRAW_NONE;
+        return APP_REDRAW_PAGE;
     }
-    if (ev->y0 >= 648 && ev->y0 < 870) {
-        int action = (ev->y0 >= 770 ? 2 : 0) + (ev->x0 >= 352 ? 1 : 0);
-        if (action == 0) editor_start();
-        else if (action == 1) {
-            char copied[128] = {0};
-            esp_err_t err = copy_selected_item(copied);
-            if (err == ESP_OK) snprintf(s_message, sizeof(s_message), "已复制：%.74s", copied);
-            else snprintf(s_message, sizeof(s_message), err == ESP_ERR_NO_MEM ? "内存不足，复制失败" : "复制失败，请检查空间");
-        } else if (action == 2) start_move();
-        else { s_delete_confirm = true; s_message[0] = 0; }
-        return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
+    const unsigned count = action_button_count();
+    const int action = action_button_hit(count, ev->x0, ev->y0);
+    if (action < 0) return APP_REDRAW_NONE;
+    if (webdav_remote_view()) {
+        if (s_selected.is_dir) {
+            if ((unsigned)action == count - 1) {
+                s_view = FILE_VIEW_WEBDAV;
+                s_message[0] = 0;
+            } else if (action == 0) editor_start();
+            else if (action == 1) { s_delete_confirm = true; s_message[0] = 0; }
+        } else if (is_book_path(s_selected.name)) {
+            if ((unsigned)action == count - 1) {
+                s_view = FILE_VIEW_WEBDAV;
+                s_message[0] = 0;
+            } else if (action == 0) (void)webdav_download_selected(true);
+            else if (action == 1) (void)webdav_download_selected(false);
+            else if (action == 2) editor_start();
+            else if (action == 3) { s_delete_confirm = true; s_message[0] = 0; }
+        } else if ((unsigned)action == count - 1) {
+            s_view = FILE_VIEW_WEBDAV;
+            s_message[0] = 0;
+        } else if (action == 0) (void)webdav_download_selected(false);
+        else if (action == 1) editor_start();
+        else if (action == 2) { s_delete_confirm = true; s_message[0] = 0; }
+        return APP_REDRAW_PAGE;
     }
-    return APP_REDRAW_NONE;
+    if ((unsigned)action == count - 1) {
+        s_view = FILE_VIEW_LIST; s_delete_confirm = false; rescan_current();
+        return APP_REDRAW_PAGE;
+    }
+    if (action == 0) editor_start();
+    else if (action == 1) {
+        char copied[128] = {0};
+        esp_err_t err = copy_selected_item(copied);
+        if (err == ESP_OK) snprintf(s_message, sizeof(s_message), "已複製：%.74s", copied);
+        else snprintf(s_message, sizeof(s_message), err == ESP_ERR_NO_MEM ? "記憶體不足，複製失敗" : "複製失敗，請檢查空間");
+    } else if (action == 2) start_move();
+    else if (action == 3) { s_delete_confirm = true; s_message[0] = 0; }
+    else if (action == 4) {
+        if (!app_webdav_configured()) webdav_auth_start(true);
+        else if (!webdav_upload_selected()) {
+            app_webdav_status_t status; app_webdav_status(&status);
+            if (status.state == APP_WEBDAV_BUSY) snprintf(s_message, sizeof(s_message), "正在上傳至 WebDAV…");
+        } else s_webdav_revision = 0;
+    }
+    return ctx->request_app ? APP_REDRAW_NONE : APP_REDRAW_PAGE;
 }
 
 static EpdRect s_input_area;
 static bool s_input_layout, s_input_settle;
+static app_redraw_t webdav_auth_paint(app_ctx_t *ctx, bool field) {
+    EpdRect active = webdav_input_rect(s_webdav_field);
+    ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, active, 23,
+        s_webdav_field == 2 && !s_webdav_password_visible, NULL, field);
+    if (s_webdav_field == 2) {
+        EpdRect toggle = webdav_password_toggle_rect();
+        ui_draw_button(ctx->fb, toggle, s_webdav_password_visible ? "隱藏" : "顯示", false);
+        update.area = ui_rect_union(update.area, toggle);
+    }
+    s_input_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle;
+    return update.area.width ? APP_REDRAW_AREA : APP_REDRAW_NONE;
+}
+
+static app_redraw_t webdav_auth_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (ev->type == UI_GESTURE_PRESS)
+        return ui_keyboard_press(ev->x0, ev->y0, 560, ctx->now_ms) ? webdav_auth_paint(ctx, false) : APP_REDRAW_NONE;
+    bool feedback = ev->type != UI_GESTURE_LONG_PRESS && ui_keyboard_release();
+    if (ev->type == UI_GESTURE_SWIPE_L || ev->type == UI_GESTURE_SWIPE_R) {
+        bool page = ui_keyboard_page(ev->type == UI_GESTURE_SWIPE_L ? 1 : -1);
+        return (page || feedback) ? webdav_auth_paint(ctx, false) : APP_REDRAW_NONE;
+    }
+    if (ev->type != UI_GESTURE_TAP) return feedback ? webdav_auth_paint(ctx, false) : APP_REDRAW_NONE;
+    int x = ev->x0, y = ev->y0;
+    if (y < 160 && x < 160) {
+        ui_keyboard_end();
+        bool upload = s_webdav_pending_upload; s_webdav_pending_upload = false;
+        if (upload) s_view = FILE_VIEW_ACTIONS;
+        else if (s_folder == 4) s_view = FILE_VIEW_WEBDAV;
+        else { s_view = FILE_VIEW_LIST; s_folder = -1; scan_folder(3); }
+        return APP_REDRAW_PAGE;
+    }
+    if (y < 160 && x > 510) {
+        if (!webdav_connect()) return APP_REDRAW_PAGE;
+        return APP_REDRAW_PAGE;
+    }
+    for (unsigned field = 0; field < 3; ++field) if (ui_rect_hit(webdav_field_rect(field), x, y)) {
+        if (field != s_webdav_field) webdav_auth_keyboard(field);
+        else if (field == 2 && ui_rect_hit(webdav_password_toggle_rect(), x, y)) {
+            s_webdav_password_visible = !s_webdav_password_visible;
+            return webdav_auth_paint(ctx, true);
+        }
+        ui_text_input_tap(webdav_active_input(), webdav_input_rect(field), 23,
+                          field == 2 && !s_webdav_password_visible, NULL, x, y);
+        return webdav_auth_paint(ctx, true);
+    }
+    ui_keyboard_result_t result = ui_keyboard_tap(x, y, 560, esp_timer_get_time() / 1000);
+    if (result == UI_KEYBOARD_DONE) {
+        if (s_webdav_field < 2) { webdav_auth_keyboard(s_webdav_field + 1); return APP_REDRAW_PAGE; }
+        (void)webdav_connect();
+        return APP_REDRAW_PAGE;
+    }
+    return result == UI_KEYBOARD_CHANGED ? webdav_auth_paint(ctx, false) : APP_REDRAW_NONE;
+}
+
+static app_redraw_t webdav_go_parent(void) {
+    if (strcmp(s_webdav_path, "/")) {
+        size_t length = strlen(s_webdav_path);
+        while (length > 1 && s_webdav_path[length - 1] == '/') s_webdav_path[--length] = 0;
+        char *slash = strrchr(s_webdav_path, '/');
+        if (!slash || slash == s_webdav_path) snprintf(s_webdav_path, sizeof(s_webdav_path), "/");
+        else slash[1] = 0;
+        (void)app_webdav_list(s_webdav_path);
+        return APP_REDRAW_PAGE;
+    }
+    s_view = FILE_VIEW_LIST;
+    s_folder = -1;
+    scan_folder(3);
+    return APP_REDRAW_PAGE;
+}
+
+static app_redraw_t webdav_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
+    if (ev->type == UI_GESTURE_SWIPE_L && (s_page + 1) * visible_rows() < s_count) {
+        ++s_page; return APP_REDRAW_PAGE;
+    }
+    if (ev->type == UI_GESTURE_SWIPE_R && s_page > 0) { --s_page; return APP_REDRAW_PAGE; }
+    if (ev->type == UI_GESTURE_LONG_PRESS) {
+        int index = file_row_index(ev->x0, ev->y0);
+        if (index < 0) return APP_REDRAW_NONE;
+        s_selected = s_files[index];
+        s_delete_confirm = false;
+        s_message[0] = 0;
+        s_view = FILE_VIEW_ACTIONS;
+        return APP_REDRAW_PAGE;
+    }
+    if (ev->type != UI_GESTURE_TAP) return APP_REDRAW_NONE;
+    int tab = ui_nav_hit(ev->x0, ev->y0);
+    if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
+    if (ev->y0 < 185) {
+        if (ev->x0 > 540) { webdav_auth_start(false); return APP_REDRAW_PAGE; }
+        return webdav_go_parent();
+    }
+    int index = file_row_index(ev->x0, ev->y0);
+    if (index < 0) return APP_REDRAW_NONE;
+    if (s_files[index].is_dir) {
+        size_t length = strlen(s_files[index].path);
+        if (length >= sizeof(s_webdav_path)) return APP_REDRAW_NONE;
+        snprintf(s_webdav_path, sizeof(s_webdav_path), "%s", s_files[index].path);
+        (void)app_webdav_list(s_webdav_path);
+        return APP_REDRAW_PAGE;
+    }
+    s_selected = s_files[index];
+    s_delete_confirm = false;
+    s_message[0] = 0;
+    s_view = FILE_VIEW_ACTIONS;
+    return APP_REDRAW_PAGE;
+}
+
 static app_redraw_t rename_paint(app_ctx_t *ctx, bool field) {
     ui_keyboard_update_t update = ui_keyboard_update(ctx->fb, 560, (EpdRect){36, 242, 612, 82}, 29, false, s_editor_ext, field);
     s_input_area = update.area; s_input_layout = update.layout; s_input_settle = update.settle;
@@ -1014,7 +1547,8 @@ static bool files_present(app_ctx_t *ctx, app_redraw_t redraw) {
         guard_draw_result(ctx->hl,display_refresh_area(ctx->hl, DISPLAY_REFRESH_FEEDBACK, ui_pager_area(), DISPLAY_REFRESH_DEFAULT));
         return true;
     }
-    if (redraw != APP_REDRAW_AREA || s_view != FILE_VIEW_RENAME) return false;
+    if (redraw != APP_REDRAW_AREA ||
+        (s_view != FILE_VIEW_RENAME && s_view != FILE_VIEW_WEBDAV_AUTH)) return false;
     if (s_input_settle) {
         guard_draw_result(ctx->hl, display_refresh_area(ctx->hl, DISPLAY_REFRESH_SETTLE, s_input_area, DISPLAY_REFRESH_DEFAULT));
         s_input_settle = false;
@@ -1047,6 +1581,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
     if(file_pager_event(ctx,ev,&pager))return pager;
     if (s_view == FILE_VIEW_ACTIONS) return action_gesture(ctx, ev);
     if (s_view == FILE_VIEW_RENAME) return rename_gesture(ctx, ev);
+    if (s_view == FILE_VIEW_WEBDAV_AUTH) return webdav_auth_gesture(ctx, ev);
+    if (s_view == FILE_VIEW_WEBDAV) return webdav_gesture(ctx, ev);
     if (s_view == FILE_VIEW_MOVE) {
         if (ev->type == UI_GESTURE_SWIPE_L && (s_page + 1) * visible_rows() < s_count) {
             ++s_page; return APP_REDRAW_PAGE;
@@ -1098,8 +1634,12 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 return APP_REDRAW_PAGE;
             }
             if (s_folder == 3 && s_files[index].is_dir) {
+                if (!strcmp(s_files[index].path, "@webdav")) {
+                    webdav_open_root();
+                    return APP_REDRAW_PAGE;
+                }
                 if (strlen(s_files[index].path) >= sizeof(s_dir)) {
-                    snprintf(s_message, sizeof(s_message), "目录路径过长"); return APP_REDRAW_PAGE;
+                    snprintf(s_message, sizeof(s_message), "目錄路徑過長"); return APP_REDRAW_PAGE;
                 }
                 snprintf(s_dir, sizeof(s_dir), "%s", s_files[index].path);
                 scan_folder(3);
@@ -1111,7 +1651,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         }
         return APP_REDRAW_NONE;
     }
-    // 存储卡卡片：只有"卡在但读不了"时响应，点第一次问、点第二次格。
+    // 存储卡卡片：只有"卡在但讀不了"时响应，点第一次问、点第二次格。
     // The storage card answers only when the card is present but unreadable: the first tap asks,
     // the second one formats.
     if (!long_press && sd_needs_format() && ui_rect_hit(storage_card_rect(), ev->x0, ev->y0)) {
@@ -1127,7 +1667,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
                 s_sd_notice[0] = 0;
                 s_scan_pending = true;
             } else {
-                snprintf(s_sd_notice, sizeof(s_sd_notice), "格式化失败：%s", esp_err_to_name(err));
+                snprintf(s_sd_notice, sizeof(s_sd_notice), "格式化失敗：%s", esp_err_to_name(err));
             }
         }
         return APP_REDRAW_PAGE;
@@ -1145,7 +1685,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_scan_pending = true;
         return APP_REDRAW_PAGE;
     }
-    // 点别处就撤销确认，免得提示一直停在"再点一次"。
+    // 点别处就撤销确认，免得提示一直停在"再點一次"。
     // A tap elsewhere cancels the confirmation, so the prompt does not stay armed.
     bool format_cancelled = !long_press && s_sd_format_confirm;
     if (format_cancelled) {
@@ -1159,6 +1699,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (i == 0) app_transfer_request_wifi_upload();
         else if (i == 1) app_transfer_request_hotspot_start();
         else if (i == 2) app_transfer_request_usb_start();
+        else if (i == 3) { webdav_open_root(); return APP_REDRAW_PAGE; }
 #ifdef CONFIG_MOGO_CLOUDZAO_TRANSFER
         else app_transfer_request_cloudzao();
 #endif
@@ -1190,9 +1731,21 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
 static app_redraw_t on_key(app_ctx_t *ctx, int key) {
     if (s_view == FILE_VIEW_MOVE) { leave_move(false); return APP_REDRAW_PAGE; }
     if (key == 1) { ui_nav_request(ctx, 0); return APP_REDRAW_NONE; }
+    if (s_view == FILE_VIEW_WEBDAV_AUTH) {
+        ui_keyboard_end();
+        bool upload = s_webdav_pending_upload; s_webdav_pending_upload = false;
+        if (upload) s_view = FILE_VIEW_ACTIONS;
+        else if (s_folder == 4) s_view = FILE_VIEW_WEBDAV;
+        else { s_view = FILE_VIEW_LIST; s_folder = -1; scan_folder(3); }
+        return APP_REDRAW_PAGE;
+    }
+    if (s_view == FILE_VIEW_WEBDAV) return webdav_go_parent();
     if (s_view == FILE_VIEW_RENAME) { ui_keyboard_end(); s_view = FILE_VIEW_ACTIONS; return APP_REDRAW_PAGE; }
     if (s_view == FILE_VIEW_ACTIONS) {
-        s_view = FILE_VIEW_LIST; s_delete_confirm = false; rescan_current(); return APP_REDRAW_PAGE;
+        s_view = webdav_remote_view() ? FILE_VIEW_WEBDAV : FILE_VIEW_LIST;
+        s_delete_confirm = false;
+        if (!webdav_remote_view()) rescan_current();
+        return APP_REDRAW_PAGE;
     }
     if (s_folder >= 0) {
         if (s_folder == 3 && strcmp(s_dir, "/sdcard")) {
@@ -1212,13 +1765,14 @@ static bool main_page_visible(app_ctx_t *ctx) {
 static void files_before_lock(app_ctx_t *ctx) { (void)ctx;s_pager_pressed=UI_PAGER_NONE;s_pager_paint_pending=false; }
 static void files_exit(app_ctx_t *ctx) {
     files_before_lock(ctx);
+    app_webdav_cancel();
     ui_keyboard_end();
     files_free();
     s_count = s_page = 0;
 }
 
 const app_desc_t app_files = {
-    .title = "文件管理 Files", .detail = "TF 卡文件与传输", .enter_full = false,
+    .title = "檔案管理 Files", .detail = "TF 卡檔案與傳輸", .enter_full = false,
     .owns_keys = true, .menu_handle_enabled = no_menu_handle,
     .main_page_visible = main_page_visible,
     .on_enter = on_enter, .on_media_lost = on_media_lost, .on_media_ready = on_media_ready,

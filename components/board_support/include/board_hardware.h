@@ -41,8 +41,8 @@ extern "C" {
 #define BOARD_CELLULAR_MRDY_GPIO 60
 #define BOARD_CELLULAR_SRDY_GPIO 3
 
-#define BOARD_PRODUCT_NAME "mogo"
-#define BOARD_DEVICE_NAME "mogo"
+#define BOARD_PRODUCT_NAME "Fan"
+#define BOARD_DEVICE_NAME "FAN"
 /// 芯片平放实测 -5,-119,-1005；转到设备坐标后屏幕朝上约为 +Z。
 /// / Chip at rest on the bench: -5,-119,-1005. Device frame is about +Z face-up.
 #define BOARD_ACCEL_ZERO_X_MG 119

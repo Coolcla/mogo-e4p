@@ -10,7 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 
-// 标题匹配要宽松：书内导航与正文的写法常常不同（"第一章 出发" 对 "出发"、"1. Prologue" 对
+// 标题匹配要宽松：书内导航与正文的写法常常不同（"第一章 出發" 对 "出發"、"1. Prologue" 对
 // "序章"，竖排书尤其如此）。逐字比较失败时正文标题块不会被跳过，题头与正文就各显示一次。
 // Heading matching has to be forgiving: an authored navigation title rarely matches the body text
 // verbatim ("Chapter 1 Departure" against "Departure", a numbered English title against its
@@ -42,7 +42,7 @@ esp_err_t reader_chapter_read(reader_chapter_t *out, size_t chapter, const char 
         // 已识别的正文编号题头优先；没有时沿用书内导航或备用标题。
         // Prefer a recognized numbered body heading, then authored navigation or a fallback title.
         if (book_chapter_title(chapter, toc_title, sizeof(toc_title)) != ESP_OK)
-            snprintf(toc_title, sizeof(toc_title), "第 %u 节", (unsigned)chapter + 1);
+            snprintf(toc_title, sizeof(toc_title), "第 %u 節", (unsigned)chapter + 1);
         memcpy(heading, toc_title, sizeof(out->heading));
         char *chapter_mark = strstr(heading, "章");
         if (chapter_mark && chapter_mark - heading < 24) {
@@ -59,7 +59,7 @@ esp_err_t reader_chapter_read(reader_chapter_t *out, size_t chapter, const char 
             }
         }
         size_t skip_blocks = 0;
-        // 最多看四个块：标题可能被拆成"第一章"、"出发"、"——副标题"这样几块。
+        // 最多看四个块：标题可能被拆成"第一章"、"出發"、"——副標題"这样几块。
         // Up to four blocks: a heading can arrive split across several.
         while (skip_blocks < out->content.count && skip_blocks < 4 &&
                out->content.blocks[skip_blocks].heading && out->content.blocks[skip_blocks].image < 0) {

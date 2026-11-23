@@ -148,14 +148,33 @@ int ttf_draw_text_px_vertical(uint8_t* fb, int x, int y, int px, const char* tex
     last_draw_y = y;
     assert(strlen(drawn) + strlen(text) < sizeof(drawn));
     strcat(drawn, text);
-    return ttf_text_width_px(px, text);
+    return ttf_vertical_text_height_px(px, text, tracking_px);
+}
+int ttf_vertical_glyph_advance_px(int px, uint32_t cp, bool digit_run_rotates, int tracking_px) {
+    (void)cp; (void)digit_run_rotates;
+    int ink = px + test_slot_advance[test_slot];
+    int advance = ink + tracking_px;
+    return advance < ink ? ink : advance;
+}
+bool ttf_vertical_digit_run_rotates(const char* after_current, size_t remaining_bytes) {
+    unsigned digits = 1;
+    while (remaining_bytes-- && *after_current >= '0' && *after_current <= '9') {
+        ++digits; ++after_current;
+    }
+    return digits >= 4;
 }
 int ttf_vertical_text_height_px(int px, const char* text, int tracking_px) {
-    int total = ttf_text_width_px(px, text);
-    if (tracking_px > 0) {
-        int glyphs = 0;
-        for (const char* c = text; *c; ++c) if (((unsigned char)*c & 0xc0) != 0x80) ++glyphs;
-        if (glyphs > 1) total += tracking_px * (glyphs - 1);
+    int total = 0;
+    const char* cursor = text;
+    while (*cursor) {
+        unsigned char first = (unsigned char)*cursor;
+        size_t n = first < 0x80 ? 1 : (first < 0xe0 ? 2 : (first < 0xf0 ? 3 : 4));
+        uint32_t cp = first;
+        if (n > 1) { cp &= n == 2 ? 0x1f : n == 3 ? 0x0f : 0x07;
+            for (size_t i=1;i<n;++i) cp=(cp<<6)|((unsigned char)cursor[i]&0x3f); }
+        cursor += n;
+        bool rotates = cp >= '0' && cp <= '9' && ttf_vertical_digit_run_rotates(cursor,strlen(cursor));
+        total += ttf_vertical_glyph_advance_px(px,cp,rotates,*cursor?tracking_px:0);
     }
     return total;
 }
@@ -170,7 +189,8 @@ static void observe_test(const char *text, int x, int y, int px, int tracking, b
         advance += test_slot_advance[test_slot];
         uint32_t cp=(unsigned char)one[0];
         if(n>1){cp&=n==2?0x1f:n==3?0x0f:0x07;for(size_t j=1;j<n;++j)cp=(cp<<6)|((unsigned char)one[j]&0x3f);}
-        ttf_glyph_position_t position={at,at+n,cp,x,vertical?y:y-px,vertical?px:advance,vertical?advance:px};
+        ttf_glyph_position_t position={at,at+n,cp,x,vertical?y:y-px,vertical?px:advance,
+                                       vertical?advance+tracking:px};
         observer->record(observer->context,&position);
         if(vertical)y+=advance+tracking;else x+=advance+tracking;
         at+=n;

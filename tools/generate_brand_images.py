@@ -10,7 +10,8 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCE = ROOT / "assets/image/mogo-logo.png"
+SOURCE = ROOT / "assets/image/fan.png"
+STARTUP = ROOT / "assets/image/startup.png"
 SCREEN = (684, 1216)
 AVATAR_SIDES = (60, 82)
 
@@ -34,10 +35,14 @@ def packed(image):
     return bytes((left >> 4) | (right & 0xF0) for left, right in zip(pixels[::2], pixels[1::2]))
 
 
-def outputs(logo):
+def outputs(logo, splash):
+    logo = ImageOps.pad(gray16(logo), (600, 600), method=Image.Resampling.LANCZOS, color=255)
     lock = Image.new("L", SCREEN, 255)
     mark = gray16(logo.resize((588, 588), Image.Resampling.LANCZOS))
     lock.paste(mark, ((SCREEN[0] - mark.width) // 2, (SCREEN[1] - mark.height) // 2))
+    splash = gray16(splash)
+    if splash.size != SCREEN:
+        raise ValueError(f"startup image must be {SCREEN[0]} x {SCREEN[1]}")
     avatars = bytearray()
     for side in AVATAR_SIDES:
         avatar = Image.new("L", (side, side), 255)
@@ -48,30 +53,20 @@ def outputs(logo):
     return {
         ROOT / "assets/image/lock-screen.png": png(lock),
         ROOT / "main/assets/lock_4bpp.bin": packed(lock),
+        ROOT / "main/assets/startup_4bpp.bin": packed(splash),
         ROOT / "main/assets/avatar_4bpp.bin": bytes(avatars),
     }
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--logo", type=Path, help="Import a replacement logo; preserve the original file")
     parser.add_argument("--check", action="store_true", help="Check generated assets without writing")
     args = parser.parse_args()
-    if args.logo and args.check:
-        parser.error("--logo and --check are mutually exclusive")
-    if args.logo:
-        with Image.open(args.logo) as original:
-            rgba = ImageOps.exif_transpose(original).convert("RGBA")
-            image = Image.new("RGBA", rgba.size, "white")
-            image.alpha_composite(rgba)
-            logo = gray16(ImageOps.pad(image.convert("L"), (600, 600),
-                                      method=Image.Resampling.LANCZOS, color=255))
-        SOURCE.write_bytes(png(logo))
     with Image.open(SOURCE) as source:
-        assert source.size == (600, 600), "Expected a 600 x 600 source logo"
-        logo = source.convert("L")
-        assert all(value % 17 == 0 for value in logo.tobytes()), "Expected 16-level grayscale"
-    for path, data in outputs(logo).items():
+        logo = ImageOps.exif_transpose(source).convert("L")
+    with Image.open(STARTUP) as source:
+        splash = ImageOps.exif_transpose(source).convert("L")
+    for path, data in outputs(logo, splash).items():
         if args.check:
             assert path.read_bytes() == data, f"Regenerate {path.relative_to(ROOT)}"
         elif not path.exists() or path.read_bytes() != data:

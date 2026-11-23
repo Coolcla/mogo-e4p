@@ -190,7 +190,8 @@ bool app_settings_set_quick_layout(const app_quick_layout_t *layout) {
 #define NVS_KEY_TSYNC_AT "tsync_at"
 #define NVS_KEY_TSYNC_TRY "tsync_try"
 #define NVS_KEY_DEVICE_NAME "dev_name"
-#define DEFAULT_DEVICE_NAME "mogo"
+#define DEFAULT_DEVICE_NAME "凡繁煩"
+#define DEFAULT_STATUS_SIGNATURE ""
 #define NVS_KEY_AVATAR "dev_avatar"
 #define NVS_KEY_STATUS_SIGNATURE "status_sig"
 #define NVS_KEY_TOUCH_HAPTIC "touch_haptic"
@@ -274,6 +275,7 @@ bool app_settings_set_quick_layout(const app_quick_layout_t *layout) {
 #define NVS_KEY_FONTS_DIR "fonts_dir"
 #define NVS_KEY_BOOK_FONTS "bk_fonts"
 #define NVS_KEY_BOOK_VERTICAL "bk_vert"
+#define NVS_KEY_BOOK_DIRECTION "bk_dir"
 #define NVS_KEY_BOOK_TITLE_STYLE "bk_title"
 #define NVS_KEY_BOOK_TITLE_SIZE "bk_tsize"
 #define NVS_KEY_FRONTLIGHT_ON "fl_on"
@@ -414,6 +416,7 @@ static bool s_book_fonts = true;
 // Vertical setting defaults off: only readers who want it turn it on, and horizontal type is
 // untouched.
 static bool s_book_vertical;
+static app_book_layout_direction_t s_book_direction = APP_BOOK_LAYOUT_FOLLOW;
 static bool s_book_styles = true;
 // 题头样式默认「静页余白」：与历史渲染一致，升级后画面不变。
 // The heading style defaults to plain, the historical rendering, so upgrading changes nothing.
@@ -446,7 +449,6 @@ static uint8_t s_auto_lock_minutes = 5;
 // 自动对时默认开：与设置页开关、time_sync 服务共用同一份运行状态。
 // Auto sync defaults on and shares one runtime copy with the settings page and time_sync.
 static bool s_auto_time_sync = true;
-static bool s_auto_ota = true;
 static bool s_cellular_enabled;
 static bool s_cellular_capability_known;
 static bool s_cellular_capable;
@@ -486,8 +488,12 @@ static uint8_t valid_book_px(uint8_t px) {
 // 仅迁移历史默认名；启动和备份恢复共用规则，不覆盖自定义名称。
 // Migrate historical defaults on boot and restore without overwriting custom names.
 static void migrate_device_name(char *name, size_t capacity) {
-    if (!strcmp(name, "Pico") || !strcmp(name, "kiikoread"))
+    if (!strcmp(name, "Pico") || !strcmp(name, "kiikoread") || !strcmp(name, "mogo") ||
+        !strcmp(name, "Mogo") || !strcmp(name, "Fan") || !strcmp(name, "FAN"))
         strlcpy(name, DEFAULT_DEVICE_NAME, capacity);
+}
+static void migrate_status_signature(char *signature, size_t capacity) {
+    if (signature && capacity) strlcpy(signature, DEFAULT_STATUS_SIGNATURE, capacity);
 }
 
 void app_settings_init(void) {
@@ -551,7 +557,6 @@ void app_settings_init(void) {
         s_auto_lock_minutes = raw;
     if (nvs_get_u8(h, NVS_KEY_AUTO_TIME, &raw) == ESP_OK) s_auto_time_sync = raw != 0;
     else s_auto_time_sync = true;
-    s_auto_ota = nvs_get_u8(h, NVS_KEY_AUTO_OTA, &raw) != ESP_OK || raw != 0;
     raw = 0;
     if (nvs_get_u8(h, NVS_KEY_CELLULAR, &raw) == ESP_OK) s_cellular_enabled = raw != 0;
     raw = 0;
@@ -580,6 +585,7 @@ void app_settings_init(void) {
     value_len = sizeof(s_status_signature);
     if (nvs_get_str(h, NVS_KEY_STATUS_SIGNATURE, s_status_signature, &value_len) != ESP_OK)
         s_status_signature[0] = 0;
+    migrate_status_signature(s_status_signature, sizeof(s_status_signature));
     raw = 1;
     if (nvs_get_u8(h, NVS_KEY_TOUCH_HAPTIC, &raw) == ESP_OK) s_touch_haptics = raw != 0;
     raw = APP_HAPTIC_WEAK;
@@ -768,6 +774,12 @@ void app_settings_init(void) {
     if (nvs_get_u8(h, NVS_KEY_SHELF_RECENT, &recent_sort) == ESP_OK) s_shelf_recent_sort = recent_sort == 1;
     if (nvs_get_u8(h, NVS_KEY_BOOK_FONTS, &book_fonts) == ESP_OK) s_book_fonts = book_fonts == 1;
     if (nvs_get_u8(h, NVS_KEY_BOOK_VERTICAL, &book_vertical) == ESP_OK) s_book_vertical = book_vertical == 1;
+    uint8_t book_direction = UINT8_MAX;
+    if (nvs_get_u8(h, NVS_KEY_BOOK_DIRECTION, &book_direction) == ESP_OK &&
+        book_direction <= APP_BOOK_LAYOUT_VERTICAL)
+        s_book_direction = (app_book_layout_direction_t)book_direction;
+    else
+        s_book_direction = APP_BOOK_LAYOUT_FOLLOW;
     uint8_t book_styles = 1;
     nvs_get_u8(h, NVS_KEY_BOOK_STYLES, &book_styles);
     s_book_styles = book_styles != 0;
@@ -959,11 +971,10 @@ void app_settings_set_auto_lock_minutes(uint8_t minutes) {
 }
 
 bool app_settings_auto_time_sync(void) { return s_auto_time_sync; }
-bool app_settings_auto_ota(void) { return s_auto_ota; }
+bool app_settings_auto_ota(void) { return false; }
 void app_settings_set_auto_ota(bool on) {
-    if (s_auto_ota == on) return;
-    s_auto_ota = on;
-    nvs_put_u8(NVS_KEY_AUTO_OTA, on ? 1 : 0);
+    (void)on;
+    nvs_put_u8(NVS_KEY_AUTO_OTA, 0);
 }
 
 bool app_settings_cellular_enabled(void) { return s_cellular_enabled; }
@@ -1415,9 +1426,19 @@ void app_settings_set_book_fonts(bool on) {
 }
 bool app_settings_book_vertical(void) { return s_book_vertical; }
 void app_settings_set_book_vertical(bool on) {
-    if (s_book_vertical == on) return;
     s_book_vertical = on;
+    s_book_direction = on ? APP_BOOK_LAYOUT_VERTICAL : APP_BOOK_LAYOUT_HORIZONTAL;
     nvs_put_u8(NVS_KEY_BOOK_VERTICAL, on ? 1 : 0);
+    nvs_put_u8(NVS_KEY_BOOK_DIRECTION, (uint8_t)s_book_direction);
+}
+app_book_layout_direction_t app_settings_book_direction(void) { return s_book_direction; }
+void app_settings_set_book_direction(app_book_layout_direction_t direction) {
+    if (direction < APP_BOOK_LAYOUT_FOLLOW || direction > APP_BOOK_LAYOUT_VERTICAL) return;
+    s_book_direction = direction;
+    if (direction == APP_BOOK_LAYOUT_VERTICAL) s_book_vertical = true;
+    else if (direction == APP_BOOK_LAYOUT_HORIZONTAL) s_book_vertical = false;
+    nvs_put_u8(NVS_KEY_BOOK_VERTICAL, s_book_vertical ? 1 : 0);
+    nvs_put_u8(NVS_KEY_BOOK_DIRECTION, (uint8_t)direction);
 }
 uint8_t app_settings_book_title_style(void) { return s_book_title_style; }
 void app_settings_set_book_title_style(uint8_t style) {
@@ -2198,8 +2219,8 @@ static unsigned backup_version(const settings_backup_v1_t *backup) {
     // j appends v45 quick-bar ordering. A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
     // k追加v46关机配置；l扩展v47票根/日历，复用取景字节的位，图片像素不备份。
     // k adds v46 shutdown config; l extends v47 ticket/calendar options in the framing byte, excluding pixels.
-    // m追加可迁移的偏好、天气和全量WiFi块。/ m appends portable preferences, weather and all saved WiFi profiles.
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : c == 'm' ? 48 : 0;
+    // m adds portable preferences; n widens timezone storage for IANA zones.
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : c == 'm' ? 48 : c == 'n' ? 49 : 0;
 }
 
 typedef struct { char encoded[OFF_CONFIG_BYTES]; uint8_t checksum[4]; } settings_backup_off_art_t;
@@ -2316,9 +2337,83 @@ typedef struct {
     uint8_t last_category[2][4];
     uint8_t checksum[4];
 } settings_backup_portable_t;
-// 尾部对齐不属于文件；约束v48的原生城市和WiFi布局。/ Tail alignment is not on disk; pin the v48 city and WiFi layout.
+typedef struct {
+    char id[17], admin2[97];
+    char name[97], admin1[97], country[49], timezone[33];
+    double lat, lon;
+} weather_location_v48_t;
+typedef struct {
+    weather_location_v48_t city;
+    wifi_transfer_profiles_backup_t wifi;
+    uint8_t bookmark_mode, auto_time, auto_ota, shelf_titles;
+    uint8_t frontlight_on, frontlight_brightness, frontlight_cct;
+    uint8_t weather_has_city, weather_auto_refresh;
+    char card_identity[40];
+    uint8_t last_category[2][4];
+    uint8_t checksum[4];
+} settings_backup_portable_v48_t;
+// Keep v48 records readable while v49 stores the complete IANA timezone field.
 #define BACKUP_PORTABLE_BYTES (offsetof(settings_backup_portable_t, checksum) + 4u)
-_Static_assert(sizeof(weather_location_t) == 408 && BACKUP_PORTABLE_BYTES == 1262, "v48 portable layout");
+enum { BACKUP_PORTABLE_V48_BYTES = offsetof(settings_backup_portable_v48_t, checksum) + 4u };
+_Static_assert(sizeof(weather_location_v48_t) == 408 && BACKUP_PORTABLE_V48_BYTES == 1262,
+               "v48 portable layout");
+_Static_assert(sizeof(weather_location_t) == 440 && BACKUP_PORTABLE_BYTES == 1294,
+               "v49 portable layout");
+
+static uint32_t backup_portable_v48_checksum(const settings_backup_portable_v48_t *value) {
+    const uint8_t *bytes = (const uint8_t *)value;
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < offsetof(settings_backup_portable_v48_t, checksum); ++i)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+
+static bool backup_portable_v48_valid(const settings_backup_portable_v48_t *value) {
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)value->checksum[i] << (8u * i);
+    weather_location_t city = {0};
+    snprintf(city.id, sizeof(city.id), "%s", value->city.id);
+    snprintf(city.admin2, sizeof(city.admin2), "%s", value->city.admin2);
+    snprintf(city.name, sizeof(city.name), "%s", value->city.name);
+    snprintf(city.admin1, sizeof(city.admin1), "%s", value->city.admin1);
+    snprintf(city.country, sizeof(city.country), "%s", value->city.country);
+    snprintf(city.timezone, sizeof(city.timezone), "%s", value->city.timezone);
+    city.lat = value->city.lat;
+    city.lon = value->city.lon;
+    return stored == backup_portable_v48_checksum(value) &&
+        value->bookmark_mode <= APP_BOOKMARK_MODE_FIT && value->auto_time <= 1 && value->auto_ota <= 1 &&
+        value->shelf_titles <= 3 && value->frontlight_on <= 1 && value->frontlight_brightness >= 1 &&
+        value->frontlight_brightness <= 100 && value->frontlight_cct <= 100 &&
+        value->weather_has_city <= 1 && value->weather_auto_refresh <= 1 &&
+        memchr(value->card_identity, 0, sizeof(value->card_identity)) &&
+        (!value->weather_has_city || weather_location_valid(&city)) &&
+        wifi_transfer_profiles_backup_valid(&value->wifi);
+}
+
+static void backup_portable_upgrade_v48(const settings_backup_portable_v48_t *old,
+                                         settings_backup_portable_t *current) {
+    memset(current, 0, sizeof(*current));
+    snprintf(current->city.id, sizeof(current->city.id), "%s", old->city.id);
+    snprintf(current->city.admin2, sizeof(current->city.admin2), "%s", old->city.admin2);
+    snprintf(current->city.name, sizeof(current->city.name), "%s", old->city.name);
+    snprintf(current->city.admin1, sizeof(current->city.admin1), "%s", old->city.admin1);
+    snprintf(current->city.country, sizeof(current->city.country), "%s", old->city.country);
+    snprintf(current->city.timezone, sizeof(current->city.timezone), "%s", old->city.timezone);
+    current->city.lat = old->city.lat;
+    current->city.lon = old->city.lon;
+    current->wifi = old->wifi;
+    current->bookmark_mode = old->bookmark_mode;
+    current->auto_time = old->auto_time;
+    current->auto_ota = old->auto_ota;
+    current->shelf_titles = old->shelf_titles;
+    current->frontlight_on = old->frontlight_on;
+    current->frontlight_brightness = old->frontlight_brightness;
+    current->frontlight_cct = old->frontlight_cct;
+    current->weather_has_city = old->weather_has_city;
+    current->weather_auto_refresh = old->weather_auto_refresh;
+    memcpy(current->card_identity, old->card_identity, sizeof(current->card_identity));
+    memcpy(current->last_category, old->last_category, sizeof(current->last_category));
+}
 
 static uint32_t backup_portable_checksum(const settings_backup_portable_t *value) {
     const uint8_t *bytes = (const uint8_t *)value;
@@ -2345,7 +2440,7 @@ static esp_err_t backup_portable_capture(settings_backup_portable_t *value, cons
     memset(value, 0, sizeof(*value));
     value->bookmark_mode = s_bookmark_mode;
     value->auto_time = s_auto_time_sync;
-    value->auto_ota = s_auto_ota;
+    value->auto_ota = 0;
     value->shelf_titles = s_shelf_titles;
     value->frontlight_on = s_frontlight_on;
     value->frontlight_brightness = s_frontlight_brightness;
@@ -2390,7 +2485,7 @@ static esp_err_t settings_backup_save_file(bool portable_format) {
     // v40：主样式增加时钟5，沿用v39尾块布局。/ V40 accepts clock style 5 with the v39 tail layout.
     // v42：追加移动网络开关及业务路由；v43 追加页眉页脚独立显隐。
     // V42 appends cellular and business-route settings; V43 appends independent chrome visibility.
-    memcpy(backup.magic, portable_format ? "PICOSETm" : "PICOSETl", sizeof(backup.magic));
+    memcpy(backup.magic, portable_format ? "PICOSETn" : "PICOSETl", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -2848,7 +2943,13 @@ esp_err_t app_settings_backup_restore(void) {
         backup_off_art_valid(&off_art, &restored_off_art) &&
         (version >= 47 || (off_art.encoded[0] >= '0' && off_art.encoded[0] <= '2' &&
                            off_art.encoded[1] >= '0' && off_art.encoded[1] <= '1'));
-    if (ok && version >= 48) ok = fread(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES &&
+    if (ok && version == 48) {
+        settings_backup_portable_v48_t portable_v48 = {0};
+        ok = fread(&portable_v48, 1, BACKUP_PORTABLE_V48_BYTES, file) == BACKUP_PORTABLE_V48_BYTES &&
+            backup_portable_v48_valid(&portable_v48);
+        if (ok) backup_portable_upgrade_v48(&portable_v48, &portable);
+        backup_erase_secret(&portable_v48, sizeof(portable_v48));
+    } else if (ok && version >= 49) ok = fread(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES &&
         backup_portable_valid(&portable);
     long user_data_position = -1;
     if (ok && version >= 48) {
@@ -2932,6 +3033,7 @@ esp_err_t app_settings_backup_restore(void) {
     if (backup.flags[BK_SHELF] == 3 || backup.flags[BK_SHELF] == 4) backup.flags[BK_SHELF] = 2;
     if (profile.avatar[0] && !backup_file_exists(profile.avatar, false)) profile.avatar[0] = 0;
     migrate_device_name(profile.device_name, sizeof(profile.device_name));
+    migrate_status_signature(profile.status_signature, sizeof(profile.status_signature));
     strlcpy(backup.books_dir, "/sdcard/books", sizeof(backup.books_dir));
     strlcpy(backup.fonts_dir, "/sdcard/fonts", sizeof(backup.fonts_dir));
     // v27 用独立块保存关机方式；旧备份仍按扩展 bit0 回落（仅浅睡降级为彻底关机）。
@@ -3061,7 +3163,7 @@ esp_err_t app_settings_backup_restore(void) {
     if (version >= 48) {
         if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOKMARK_MODE, portable.bookmark_mode);
         if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_TIME, portable.auto_time);
-        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_OTA, portable.auto_ota);
+        if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_AUTO_OTA, 0);
         if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_SHELF_TITLES, portable.shelf_titles);
         if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_FRONTLIGHT_ON, portable.frontlight_on);
         if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_FRONTLIGHT_BRI, portable.frontlight_brightness);
@@ -3074,7 +3176,6 @@ esp_err_t app_settings_backup_restore(void) {
     if (version >= 48) {
         s_bookmark_mode = (app_bookmark_mode_t)portable.bookmark_mode;
         s_auto_time_sync = portable.auto_time;
-        s_auto_ota = portable.auto_ota;
         s_shelf_titles = portable.shelf_titles;
         s_frontlight_on = portable.frontlight_on;
         s_frontlight_brightness = portable.frontlight_brightness;

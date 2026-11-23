@@ -35,12 +35,21 @@ static void check_positions(void){
    char one[4]={0};memcpy(one,sample+i*3,3);int advance=ttf_text_width_px(px,one);
    if(style<4){assert(observed[i].x==pen&&observed[i].y==70-ttf_ascender_px(px));
     int step=advance;if(i+1<positions){step+=tracking;if(style==2){step+=(target-base-tracking*3)/3;if((int)i<remainder)++step;}if(style==3){step+=-5/3;if((int)i<-remainder)--step;}}pen+=step;
-   }else{assert(observed[i].x==160);if(i)assert(observed[i].y==observed[i-1].y+observed[i-1].height);}
+  }else{assert(observed[i].x==160&&observed[i].height>=px);if(i)assert(observed[i].y==observed[i-1].y+observed[i-1].height);}
   }
   if(style==2)assert(pen==20+target);
   if(style==3)assert(pen==20+base-5);
   assert(observed[positions-1].end==length);
  }
+ const char *vertical_samples[]={"字。字","甲，乙！","A1BC","1234","3.14"};
+ const int vertical_tracking[]={-40,-2,0,3};
+ for(size_t s=0;s<sizeof(vertical_samples)/sizeof(vertical_samples[0]);++s)
+  for(size_t t=0;t<sizeof(vertical_tracking)/sizeof(vertical_tracking[0]);++t){
+   positions=0;memset(pixels,15,sizeof(pixels));
+   int actual=ttf_draw_text_px_vertical_observed(pixels,160,20,px,vertical_samples[s],vertical_tracking[t],0,15,&observer);
+   assert(actual==ttf_vertical_text_height_px(px,vertical_samples[s],vertical_tracking[t]));
+   for(size_t i=1;i<positions;++i)assert(observed[i].y==observed[i-1].y+observed[i-1].height);
+  }
  // 竖排替换保留原文身份。/ Vertical substitutions retain original source identity.
  const char *mixed="字12，体";ttf_run_t runs[]={{0,0},{3,0}};ttf_draw_set_runs(runs,2);positions=0;
  ttf_draw_text_px_vertical_observed(pixels,160,20,px,mixed,1,0,15,&observer);ttf_draw_set_runs(NULL,0);

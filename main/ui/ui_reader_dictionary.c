@@ -71,8 +71,8 @@ static void text(uint8_t *fb, int x, int y, int px, const char *value) {
 void ui_reader_dictionary_notice(uint8_t *fb) {
     int previous = ttf_font_select(TTF_FONT_SLOT_SYSTEM);
     ui_fill_rect_fast((EpdRect){208,150,268,68}, UI_GRAY_WHITE, fb);
-    text(fb, 218, 158, 22, "本页无法选字");
-    text(fb, 218, 187, 22, "请调整字号");
+    text(fb, 218, 158, 22, "本頁無法選字");
+    text(fb, 218, 187, 22, "請調整字號");
     ttf_font_select(previous);
 }
 static size_t wrap(const char *value, size_t offset, char line[512], int width, int px) {
@@ -91,9 +91,9 @@ static size_t wrap(const char *value, size_t offset, char line[512], int width, 
 // 分段正文保留所有读音、对应词头和例句，无整条拼接分配。/ Segmented content retains every reading, alias and example without concatenation allocations.
 static size_t content_segments(const book_dictionary_result_t *r, const char *segments[10]) {
     size_t n = 0;
-    if (r->reading[0]) { segments[n++] = "读音："; segments[n++] = r->reading; segments[n++] = "\n"; }
-    if (r->variant[0]) { segments[n++] = "对应词头："; segments[n++] = r->variant; segments[n++] = "\n"; }
-    segments[n++] = r->definition[0] ? r->definition : "词库未提供中文释义";
+    if (r->reading[0]) { segments[n++] = "讀音："; segments[n++] = r->reading; segments[n++] = "\n"; }
+    if (r->variant[0]) { segments[n++] = "對應詞頭："; segments[n++] = r->variant; segments[n++] = "\n"; }
+    segments[n++] = r->definition[0] ? r->definition : "詞庫未提供中文釋義";
     if (r->example[0]) { segments[n++] = "\n例句："; segments[n++] = r->example; }
     return n;
 }
@@ -151,7 +151,7 @@ void ui_reader_dictionary_draw(uint8_t *fb, const ui_reader_dictionary_t *v,
     ui_draw_separator(fb,top,0,UI_LOCK_WIDTH,UI_GRAY_BLACK);
     char title[320]; snprintf(title,sizeof(title),"%s",query);
     while (ttf_text_width_px(42,title)>490 && strlen(title)>3) { size_t n=strlen(title)-1;while(n&&((unsigned char)title[n]&0xc0)==0x80)--n;title[n]=0; }
-    text(fb,40,top+22,42,title);text(fb,570,top+28,28,"关闭");
+    text(fb,40,top+22,42,title);text(fb,570,top+28,28,"關閉");
     char codes[192]="";
     if (!ttf_font_has_text(query)) {
         const unsigned char *q=(const unsigned char *)query;size_t n=0;
@@ -159,18 +159,18 @@ void ui_reader_dictionary_draw(uint8_t *fb, const ui_reader_dictionary_t *v,
         text(fb,40,top+80,24,codes);
     } else if (r->reading[0]) {
         char line[512];(void)wrap(r->reading,0,line,588,30);text(fb,40,top+80,30,line);
-    } else text(fb,40,top+80,28,v->loading?"正在查询…":"词库未提供读音");
+    } else text(fb,40,top+80,28,v->loading?"正在查詢…":"詞庫未提供讀音");
     const char *message=NULL;
-    if(v->loading)message="正在读取离线词库…";
+    if(v->loading)message="正在讀取離線詞庫…";
     else switch(r->status) {
         case BOOK_DICTIONARY_OK:break;
-        case BOOK_DICTIONARY_MISSING:message="未安装词库\n请到官网说明书下载词库\nmogo.mantake.shop\n解压后将 dictionaries 文件夹\n复制到 TF 卡根目录";break;
-        case BOOK_DICTIONARY_NOT_FOUND:message="未收录这个词语，可点“逐字”查询单字";break;
-        case BOOK_DICTIONARY_UNSUPPORTED:message="词库版本不支持\n请到官网说明书下载词库\nmogo.mantake.shop\n解压后将 dictionaries 文件夹\n复制到 TF 卡根目录";break;
-        case BOOK_DICTIONARY_CORRUPT:message="词库损坏\n请到官网说明书下载词库\nmogo.mantake.shop\n解压后将 dictionaries 文件夹\n复制到 TF 卡根目录";break;
-        case BOOK_DICTIONARY_IO:message="TF 卡读取失败，请检查存储卡";break;
-        case BOOK_DICTIONARY_CANCELLED:message="查询已取消";break;
-        case BOOK_DICTIONARY_BUSY:message="查询资源不足，请关闭后重试";break;
+        case BOOK_DICTIONARY_MISSING:message="未安裝詞庫\n請到官網說明書下載詞庫\nFAN\n解壓後將 dictionaries 資料夾\n複製到 TF 卡根目錄";break;
+        case BOOK_DICTIONARY_NOT_FOUND:message="未收錄這個詞語，可點“逐字”查詢單字";break;
+        case BOOK_DICTIONARY_UNSUPPORTED:message="詞庫版本不支援\n請到官網說明書下載詞庫\nFAN\n解壓後將 dictionaries 資料夾\n複製到 TF 卡根目錄";break;
+        case BOOK_DICTIONARY_CORRUPT:message="詞庫損壞\n請到官網說明書下載詞庫\nFAN\n解壓後將 dictionaries 資料夾\n複製到 TF 卡根目錄";break;
+        case BOOK_DICTIONARY_IO:message="TF 卡讀取失敗，請檢查儲存卡";break;
+        case BOOK_DICTIONARY_CANCELLED:message="查詢已取消";break;
+        case BOOK_DICTIONARY_BUSY:message="查詢資源不足，請關閉後重試";break;
     }
     size_t offset=message?0:v->offset;
     char line[512];
@@ -179,8 +179,8 @@ void ui_reader_dictionary_draw(uint8_t *fb, const ui_reader_dictionary_t *v,
         offset = message ? wrap(message,offset,line,588,32) : content_line(r,offset,line);
         text(fb,40,top+136+i*48,32,line);
     }
-    if (!ttf_font_has_text(query)) text(fb,40,top+438,22,"当前字体缺字，可更换 TF 卡字体");
+    if (!ttf_font_has_text(query)) text(fb,40,top+438,22,"當前字型缺字，可更換 TF 卡字型");
     if (v->can_browse) {text(fb,50,top+490,28,"上一屏");text(fb,300,top+490,28,"逐字");text(fb,520,top+490,28,"下一屏");}
-    (void)wrap(r->source[0]?r->source:"离线中文词典",0,line,588,22);text(fb,40,top+550,22,line);
+    (void)wrap(r->source[0]?r->source:"離線中文詞典",0,line,588,22);text(fb,40,top+550,22,line);
     ttf_font_select(previous);
 }

@@ -16,7 +16,7 @@
  * User revision: manual collage locks promptly present white and a round lock, then present the complete collage once with original GC16; remove placeholders and four-pass reveal.
  * 用户修订：合入官方 a2a63a6 的外设停用、IOE 收口与 CPU 浅睡保持；保留十分钟浅睡、密码和阅读检查点。
  * User revision: port official a2a63a6 peripheral/IOE parking and CPU light-sleep retention while preserving ten-minute light sleep, PIN and reader checkpoints.
- * 用户修订：锁屏入口带仅浅睡开关——待机方式选"仅浅睡"时锁屏无期限浅睡、永不断电；其余入口维持十分钟深睡阶梯。
+ * 用户修订：锁屏入口带仅浅睡开关——待机方式选"僅淺睡"时锁屏无期限浅睡、永不断电；其余入口维持十分钟深睡阶梯。
  * User revision: the lock entry takes a light-only switch--shutdown style "light-only" sleeps without deadline and never powers off; other entries keep the ten-minute deep ladder.
  * 用户修订：无 PMU EN 的板（Metalio）深睡交接不存在，十分钟到点自动升级为原厂式电源键脉冲断电；脉冲彻底失败才回退无期限锁屏浅睡。
  * User revision: on boards without PMU EN (Metalio) no deep handoff exists, so the ten-minute mark escalates to the factory-style power-key pulse power-off; only exhausted pulses fall back to a deadline-free locked light sleep.
@@ -809,7 +809,7 @@ void enter_lock_and_sleep(
     }
     const int64_t lock_t_art = esp_timer_get_time();
     int64_t lock_t_clear = lock_t_art, lock_t_panel = lock_t_art;
-    // 透明票根和透明书封的画布就是"当前页面+叠加图"，与面板真实状态一致，可以直接差分整屏GC16；
+    // 透明票根和透明书封的画布就是"當前頁面+疊加圖"，与面板真实状态一致，可以直接差分整屏GC16；
     // 其他样式把画布刷成了白底，必须先 epd_clear 让面板变白，from-white 的LUT才成立。
     // The transparent ticket/cover canvas is the current page plus the overlay, matching the real panel, so a
     // differential full GC16 is valid; other styles reset the canvas to white and need the clear first.

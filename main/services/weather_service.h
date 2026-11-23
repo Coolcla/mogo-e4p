@@ -12,6 +12,7 @@ typedef enum { APP_WEATHER_FETCH, APP_WEATHER_LOCATE, APP_WEATHER_SEARCH } app_w
 typedef struct {
     bool enabled, has_city, has_forecast; ///< enabled仅迁移旧单天气开关；城市与缓存 / enabled migrates the old single-widget preference; city and cache
     bool auto_refresh; ///< 六小时自动更新开关 / Six-hour automatic refresh preference
+    bool auto_location; ///< 下次開機與手動定位使用 Wi-Fi AP 定位 / Use Wi-Fi AP location on boot and explicit locate
     weather_location_t city; ///< 当前城市 / Selected city
     weather_forecast_t forecast; ///< 两日原始预报 / Original two-day forecast
     weather_location_t results[WEATHER_CITY_LIMIT]; ///< 仅当前搜索 / Current search only

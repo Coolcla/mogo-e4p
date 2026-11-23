@@ -20,6 +20,7 @@
 #include "ttf_block_cache.h"
 #include "ttf_glyph_cache.h"
 #include "ttf_font_source.h"
+#include "zlib.h"
 
 #include <dirent.h>
 #include <errno.h>
@@ -93,8 +94,8 @@ typedef struct {
 // several milliseconds. 32×4KB PSRAM slots keep recent sectors. Before a
 // line is drawn, needed blocks are sorted and merged. If glyf/gvar fit,
 // they are streamed into PSRAM at open so a cold start does not touch the card.
-extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_start");
-extern const uint8_t builtin_ttf_end[] asm("_binary_builtin_ttf_end");
+extern const uint8_t builtin_ttf_start[] asm("_binary_builtin_ttf_z_start");
+extern const uint8_t builtin_ttf_end[] asm("_binary_builtin_ttf_z_end");
 typedef struct {
     uint8_t slice[TTF_GVAR_SLICE_MAX];
     int16_t x[TTF_MAX_PTS];
@@ -136,7 +137,7 @@ typedef struct {
     uint32_t f_work_glyf_off;
     stbtt_fontinfo f_font_info;
     bool f_ready;
-    // CFF/OpenType（OTTO）没有 glyf/loca：字形由 stb 直接从 CFF 表取，"工作字体"那套
+    // CFF/OpenType（OTTO）没有 glyf/loca：字形由 stb 直接从 CFF 表取，"工作字型"那套
     // 拼装和分块预读都用不上，字体字节也直接借用不复制。
     // A CFF/OpenType (OTTO) face has no glyf/loca: stb reads outlines straight from the CFF
     // table, so the working-font assembly and block prefetch do not apply, and the face bytes
@@ -458,7 +459,7 @@ bool ttf_font_is_builtin(void) {
 const char* ttf_font_display_name(void) {
     static char name[TTF_FONT_NAME_MAX];
     const char* path = s_slots[TTF_FONT_SLOT_SYSTEM].f_path;
-    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(path)) return "思源黑体（内建）";
+    if (ttf_font_is_builtin() || ttf_font_path_is_builtin(path)) return "思源黑體（內建）";
     if (path[0] == '\0') return "";
     font_stem(path, name, sizeof(name));
     return ttf_font_localized_name(name);
@@ -466,14 +467,14 @@ const char* ttf_font_display_name(void) {
 
 const char* ttf_font_localized_name(const char* stem) {
     if (!stem) return "";
-    if (!strcasecmp(stem, "Song")) return "思源宋体";
-    if (!strcasecmp(stem, "Hei")) return "思源黑体";
-    if (!strcasecmp(stem, "Kai")) return "思源楷体";
+    if (!strcasecmp(stem, "Song")) return "思源宋體";
+    if (!strcasecmp(stem, "Hei")) return "思源黑體";
+    if (!strcasecmp(stem, "Kai")) return "思源楷體";
     if (!strcasecmp(stem, "FangSong")) return "思源仿宋";
     if (!strcasecmp(stem, "WenKai")) return "文楷";
-    if (!strcasecmp(stem, "KingHwa")) return "京华老宋";
-    if (!strcasecmp(stem, "ChillKai")) return "寒蝉正楷";
-    if (!strcasecmp(stem, "CangErYunHei05")) return "仓耳云黑05";
+    if (!strcasecmp(stem, "KingHwa")) return "京華老宋";
+    if (!strcasecmp(stem, "ChillKai")) return "寒蟬正楷";
+    if (!strcasecmp(stem, "CangErYunHei05")) return "倉耳雲黑05";
     return stem;
 }
 
@@ -1309,7 +1310,7 @@ static bool copy_table(
 }
 
 static uint8_t* build_working_font(const uint8_t* header, size_t header_len) {
-    // OTTO 是 CFF/OpenType：没有 glyf/loca，拼"工作字体"无从谈起。stb 自己会读 CFF 表，
+    // OTTO 是 CFF/OpenType：没有 glyf/loca，拼"工作字型"无从谈起。stb 自己会读 CFF 表，
     // 所以整份原始字体就是字体数据；字节已在 PSRAM，借用不复制。文件型字体（SD 上的
     // 系统字体）不支持这条路径，得先把整份读进内存才有意义。
     // OTTO means CFF/OpenType: there is no glyf/loca, so there is nothing to assemble. stb
@@ -2156,12 +2157,27 @@ static esp_err_t open_builtin_here(void) {
     unload_here();
     if (!ensure_work()) return ESP_ERR_NO_MEM;
 
-    font_mem = builtin_ttf_start;
-    font_mem_len = (uint32_t)(builtin_ttf_end - builtin_ttf_start);
-    font_mem_owned = false;
+    const size_t packed_len = (size_t)(builtin_ttf_end - builtin_ttf_start);
+    if (packed_len < 8 || memcmp(builtin_ttf_start, "FNT1", 4) != 0) return ESP_ERR_INVALID_RESPONSE;
+    const uint8_t *header = builtin_ttf_start + 4;
+    const uint32_t raw_len = (uint32_t)header[0] | (uint32_t)header[1] << 8 |
+                             (uint32_t)header[2] << 16 | (uint32_t)header[3] << 24;
+    if (raw_len < 64 || raw_len > 2u * 1024u * 1024u) return ESP_ERR_INVALID_SIZE;
+    uint8_t *expanded = heap_caps_malloc(raw_len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!expanded) return ESP_ERR_NO_MEM;
+    uLongf expanded_len = raw_len;
+    int status = uncompress(expanded, &expanded_len, builtin_ttf_start + 8, (uLong)(packed_len - 8));
+    if (status != Z_OK || expanded_len != raw_len) {
+        heap_caps_free(expanded);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    font_mem = expanded;
+    font_mem_len = raw_len;
+    font_mem_owned = true;
     font_fd = -1;
     strlcpy(font_path, TTF_FONT_BUILTIN, sizeof(font_path));
-    ESP_LOGI(TAG, "using builtin (%u KB)", (unsigned)(font_mem_len / 1024));
+    ESP_LOGI(TAG, "using builtin (%u KB raw, %u KB packed)",
+             (unsigned)(font_mem_len / 1024), (unsigned)(packed_len / 1024));
     return load_opened_font();
 }
 
@@ -2221,6 +2237,15 @@ esp_err_t ttf_font_open(const char* path) {
 
 bool ttf_font_open_io_error(void) {
     return s_open_io_error;
+}
+
+const uint8_t* ttf_font_builtin_data(size_t* len) {
+    const ttf_slot_t* system = &s_slots[TTF_FONT_SLOT_SYSTEM];
+    if (len) *len = 0;
+    if (!system->f_ready || !ttf_font_path_is_builtin(system->f_path) ||
+        !system->f_source.f_mem) return NULL;
+    if (len) *len = system->f_source.f_mem_len;
+    return system->f_source.f_mem;
 }
 
 esp_err_t ttf_font_init(void) {
@@ -2486,9 +2511,10 @@ static bool vertical_centered_cp(uint32_t cp) {
 // How a digit run sets vertically: one to three stand upright, each taking its halfwidth advance,
 // and four or more turn 90° as a run, which reads better for years and long numbers. The run is
 // judged at its first digit and every following digit keeps that verdict.
-static bool vertical_digit_run_rotates(const char* after_current) {
+bool ttf_vertical_digit_run_rotates(const char* after_current, size_t remaining_bytes) {
     int digits = 1;
-    for (const char* p = after_current; *p >= '0' && *p <= '9'; ++p) ++digits;
+    const char* p = after_current;
+    while (remaining_bytes && *p >= '0' && *p <= '9') { ++digits; ++p; --remaining_bytes; }
     return digits >= 4;
 }
 
@@ -2505,11 +2531,14 @@ static uint32_t vertical_substitute_cp(uint32_t cp) {
     }
 }
 
-// 字体自带的竖排呈现形（U+FE3x/FE4x）：直接用比把横排字形转 90° 更贴原版。
-// Vertical presentation forms fonts ship (U+FE3x/FE4x); using them beats turning the horizontal
-// glyph 90°.
+// 字体自带的竖排呈现形（U+FE10–FE16、FE3x/FE4x）：优先采用，不把横排标点硬转 90°。
+// Prefer the font's vertical forms (U+FE10–FE16 and FE3x/FE4x) to rotating horizontal punctuation.
 static uint32_t vertical_form_cp(uint32_t cp) {
     switch (cp) {
+        case 0x3001: return 0xfe11; case 0x3002: return 0xfe12;
+        case 0xff0c: return 0xfe10; case 0xff0e: return 0xfe12;
+        case 0xff01: return 0xfe15; case 0xff1f: return 0xfe16;
+        case 0xff1a: return 0xfe13; case 0xff1b: return 0xfe14;
         case 0x3008: return 0xfe3f; case 0x3009: return 0xfe40;
         case 0x300a: return 0xfe3d; case 0x300b: return 0xfe3e;
         case 0x300c: return 0xfe41; case 0x300d: return 0xfe42;
@@ -2543,6 +2572,33 @@ static const glyph_entry_t* vertical_glyph_for(uint32_t cp, int pixel_height, ui
     glyph = get_glyph(cp, pixel_height);
     if (glyph != NULL) { *out_cp = cp; *out_rotate = vertical_rotated_cp(cp); }
     return glyph;
+}
+
+static int vertical_glyph_advance(int pixel_height, const glyph_entry_t* glyph,
+                                  bool rotate, int tracking_px) {
+    if (glyph == NULL) return 0;
+    // 正立字按墨迹高度或字号推进；旋转字按原字宽/字身推进。负字距最多压到墨迹高度，不能重叠。
+    // Upright text advances by ink height or em size; rotated text by glyph width/advance. Negative
+    // tracking may compress only the spare gap, never the glyph's ink span.
+    const int ink_span = rotate ? glyph->width : glyph->height;
+    const int natural = rotate
+        ? (glyph->advance_x > glyph->width ? glyph->advance_x : glyph->width)
+        : (pixel_height > glyph->height ? pixel_height : glyph->height);
+    int advance = (natural > 0 ? natural : 1) + tracking_px;
+    if (advance < ink_span) advance = ink_span;
+    return advance > 0 ? advance : 1;
+}
+
+int ttf_vertical_glyph_advance_px(int pixel_height, uint32_t cp, bool digit_run_rotates,
+                                  int tracking_px) {
+    if (!font_ready) return 0;
+    pixel_height = clamp_px(pixel_height);
+    uint32_t draw_cp = cp;
+    bool rotate = false;
+    const glyph_entry_t* glyph = vertical_glyph_for(cp, pixel_height, &draw_cp, &rotate);
+    (void)draw_cp;
+    if (cp >= '0' && cp <= '9') rotate = digit_run_rotates;
+    return vertical_glyph_advance(pixel_height, glyph, rotate, tracking_px);
 }
 
 // 正立落字形：pen_x 是字身框左边缘，baseline 是框内基线。
@@ -2635,16 +2691,16 @@ int ttf_draw_text_px_vertical_observed(
         size_t source_start = (size_t)(cursor - text);
         run_apply(source_start);
         uint32_t cp = decode_utf8(&cursor);
+        if (cp >= '0' && cp <= '9') {
+            if (!(previous_cp >= '0' && previous_cp <= '9'))
+                digit_run_rotates = ttf_vertical_digit_run_rotates(cursor, strlen(cursor));
+        } else digit_run_rotates = false;
+        previous_cp = cp;
         uint32_t draw_cp = cp;
         bool rotate = false;
         const glyph_entry_t* glyph = vertical_glyph_for(cp, pixel_height, &draw_cp, &rotate);
         if (glyph == NULL) continue;
-        if (cp >= '0' && cp <= '9') {
-            if (!(previous_cp >= '0' && previous_cp <= '9'))
-                digit_run_rotates = vertical_digit_run_rotates(cursor);
-            rotate = digit_run_rotates;
-        }
-        previous_cp = cp;
+        if (cp >= '0' && cp <= '9') rotate = digit_run_rotates;
         const bool centered = !rotate && vertical_centered_cp(draw_cp) && glyph->width > 0;
         if (centered && !in_centered_run) {
             // 量这一串的墨迹范围：竖排里每个字都落在同一个 x 上，前进只在 y 方向，所以横向范围
@@ -2665,6 +2721,8 @@ int ttf_draw_text_px_vertical_observed(
             }
             run_dx = (cell_px - (ink_right - ink_left)) / 2 - ink_left;
         } else if (!centered) in_centered_run = false;
+        const int advance = vertical_glyph_advance(pixel_height, glyph, rotate,
+                                                   *cursor ? tracking_px : 0);
         if (cp != ' ' && cp != '\t') {
             if (rotate) {
                 blit_rotated(framebuffer, x, y, cell, pixel_height, baseline, glyph, fg, bg);
@@ -2675,15 +2733,14 @@ int ttf_draw_text_px_vertical_observed(
                 // Western punctuation) center across the em box as a whole run, otherwise a run hugs
                 // the left edge and looks half a cell off against the ideographs.
                 int dx = 0, dy = 0;
-                if (vertical_corner_cp(cp)) { dx = cell_px / 2; dy = -cell_px / 2; }
+                if (vertical_corner_cp(cp) && draw_cp == cp) { dx = cell_px / 2; dy = -cell_px / 2; }
                 else if (centered) dx = run_dx;
                 blit_upright(framebuffer, x + dx, y + cell + baseline + dy, glyph, fg, bg);
             }
         }
         observe_glyph(observer, source_start, (size_t)(cursor - text), cp, x, y + cell,
-                      cell_px, glyph->advance_x + (*cursor ? tracking_px : 0));
-        cell += glyph->advance_x;
-        if (*cursor != '\0') cell += tracking_px;
+                      cell_px, advance);
+        cell += advance;
     }
     return cell;
 }
@@ -2700,11 +2757,17 @@ int ttf_vertical_text_height_px(int pixel_height, const char* text, int tracking
     pixel_height = clamp_px(pixel_height);
     int total = 0;
     const char* cursor = text;
+    uint32_t previous_cp = 0;
+    bool digit_run_rotates = false;
     while (*cursor != '\0') {
-        const glyph_entry_t* glyph = get_glyph(decode_utf8(&cursor), pixel_height);
-        if (glyph == NULL) continue;
-        total += glyph->advance_x;
-        if (*cursor != '\0') total += tracking_px;
+        uint32_t cp = decode_utf8(&cursor);
+        if (cp >= '0' && cp <= '9') {
+            if (!(previous_cp >= '0' && previous_cp <= '9'))
+                digit_run_rotates = ttf_vertical_digit_run_rotates(cursor, strlen(cursor));
+        } else digit_run_rotates = false;
+        previous_cp = cp;
+        total += ttf_vertical_glyph_advance_px(pixel_height, cp, digit_run_rotates,
+                                               *cursor ? tracking_px : 0);
     }
     return total;
 }

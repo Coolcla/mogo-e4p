@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    for name in ("lock_4bpp",):
+    for name in ("lock_4bpp", "startup_4bpp"):
         raw = (args.source / (name + ".bin")).read_bytes()
         if len(raw) != 684 * 1216 // 2:
             parser.error(f"{name}: expected a 684 x 1216 4bpp frame")

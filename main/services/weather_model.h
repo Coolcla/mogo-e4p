@@ -15,11 +15,11 @@
 #define WEATHER_BODY_LIMIT 8192
 typedef struct {
     char id[17], admin2[97]; ///< 官方地点标识与地级行政区 / Official location ID and prefecture
-    char name[97], admin1[97], country[49], timezone[33]; ///< 展示信息 / Display metadata
-    double lat, lon; ///< 代理归一化坐标 / Proxy-normalized coordinates
+    char name[97], admin1[97], country[49], timezone[64]; ///< 展示信息 / Display metadata
+    double lat, lon; ///< WGS84 coordinates / WGS84 坐標
 } weather_location_t;
 typedef struct {
-    int32_t date; ///< 公历UTC+8日序 / Civil UTC+8 day number
+    int32_t date; ///< 依 Open-Meteo timezone=auto 回傳的當地日序 / Local civil day from timezone=auto
     double min_c, max_c; ///< 当日最低最高 / Daily minimum and maximum
     int humidity, code; ///< 白天湿度与供应商代码 / Daytime humidity and provider code
     char condition[97]; ///< 天气描述 / Condition description
@@ -28,7 +28,8 @@ typedef struct {
 typedef struct {
     weather_location_t location; ///< 坐标与时区 / Coordinates and timezone
     weather_day_t days[2]; ///< 原始日期，不可重标 / Original dates, never relabeled
-    int64_t fetched, fresh, serve; ///< 代理原始有效期 / Original proxy validity times
+    int64_t fetched, fresh, serve; ///< UTC fetch and bounded-cache expiry times
+    int32_t utc_offset_seconds; ///< Open-Meteo 回應當下偏移；只校驗日界線，不用於 DST 顯示
     uint8_t stale; ///< 代理已降级，保存格式仅允许0/1 / Proxy stale flag, persisted as 0/1 only
 } weather_forecast_t;
 typedef enum {
@@ -45,6 +46,14 @@ typedef enum {
 
 bool weather_location_valid(const weather_location_t *location);
 bool weather_location_parse(const char *json, size_t length, weather_location_t *location);
+/// Parse Open-Meteo global geocoding results (count is bounded by page_size).
+bool weather_openmeteo_locations_parse(const char *json, size_t length, weather_location_t *locations,
+                                       unsigned page_size, unsigned *count);
+/// Parse BeaconDB coordinates without retaining any AP identifiers.
+bool weather_beacondb_location_parse(const char *json, size_t length, double *lat, double *lon);
+/// Parse a single Nominatim reverse-lookup result, using the already-geolocated coordinates.
+bool weather_nominatim_location_parse(const char *json, size_t length, double lat, double lon,
+                                     weather_location_t *location);
 /// locations至少容纳page_size项；按请求大小校验完整批次。/ locations holds at least page_size items; validate the requested batch size.
 bool weather_locations_parse(const char *json, size_t length, weather_location_t *locations, unsigned page_size,
                              unsigned *count, unsigned *total, unsigned *page);
@@ -56,6 +65,8 @@ bool weather_forecast_parse(const char *json, size_t length, int64_t now,
 /// Shares the boolean parser and validation, reporting rejection without copying the body.
 weather_parse_result_t weather_forecast_parse_result(const char *json, size_t length, int64_t now,
                            const weather_location_t *location, weather_forecast_t *forecast);
+weather_parse_result_t weather_openmeteo_forecast_parse(const char *json, size_t length, int64_t now,
+                           const weather_location_t *selected, weather_forecast_t *forecast);
 const char *weather_parse_result_name(weather_parse_result_t result);
 bool weather_forecast_valid(const weather_forecast_t *forecast, int64_t now);
 const weather_day_t *weather_day_for(const weather_forecast_t *forecast, int64_t now, bool tomorrow);

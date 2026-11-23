@@ -46,6 +46,8 @@ esp_err_t book_epub_load_anchor(book_epub_t *book, size_t index, const char *anc
                                  size_t *anchor_offset, html_text_t *out);
 esp_err_t book_epub_load_target(book_epub_t *book, size_t index, const char *anchor,
                                  size_t source_offset, size_t *text_offset, html_text_t *out);
+/// Detect vertical writing in the selected spine document's inline or linked CSS.
+bool book_epub_chapter_vertical(book_epub_t *book, size_t chapter);
 /// 加载章内 JPEG/PNG/WebP；仅允许 ZIP 内相对路径，调用方释放数据；png 仅标记 PNG。
 /// Load an in-book JPEG/PNG/WebP from a relative path; caller frees data, png marks PNG only.
 esp_err_t book_epub_image(book_epub_t *book, size_t chapter, const char *src, uint8_t **data, size_t *size, bool *png);
@@ -61,6 +63,7 @@ esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size
                                   bool *is_png, size_t budget);
 /// 只读 OPF 的书名和作者；供书架显示。/ Read OPF title and creator for the shelf.
 esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, char *author, size_t author_cap);
+esp_err_t book_epub_metadata_identifier(const char *path, char *identifier, size_t identifier_cap);
 /// 只读取已有元数据缓存，锁屏路径不打开和解析 EPUB。
 /// Read an existing metadata cache only; the lock path must not open or parse an EPUB.
 esp_err_t book_epub_metadata_cached(const char *path, char *title, size_t title_cap,

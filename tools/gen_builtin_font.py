@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan UI strings and subset OFL Noto Sans SC Medium into main/assets/builtin.ttf."""
+"""Scan UI strings and subset OFL Noto Sans CJK TC Medium into main/assets/builtin.ttf."""
 
 from __future__ import annotations
 
@@ -28,10 +28,13 @@ SCAN_DIRS = [
     ROOT / "components/device_power",
 ]
 TEXT_SUFFIXES = {".md", ".txt"}
-# 阅读正文补齐后 VF 子集会超过旧的 400KB；系统字库使用固定 Medium 字重。
-MAX_BYTES = 700 * 1024
+# The full Traditional UI cmap is stored as a compressed asset in the app partition.
+MAX_BYTES = 1100 * 1024
 BUILTIN_WEIGHT = 500
 STRING_RE = re.compile(r'"(?:\\.|[^"\\])*"')
+BOPOMOFO_EXTENDED = "".join(chr(cp) for cp in range(0x31A0, 0x31C0))
+# The UI outline regression check requires these fixed chrome labels to scale cleanly.
+REQUIRED_UI_OUTLINES = "万估八具净剪囊尾异归徽搭旋景材析框箭素繁纯胶裁观追遥震顾驻眉"
 
 
 def ascii_printable() -> str:
@@ -129,10 +132,10 @@ def subset_medium(src: Path, text: str, dest: Path) -> int:
     if vf["OS/2"].usWeightClass != BUILTIN_WEIGHT:
         raise ValueError(f"source cannot provide wght={BUILTIN_WEIGHT}")
     for name_id, value in (
-        (1, "Noto Sans SC"),
+        (1, "Noto Sans CJK TC"),
         (2, "Medium"),
-        (4, "Noto Sans SC Medium"),
-        (6, "NotoSansSC-Medium"),
+        (4, "Noto Sans CJK TC Medium"),
+        (6, "NotoSansCJKtc-Medium"),
     ):
         vf["name"].setName(value, name_id, 3, 1, 0x409)
     options = Options()
@@ -176,7 +179,8 @@ def main() -> int:
         with TTFont(args.out) as existing:
             text = unique_text("".join(chr(cp) for cp in existing.getBestCmap()), args.extend_text)
     else:
-        text = unique_text(ascii_printable(), load_preset(CHARSET), scan_sources())
+        text = unique_text(ascii_printable(), load_preset(CHARSET), scan_sources(),
+                           BOPOMOFO_EXTENDED, REQUIRED_UI_OUTLINES)
     cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
     print(f"charset {len(text)} chars ({cjk} CJK)")
 

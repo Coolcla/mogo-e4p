@@ -316,7 +316,7 @@ bool book_ticket_preview(uint8_t *fb, bool cover_background) {
         cover_background_draw(fb, gray);
     ticket_shadow_draw(fb);
     ticket_paper_draw(fb);
-    ui_text(fb, 82, 98, 28, "mogo  /  阅读票根", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, 82, 98, 28, "FAN  /  閱讀票根", EPD_DRAW_ALIGN_LEFT, false);
     ui_hairline(fb, 156, 82, 520, UI_GRAY_BLACK);
     ticket_heading(fb,202,64,50,title);
     if (author[0]) ticket_heading(fb,274,44,28,author);
@@ -324,19 +324,19 @@ bool book_ticket_preview(uint8_t *fb, bool cover_background) {
     free(gray);
     ui_hairline(fb, 768, 82, 520, UI_GRAY_BLACK);
     char line[96];
-    if (progress_valid) snprintf(line, sizeof(line), "已读 %u%%  ·  第 %u 章", progress.pct,
+    if (progress_valid) snprintf(line, sizeof(line), "已讀 %u%%  ·  第 %u 章", progress.pct,
                                  (unsigned)progress.chapter + 1);
-    else snprintf(line, sizeof(line), "已读 —  ·  章节 —");
+    else snprintf(line, sizeof(line), "已讀 —  ·  章節 —");
     ticket_stat(fb, 802, 54, 34, line);
     EpdRect track = {82, 868, 520, 10};
     ui_fill_rect_fast(track, UI_GRAY_LIGHT, fb);
     track.width = progress_valid ? track.width * progress.pct / 100 : 0;
     if (track.width) ui_fill_rect_fast(track, UI_GRAY_BLACK, fb);
-    if (day && stats.day == day) snprintf(line, sizeof(line), "今日阅读 %llu 分钟  ·  翻页 %u 次",
+    if (day && stats.day == day) snprintf(line, sizeof(line), "今日閱讀 %llu 分鐘  ·  翻頁 %u 次",
         (unsigned long long)(stats.today_seconds / 60), (unsigned)stats.today_turns);
-    else snprintf(line, sizeof(line), "今日阅读 —  ·  日期未同步");
+    else snprintf(line, sizeof(line), "今日閱讀 —  ·  日期未同步");
     ticket_stat(fb, 914, 48, 28, line);
-    snprintf(line, sizeof(line), "累计阅读 %llu 小时 %llu 分钟  ·  翻页 %u 次",
+    snprintf(line, sizeof(line), "累計閱讀 %llu 小時 %llu 分鐘  ·  翻頁 %u 次",
              (unsigned long long)(stats.total_seconds / 3600),
              (unsigned long long)((stats.total_seconds / 60) % 60), (unsigned)stats.total_turns);
     ticket_stat(fb, 969, 74, 28, line);

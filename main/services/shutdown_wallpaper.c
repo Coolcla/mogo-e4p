@@ -120,10 +120,10 @@ static bool art_write(app_shutdown_wallpaper_t *value, const uint8_t *pixels, un
     header.image_id = art_hash(header.image_id, &value->fit, sizeof(value->fit));
     if (!header.image_id) header.image_id = 1;
     char path[128]; art_path(path, value->slot);
-    *error = "TF卡未就绪";
+    *error = "TF卡未就緒";
     if (art_cancelled(&generation) || !art_storage_ready()) return false;
     if (!art_ensure_dir(SHUTDOWN_ART_ROOT) || !art_ensure_dir(ART_CACHE_DIR)) {
-        *error = errno == ENOSPC ? "TF卡空间不足" : "TF壁纸目录不可用";
+        *error = errno == ENOSPC ? "TF卡空間不足" : "TF桌布目錄不可用";
         return false;
     }
     // 仅覆盖非活动槽，关闭并同步完整载荷后才把身份交给UI提交。
@@ -135,12 +135,12 @@ static bool art_write(app_shutdown_wallpaper_t *value, const uint8_t *pixels, un
         if (count > 4096u) count = 4096u;
         ok = !art_cancelled(&generation) && fwrite(pixels + offset, 1, count, file) == count;
     }
-    if (!ok) *error = errno == ENOSPC ? "TF卡空间不足" : "TF图片写入失败";
+    if (!ok) *error = errno == ENOSPC ? "TF卡空間不足" : "TF圖片寫入失敗";
     if (ok) {
         ok = fflush(file) == 0 && fsync(fileno(file)) == 0;
-        if (!ok) *error = errno == ENOSPC ? "TF卡空间不足" : "TF图片同步失败";
+        if (!ok) *error = errno == ENOSPC ? "TF卡空間不足" : "TF圖片同步失敗";
     }
-    if (ok) *error = "TF图片关闭失败";
+    if (ok) *error = "TF圖片關閉失敗";
     if (file && fclose(file)) ok = false;
     if (ok && !art_cancelled(&generation)) value->image_id = header.image_id;
     else ok = false;
@@ -230,15 +230,15 @@ static void art_worker(void *unused) {
         app_shutdown_wallpaper_t value = s_request;
         bool rebuild = s_rebuild; s_pending = false;
         portEXIT_CRITICAL(&s_art_lock);
-        const char *error = "TF卡未就绪";
+        const char *error = "TF卡未就緒";
         bool ok = art_storage_ready();
         uint8_t *pixels = ok ? mm_alloc(MM_OWNER_FILE_JOB, MM_POOL_PSRAM, SHUTDOWN_ART_BYTES, 0, 0) : NULL;
         if (ok) {
-            error = "可用内存不足";
+            error = "可用記憶體不足";
             ok = pixels != NULL;
         }
         if (ok) {
-            error = rebuild ? "图片读取或解码失败" : "TF壁纸不可用";
+            error = rebuild ? "圖片讀取或解碼失敗" : "TF桌布不可用";
             ok = rebuild ? art_decode(&value, pixels, generation) : shutdown_wallpaper_read(&value, pixels);
         }
         if (ok && rebuild) ok = art_write(&value, pixels, generation, &error);
@@ -273,7 +273,7 @@ void shutdown_wallpaper_request(const app_shutdown_wallpaper_t *value, bool rebu
     if (start && xTaskCreate(art_worker, "off_art", 12288, NULL, 1, NULL) != pdPASS) {
         portENTER_CRITICAL(&s_art_lock);
         s_running = false; s_pending = false; s_result = *value; s_done = true; s_success = false;
-        s_result_error = "后台任务创建失败";
+        s_result_error = "後臺任務建立失敗";
         portEXIT_CRITICAL(&s_art_lock);
     }
 }
@@ -288,7 +288,7 @@ const char *shutdown_wallpaper_error(void) {
     portENTER_CRITICAL(&s_art_lock);
     const char *error = s_taken_error;
     portEXIT_CRITICAL(&s_art_lock);
-    return error ? error : "壁纸保存失败";
+    return error ? error : "桌布儲存失敗";
 }
 bool shutdown_wallpaper_quiesce(unsigned timeout_ms) {
     shutdown_wallpaper_cancel();

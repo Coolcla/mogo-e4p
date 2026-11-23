@@ -68,9 +68,9 @@ static void card(uint8_t *fb,card_t c,const home_library_cover_t *cover,bool cho
 void ui_mini_library_draw(uint8_t *fb,EpdRect r,const home_library_view_t *v,ui_mini_library_frame_t f) {
     if(r.width!=684||r.height!=472||r.x||r.y<0||r.y+472>UI_NAV_TOP||v->count>5)return;
     ui_fill_rect_fast(r,255,fb);ui_draw_separator(fb,r.y,36,612,144);
-    text(fb,36,r.y+38,32,"迷你书库",EPD_DRAW_ALIGN_LEFT);
-    text(fb,432,r.y+38,24,"随机",EPD_DRAW_ALIGN_CENTER);
-    text(fb,582,r.y+38,24,"最近阅读",EPD_DRAW_ALIGN_CENTER);
+    text(fb,36,r.y+38,32,"迷你書庫",EPD_DRAW_ALIGN_LEFT);
+    text(fb,432,r.y+38,24,"隨機",EPD_DRAW_ALIGN_CENTER);
+    text(fb,582,r.y+38,24,"最近閱讀",EPD_DRAW_ALIGN_CENTER);
     ui_fill_rect_fast((EpdRect){v->recent?534:408,r.y+60,v->recent?96:48,2},0,fb);
     char meta[164] = "";
     if(v->count) {
@@ -86,19 +86,19 @@ void ui_mini_library_draw(uint8_t *fb,EpdRect r,const home_library_view_t *v,ui_
         }
         const book_mini_item_t *b=&v->books[v->selected];
         fitted(fb,36,r.y+386,34,b->title,612,EPD_DRAW_ALIGN_LEFT);
-        if(b->has_progress)snprintf(meta,sizeof(meta),"%s%s已读 %u%%",b->author,b->author[0]?" · ":"",b->pct);
-        else snprintf(meta,sizeof(meta),"%s%s还未翻开",b->author,b->author[0]?" · ":"");
+        if(b->has_progress)snprintf(meta,sizeof(meta),"%s%s已讀 %u%%",b->author,b->author[0]?" · ":"",b->pct);
+        else snprintf(meta,sizeof(meta),"%s%s還未翻開",b->author,b->author[0]?" · ":"");
     } else {
         ui_draw_icon(fb,342,r.y+168,54,UI_ICON_BOOK_OPEN,0);
-        text(fb,342,r.y+237,30,v->loading?"正在整理书匣":v->recent?"还没有阅读记录":"书匣等你放入第一本书",EPD_DRAW_ALIGN_CENTER);
-        text(fb,342,r.y+282,23,v->recent?"先去书架打开一本书":"将图书放入书架，即可在这里挑选",EPD_DRAW_ALIGN_CENTER);
+        text(fb,342,r.y+237,30,v->loading?"正在整理書匣":v->recent?"還沒有閱讀記錄":"書匣等你放入第一本書",EPD_DRAW_ALIGN_CENTER);
+        text(fb,342,r.y+282,23,v->recent?"先去書架開啟一本書":"將圖書放入書架，即可在這裡挑選",EPD_DRAW_ALIGN_CENTER);
     }
     // 留空导航上方不可全像素整理的末24行。/ Keep changing ink above the final 24 rows protected from full-pixel cleanup.
-    const char *detail = v->notice&&*v->notice?v->notice:v->loading?"正在整理书架...":meta;
+    const char *detail = v->notice&&*v->notice?v->notice:v->loading?"正在整理書架...":meta;
     if(*detail)fitted(fb,36,r.y+430,24,detail,v->recent?612:478,EPD_DRAW_ALIGN_LEFT);
     if(!v->recent) {
         ui_draw_icon(fb,550,r.y+430,24,UI_ICON_REFRESH_CW,0);
-        text(fb,648,r.y+430,23,"换一批",EPD_DRAW_ALIGN_RIGHT);
+        text(fb,648,r.y+430,23,"換一批",EPD_DRAW_ALIGN_RIGHT);
     }
 }
 ui_mini_hit_t ui_mini_library_hit(EpdRect r,const home_library_view_t *v,int x,int y) {

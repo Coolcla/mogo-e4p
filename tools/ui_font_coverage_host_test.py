@@ -91,7 +91,7 @@ labels += re.findall(r'"([^"\n]*)"', settings[first:last])
 # Shared keys must always use system glyphs; backspace is drawn with lines.
 keyboard=(root/'main/ui/ui_keyboard.c').read_text()
 labels += [ast.literal_eval(literal) for literal in re.findall(r'"(?:\\.|[^"\\])*"', keyboard)]
-labels += ["抗锯齿", "左上一页 · 中工具栏 · 右下一页", "左回首页 · 中全屏 · 右工具栏", "缩进微调", "%+d px · 复位", "−"]
+labels += ["抗鋸齒", "左上一頁 · 中工具欄 · 右下一頁", "左回首頁 · 中全螢幕 · 右工具欄", "縮排微調", "%+d px · 重設", "−"]
 missing = {}
 for label in labels:
     absent = "".join(dict.fromkeys(ch for ch in label if ch != "⌫" and ord(ch) >= 32 and not has_glyph(ord(ch))))
@@ -103,10 +103,17 @@ print(f"PASS: {len(labels)} real reader-setting and keyboard labels have complet
 # 这三个控件字必须来自同一TTF轮廓，不能依赖24px补充位图。
 # These control glyphs must use the same TTF outlines instead of the 24px supplement.
 hanzi_codepoints.clear()
-assert all(has_glyph(ord(ch)) for ch in "抗锯齿"), "antialias label lacks native UI outlines"
+assert all(has_glyph(ord(ch)) for ch in "抗鋸齒"), "antialias label lacks native UI outlines"
 print("PASS: antialias label uses native outline glyphs")
-assert all(has_glyph(ord(ch)) for ch in "眉锋"), "reader labels must not enlarge 24px bitmap supplements"
+assert all(has_glyph(ord(ch)) for ch in "眉鋒"), "reader labels must not enlarge 24px bitmap supplements"
 print("PASS: header and title-style labels use native outline glyphs")
+
+# 標準注音、聲調與注音擴充區都必須使用內建輪廓，不依賴書籍字型。
+# Standard Bopomofo, tone marks and the source-supported extension block need built-in outlines.
+bopomofo = list(range(0x3105, 0x312A)) + [0x02C9, 0x02CA, 0x02C7, 0x02CB, 0x02D9]
+assert all(has_glyph(cp) for cp in bopomofo), "standard Bopomofo or tone-mark outline is missing"
+assert all(has_glyph(cp) for cp in range(0x31A0, 0x31BC)), "Bopomofo Extended outline is missing"
+print("PASS: standard Bopomofo, tone marks, and available extension glyphs use native outlines")
 
 # 固定界面曾仅有位图的字必须有原生轮廓，缩放时不混用点阵。
 # Require native outlines for formerly bitmap-only UI glyphs so scaling does not mix in bitmaps.

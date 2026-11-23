@@ -297,40 +297,40 @@ static void refresh_saved_networks(void) {
         snprintf(s_saved_ssid, sizeof(s_saved_ssid), "%s", count ? networks[0].ssid : "");
         size_t visible = s_show_saved ? s_saved_count : s_network_count;
         if (s_network_page && s_network_page * NETWORK_ROWS >= visible) --s_network_page;
-    } else snprintf(s_network_message, sizeof(s_network_message), "读取已保存网络失败，请重试");
+    } else snprintf(s_network_message, sizeof(s_network_message), "讀取已儲存網路失敗，請重試");
 }
 
 static void draw_networks(uint8_t* fb) {
     ui_clear_page(fb);
     ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP}, UI_GRAY_WHITE, fb);
     if (s_forget_confirm) {
-        transfer_header(fb, "遗忘网络", "仅清除 WiFi 连接信息，不影响图书");
+        transfer_header(fb, "遺忘網路", "僅清除 WiFi 連線資訊，不影響圖書");
         char name[33];
         snprintf(name, sizeof(name), "%s", s_forget_ssid);
         fit_label(name, UI_PX_BODY, ui_content_width());
         ui_text(fb, UI_MARGIN, 350, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, UI_MARGIN, 450, UI_PX_CAPTION, s_network_message, EPD_DRAW_ALIGN_LEFT, false);
-        provisioning_button(fb, network_control_rect(11), "确认遗忘", 11);
+        provisioning_button(fb, network_control_rect(11), "確認遺忘", 11);
         provisioning_button(fb, network_control_rect(12), "取消", 12);
         ui_nav_draw(fb, 3);
         return;
     }
     if (s_saved_detail) {
-        transfer_header(fb, "已保存网络", NULL);
+        transfer_header(fb, "已儲存網路", NULL);
         char name[33]; snprintf(name, sizeof(name), "%s", s_selected.ssid);
         fit_label(name, 29, 600);
         ui_text_box(fb, (EpdRect){42, 200, 600, 60}, 29, name, EPD_DRAW_ALIGN_LEFT, false);
-        provisioning_button(fb, network_control_rect(13), "连接", 13);
-        provisioning_button(fb, network_control_rect(14), "修改密码", 14);
-        provisioning_button(fb, network_control_rect(11), "遗忘网络", 11);
+        provisioning_button(fb, network_control_rect(13), "連線", 13);
+        provisioning_button(fb, network_control_rect(14), "修改密碼", 14);
+        provisioning_button(fb, network_control_rect(11), "遺忘網路", 11);
         char message[96]; snprintf(message, sizeof(message), "%s", s_network_message);
         fit_label(message, 21, 600);
         ui_text(fb, 42, 674, 21, message, EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
-    transfer_header(fb, "无线网络", NULL);
-    ui_text_box(fb, (EpdRect){42, 161, 600, 36}, 24, "当前网络", EPD_DRAW_ALIGN_LEFT, false);
+    transfer_header(fb, "無線網路", NULL);
+    ui_text_box(fb, (EpdRect){42, 161, 600, 36}, 24, "當前網路", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect current = {36, 210, 612, 142};
     ui_fill_round_rect(fb, current, 22, UI_GRAY_WHITE);
     network_border(fb, current, 22);
@@ -338,22 +338,22 @@ static void draw_networks(uint8_t* fb) {
         char saved[40]; snprintf(saved, sizeof(saved), "%s", s_saved_ssid); fit_label(saved, 27, 375);
         ui_nav_wifi_icon(fb, 74, 250, 28, UI_GRAY_BLACK);
         ui_text_box(fb, (EpdRect){104, 221, 375, 44}, 27, saved, EPD_DRAW_ALIGN_LEFT, false);
-        const char *state = s_status.network_ready ? "已连接" :
-            s_network_connect_pending || s_status.state == WIFI_TRANSFER_STARTING ? "正在连接…" : "已保存 · 尚未连接";
+        const char *state = s_status.network_ready ? "已連線" :
+            s_network_connect_pending || s_status.state == WIFI_TRANSFER_STARTING ? "正在連線…" : "已儲存 · 尚未連線";
         ui_text_box(fb, (EpdRect){64, 266, 419, 36}, 21, state, EPD_DRAW_ALIGN_LEFT, false);
         char address[80];
         const char *url = !strncmp(s_status.url, "http://", 7) ? s_status.url + 7 : s_status.url;
         snprintf(address, sizeof(address), "%.79s", s_network_message[0] ? s_network_message :
-                 s_status.network_ready ? url[0] ? url : "已连接，可传书和对时" : "连接后可传书和对时");
+                 s_status.network_ready ? url[0] ? url : "已連線，可傳書和對時" : "連線後可傳書和對時");
         fit_label(address, 19, 419);
         ui_text_box(fb, (EpdRect){64, 306, 419, 36}, 19, address, EPD_DRAW_ALIGN_LEFT, false);
-        network_button(fb, 6, s_status.network_ready ? "断开" : "连接", !s_status.network_ready);
+        network_button(fb, 6, s_status.network_ready ? "斷開" : "連線", !s_status.network_ready);
         if (s_pressed == 11) ui_draw_pressed_round_rect(fb, network_control_rect(11), 14);
-        ui_text_box(fb, network_control_rect(11), 21, "遗忘网络", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_box(fb, network_control_rect(11), 21, "遺忘網路", EPD_DRAW_ALIGN_CENTER, false);
     } else {
-        ui_text_box(fb, (EpdRect){64, 224, 556, 48}, 27, "尚未保存网络", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){64, 224, 556, 48}, 27, "尚未儲存網路", EPD_DRAW_ALIGN_LEFT, false);
         char message[96]; snprintf(message, sizeof(message), "%s", s_network_message[0] ?
-                                  s_network_message : "请从下方列表选择 2.4 GHz WiFi");
+                                  s_network_message : "請從下方列表選擇 2.4 GHz WiFi");
         fit_label(message, 21, 556);
         ui_text_box(fb, (EpdRect){64, 288, 556, 48}, 21, message, EPD_DRAW_ALIGN_LEFT, false);
     }
@@ -362,7 +362,7 @@ static void draw_networks(uint8_t* fb) {
         EpdRect rect = network_control_rect(15 + tab);
         bool active = (tab != 0) == s_show_saved;
         if (s_pressed == 15 + tab) ui_draw_pressed_round_rect(fb, rect, 0);
-        char label[48]; snprintf(label, sizeof(label), "%s %u", tab ? "已保存" : "附近网络",
+        char label[48]; snprintf(label, sizeof(label), "%s %u", tab ? "已儲存" : "附近網路",
                                  (unsigned)(tab ? s_saved_count : s_network_count));
         ui_text_box(fb, (EpdRect){rect.x, rect.y, rect.width, rect.height - 6}, 23, label, EPD_DRAW_ALIGN_CENTER, false);
         ui_fill_rect_fast((EpdRect){rect.x, rect.y + rect.height - 3, rect.width, active ? 3 : 1},
@@ -371,11 +371,11 @@ static void draw_networks(uint8_t* fb) {
     EpdRect list = {36, 442, 612, NETWORK_ROWS * 88};
     ui_fill_round_rect(fb, list, 22, UI_GRAY_WHITE);
     if (s_scan_pending && !s_show_saved) {
-        ui_text_vc(fb, 342, 655, 25, "正在扫描 2.4 GHz WiFi", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 655, 25, "正在掃描 2.4 GHz WiFi", EPD_DRAW_ALIGN_CENTER, false);
     } else if (!visible) {
-        ui_text_vc(fb, 342, 620, 27, s_show_saved ? "尚未保存网络" : s_scan_error == ESP_OK ? "没有发现可用网络" : "扫描没有完成",
+        ui_text_vc(fb, 342, 620, 27, s_show_saved ? "尚未儲存網路" : s_scan_error == ESP_OK ? "沒有發現可用網路" : "掃描沒有完成",
                    EPD_DRAW_ALIGN_CENTER, false);
-        ui_text_vc(fb, 342, 678, 22, s_show_saved ? "附近网络中连接后即可保存" : s_scan_error == ESP_OK ? "请靠近路由器后重新扫描" : "点下方按钮自动重试",
+        ui_text_vc(fb, 342, 678, 22, s_show_saved ? "附近網路中連線後即可儲存" : s_scan_error == ESP_OK ? "請靠近路由器後重新掃描" : "點下方按鈕自動重試",
                    EPD_DRAW_ALIGN_CENTER, false);
     }
     for (int row = 0; (s_show_saved || !s_scan_pending) && row < NETWORK_ROWS; ++row) {
@@ -391,14 +391,14 @@ static void draw_networks(uint8_t* fb) {
         ui_text_box(fb, (EpdRect){64, rect.y + 6, 520, 40}, 28, name, EPD_DRAW_ALIGN_LEFT, false);
         bool saved = saved_network_index(ssid) >= 0;
         bool connected = s_status.network_ready && !strcmp(s_status.wifi_ssid, ssid);
-        if (s_show_saved) snprintf(detail, sizeof(detail), "%s", connected ? "已连接" :
-                                  !strcmp(s_saved_ssid, ssid) ? "默认网络" : "已保存");
+        if (s_show_saved) snprintf(detail, sizeof(detail), "%s", connected ? "已連線" :
+                                  !strcmp(s_saved_ssid, ssid) ? "預設網路" : "已儲存");
         else {
             const wifi_transfer_network_t *network = &s_networks[index];
-            snprintf(detail, sizeof(detail), "%s · %s%s", network->rssi > -60 ? "信号强" : network->rssi > -75 ? "信号良好" : "信号一般",
-                     !network->supported ? "暂不支持" : connected ? "已连接 · 已保存" : saved ? "已保存" :
-                     network->requires_password ? "需要密码" : "开放网络",
-                     !network->supported && saved ? " · 已保存" : "");
+            snprintf(detail, sizeof(detail), "%s · %s%s", network->rssi > -60 ? "訊號強" : network->rssi > -75 ? "訊號良好" : "訊號一般",
+                     !network->supported ? "暫不支援" : connected ? "已連線 · 已儲存" : saved ? "已儲存" :
+                     network->requires_password ? "需要密碼" : "開放網路",
+                     !network->supported && saved ? " · 已儲存" : "");
         }
         ui_text_box(fb, (EpdRect){64, rect.y + 49, 520, 32}, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_icon(fb, 615, rect.y + 44, 26, UI_ICON_CHEVRON_RIGHT, UI_GRAY_BLACK);
@@ -407,7 +407,7 @@ static void draw_networks(uint8_t* fb) {
     network_button(fb, 7, NULL, false);
     network_button(fb, 9, NULL, false);
     char paging[64];
-    snprintf(paging, sizeof(paging), "%s · %u/%u", s_show_saved ? "已保存" : s_scan_error == ESP_OK ? "重新扫描" : "重试扫描",
+    snprintf(paging, sizeof(paging), "%s · %u/%u", s_show_saved ? "已儲存" : s_scan_error == ESP_OK ? "重新掃描" : "重試掃描",
              (unsigned)s_network_page + 1, (unsigned)(visible ? (visible + NETWORK_ROWS - 1) / NETWORK_ROWS : 1));
     if (s_show_saved) ui_text_box(fb, network_control_rect(8), 24, paging, EPD_DRAW_ALIGN_CENTER, false);
     else network_button(fb, 8, paging, false);
@@ -416,17 +416,17 @@ static void draw_networks(uint8_t* fb) {
 
 static void draw_password(uint8_t* fb) {
     ui_clear_page(fb);
-    transfer_header(fb, "连接 WiFi", NULL);
+    transfer_header(fb, "連線 WiFi", NULL);
     char name[33];
     snprintf(name, sizeof(name), "%s", s_selected.ssid);
     fit_label(name, UI_PX_BODY, ui_content_width());
     ui_text(fb, UI_MARGIN, 176, UI_PX_BODY, name, EPD_DRAW_ALIGN_LEFT, false);
     ui_text_input_draw(fb, &s_password_input, password_control_rect(47), UI_PX_BODY,
                        !s_password_visible, NULL);
-    ui_text_fixed_vc(fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_fixed_vc(fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支援英文、數字、符號和空格", EPD_DRAW_ALIGN_LEFT, false);
     provisioning_button(fb, password_control_rect(44), "取消", 44);
-    provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示", 45);
-    provisioning_button(fb, password_control_rect(46), "连接并保存", 46);
+    provisioning_button(fb, password_control_rect(45), s_password_visible ? "隱藏" : "顯示", 45);
+    provisioning_button(fb, password_control_rect(46), "連線並儲存", 46);
     ui_keyboard_draw(fb, 560);
 }
 
@@ -495,26 +495,26 @@ static void cloud_leave(void) {
 
 static const char *cloud_error(cz_error_t error) {
     switch (error) {
-        case CZ_AUTH: return "请在设置中绑定 CloudZao";
-        case CZ_REFRESH_REUSED: return "授权已失效，请重新绑定";
-        case CZ_INTEGRATION: return "请核对固件接入 ID";
-        case CZ_CLOCK: return "请先校准设备时间";
-        case CZ_SLOW_DOWN: return "请求过于频繁，请稍候";
-        case CZ_PAIR_EXPIRED: return "绑定码已失效，请重新获取";
-        case CZ_ACTIVATION_UNAVAILABLE: return "暂未获取到绑定码";
-        case CZ_CREDENTIAL_STORAGE: return "无法保存或读取本机授权";
-        case CZ_LINK_EXPIRED: return "下载链接已过期，请刷新列表";
-        case CZ_DELIVERY_MISSING: return "推送已变化，请刷新列表";
-        case CZ_WIFI: return "请先下拉快捷栏打开wifi";
-        case CZ_MEDIA: return "请插入已挂载的 TF 卡";
-        case CZ_TIMEOUT: return "接收超时，可再次接收";
+        case CZ_AUTH: return "請在設定中繫結 CloudZao";
+        case CZ_REFRESH_REUSED: return "授權已失效，請重新繫結";
+        case CZ_INTEGRATION: return "請核對韌體接入 ID";
+        case CZ_CLOCK: return "請先校準裝置時間";
+        case CZ_SLOW_DOWN: return "請求過於頻繁，請稍候";
+        case CZ_PAIR_EXPIRED: return "繫結碼已失效，請重新獲取";
+        case CZ_ACTIVATION_UNAVAILABLE: return "暫未獲取到繫結碼";
+        case CZ_CREDENTIAL_STORAGE: return "無法儲存或讀取本機授權";
+        case CZ_LINK_EXPIRED: return "下載連結已過期，請重新整理列表";
+        case CZ_DELIVERY_MISSING: return "推送已變化，請重新整理列表";
+        case CZ_WIFI: return "請先下拉快捷欄開啟wifi";
+        case CZ_MEDIA: return "請插入已掛載的 TF 卡";
+        case CZ_TIMEOUT: return "接收超時，可再次接收";
         case CZ_CANCELLED: return "已取消";
-        case CZ_RESOURCES: return "设备忙或内存不足";
-        case CZ_STORAGE: return "TF 卡空间不足或写入失败";
-        case CZ_CONFLICT: return "存在内容不同的同名文件，未覆盖";
-        case CZ_DIGEST: return "文件大小或摘要不匹配";
-        case CZ_SERVER: return "服务请求失败";
-        case CZ_INVALID: return "资源或响应格式无效";
+        case CZ_RESOURCES: return "裝置忙或記憶體不足";
+        case CZ_STORAGE: return "TF 卡空間不足或寫入失敗";
+        case CZ_CONFLICT: return "存在內容不同的同名檔案，未覆蓋";
+        case CZ_DIGEST: return "檔案大小或摘要不匹配";
+        case CZ_SERVER: return "服務請求失敗";
+        case CZ_INVALID: return "資源或響應格式無效";
         default: return "";
     }
 }
@@ -529,42 +529,42 @@ static EpdRect cloud_button(int id) {
 static const char *cloud_result_title(void) {
     if (s_cloud_status.busy) {
         if (s_cloud_cancelling) return "正在取消";
-        return "正在下载推送";
+        return "正在下載推送";
     }
     if (s_cloud_status.error == CZ_CANCELLED) return "已取消";
-    if (s_cloud_status.error) return s_cloud_requested ? "接收已中断" : "暂时无法接收";
+    if (s_cloud_status.error) return s_cloud_requested ? "接收已中斷" : "暫時無法接收";
     if (!s_cloud_requested) return "等待接收";
-    if (!s_cloud_status.total) return "没有待接收推送";
-    if (s_cloud_status.failed || s_cloud_status.pending || s_cloud_status.skipped) return "接收结束";
+    if (!s_cloud_status.total) return "沒有待接收推送";
+    if (s_cloud_status.failed || s_cloud_status.pending || s_cloud_status.skipped) return "接收結束";
     return "接收完成";
 }
 
 static const char *cloud_result_detail(char *out, size_t cap) {
     if (s_cloud_status.busy) {
-        if (s_cloud_cancelling) return "正在结束本次操作，请稍候";
-        if (!s_cloud_status.total) return "正在核对所选推送";
-        snprintf(out, cap, "已处理 %u / %u 项", s_cloud_status.processed, s_cloud_status.total);
+        if (s_cloud_cancelling) return "正在結束本次操作，請稍候";
+        if (!s_cloud_status.total) return "正在核對所選推送";
+        snprintf(out, cap, "已處理 %u / %u 項", s_cloud_status.processed, s_cloud_status.total);
         return out;
     }
-    if (s_cloud_status.error == CZ_CANCELLED) return "已经保存的文件会保留";
-    if (s_cloud_status.error == CZ_SERVER) return "云造请求失败，可稍后再试";
+    if (s_cloud_status.error == CZ_CANCELLED) return "已經儲存的檔案會保留";
+    if (s_cloud_status.error == CZ_SERVER) return "雲造請求失敗，可稍後再試";
     if (s_cloud_status.error) return cloud_error(s_cloud_status.error);
     if (!s_cloud_requested) return "";
     if (s_cloud_status.item_error) {
         const bool ack = s_cloud_status.item_request == CZ_ACK;
-        snprintf(out, cap, "%s：%s", ack ? "确认失败，文件已保存" : "下载或保存失败",
+        snprintf(out, cap, "%s：%s", ack ? "確認失敗，檔案已儲存" : "下載或儲存失敗",
                  cloud_error(s_cloud_status.item_error));
         return out;
     }
-    if (s_cloud_status.unavailable) return "部分推送已变化或失效，请重新获取列表";
-    if (s_cloud_status.saved) return "已保存的文件可在 TF 卡中查看";
-    return "在云造端推送文件后可再次接收";
+    if (s_cloud_status.unavailable) return "部分推送已變化或失效，請重新獲取列表";
+    if (s_cloud_status.saved) return "已儲存的檔案可在 TF 卡中檢視";
+    return "在雲造端推送檔案後可再次接收";
 }
 
 static EpdRect cloud_tab(int index) { return (EpdRect){36 + index * 204, 151, 204, 48}; }
 
 static void cloud_tabs(uint8_t *fb) {
-    static const char *const labels[] = {"传输", "历史记录", "设置"};
+    static const char *const labels[] = {"傳輸", "歷史記錄", "設定"};
     ui_fill_rect_fast((EpdRect){36, 199, 612, 2}, 0xc0, fb);
     for (int i = 0; i < 3; ++i) {
         EpdRect rect = cloud_tab(i);
@@ -576,17 +576,17 @@ static void cloud_tabs(uint8_t *fb) {
 
 static const char *cloud_row_label(cz_row_state_t state) {
     switch (state) {
-        case CZ_ROW_WAIT: return s_cloud_status.busy ? "等待" : "未处理";
-        case CZ_ROW_CHECK: return "准备下载";
-        case CZ_ROW_DOWNLOAD: return "下载中";
-        case CZ_ROW_VERIFY: return "校验中";
-        case CZ_ROW_CONFIRM: return "确认中";
-        case CZ_ROW_SAVED: return "已保存";
-        case CZ_ROW_PENDING: return "待确认";
-        case CZ_ROW_SKIPPED: return "已跳过";
-        case CZ_ROW_FAILED: return "失败";
+        case CZ_ROW_WAIT: return s_cloud_status.busy ? "等待" : "未處理";
+        case CZ_ROW_CHECK: return "準備下載";
+        case CZ_ROW_DOWNLOAD: return "下載中";
+        case CZ_ROW_VERIFY: return "校驗中";
+        case CZ_ROW_CONFIRM: return "確認中";
+        case CZ_ROW_SAVED: return "已儲存";
+        case CZ_ROW_PENDING: return "待確認";
+        case CZ_ROW_SKIPPED: return "已跳過";
+        case CZ_ROW_FAILED: return "失敗";
         case CZ_ROW_UNAVAILABLE: return "推送已失效";
-        default: return "已中断";
+        default: return "已中斷";
     }
 }
 
@@ -599,7 +599,7 @@ static void cloud_bytes(char *out, size_t cap, uint32_t bytes) {
 
 static void cloud_name_label(char out[CLOUDZAO_NAME_MAX + 1], const cz_row_t *file, int width) {
     if (file->name[0]) memcpy(out, file->name, sizeof(file->name));
-    else strcpy(out, "未命名文件");
+    else strcpy(out, "未命名檔案");
     out[CLOUDZAO_NAME_MAX] = 0;
     fit_label(out, 24, width);
 }
@@ -663,13 +663,13 @@ static void draw_cloud_batch(uint8_t *fb) {
     const unsigned count = s_cloud_transfer.rows;
     char line[96];
     const EpdRect batch = cloud_batch_area();
-    ui_text_box(fb, (EpdRect){36, batch.y, 220, 41}, 25, "本批文件", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, batch.y, 220, 41}, 25, "本批檔案", EPD_DRAW_ALIGN_LEFT, false);
     if (s_cloud_status.total > CLOUDZAO_LIST_ROWS) {
-        snprintf(line, sizeof(line), "仅显示前 %u 项", CLOUDZAO_LIST_ROWS);
+        snprintf(line, sizeof(line), "僅顯示前 %u 項", CLOUDZAO_LIST_ROWS);
         ui_text_box(fb, (EpdRect){260, batch.y, 388, 41}, 18, line, EPD_DRAW_ALIGN_RIGHT, false);
     }
     if (!count) {
-        const char *msg = s_cloud_status.busy ? "正在获取待接收文件…" : "暂无本批文件";
+        const char *msg = s_cloud_status.busy ? "正在獲取待接收檔案…" : "暫無本批檔案";
         ui_text_box(fb, (EpdRect){36, 716, 612, 80}, 25, msg, EPD_DRAW_ALIGN_CENTER, false);
         return;
     }
@@ -693,8 +693,8 @@ static void draw_cloud_batch(uint8_t *fb) {
     }
     const EpdRect pager = cloud_pager(false, false);
     snprintf(line, sizeof(line), "%u / %u", page + 1, pages);
-    if (page) ui_draw_button(fb, pager, "上一页", false);
-    if (page + 1 < pages) ui_draw_button(fb, cloud_pager(false, true), "下一页", false);
+    if (page) ui_draw_button(fb, pager, "上一頁", false);
+    if (page + 1 < pages) ui_draw_button(fb, cloud_pager(false, true), "下一頁", false);
     ui_text_box(fb, (EpdRect){228, pager.y, 228, pager.height}, 20, line, EPD_DRAW_ALIGN_CENTER, false);
 }
 
@@ -706,7 +706,7 @@ static const char *cloud_history_format(const char *name) {
         if (!strcasecmp(ext, ".ttf")) return "TTF";
         if (!strcasecmp(ext, ".png")) return "PNG";
     }
-    return "文件";
+    return "檔案";
 }
 
 static void draw_cloud_history_row(uint8_t *fb, int y, const cz_history_item_t *entry) {
@@ -717,7 +717,7 @@ static void draw_cloud_history_row(uint8_t *fb, int y, const cz_history_item_t *
 
     const EpdRect title = {122, y + 11, 526, 46};
     char name[CLOUDZAO_NAME_MAX + sizeof("…")];
-    snprintf(name, sizeof(name), "%s", entry->file.name[0] ? entry->file.name : "未命名文件");
+    snprintf(name, sizeof(name), "%s", entry->file.name[0] ? entry->file.name : "未命名檔案");
     const int px = ui_text_effective_px(26);
     if (ui_text_fixed_width_px(px, name) > title.width) {
         fit_label(name, 26, title.width - ui_text_fixed_width_px(px, "…"));
@@ -725,7 +725,7 @@ static void draw_cloud_history_row(uint8_t *fb, int y, const cz_history_item_t *
     }
     ui_text_box(fb, title, 26, name, EPD_DRAW_ALIGN_LEFT, false);
 
-    char size[20] = "—", stamp[28] = "时间未校准", meta[64];
+    char size[20] = "—", stamp[28] = "時間未校準", meta[64];
     if (entry->file.size) cloud_bytes(size, sizeof(size), entry->file.size);
     const time_t utc = entry->utc;
     struct tm local;
@@ -751,7 +751,7 @@ static void draw_cloud_history_pager(uint8_t *fb, bool next) {
     ui_draw_icon(fb, rect.x + (next ? rect.width - 24 : 24), rect.y + rect.height / 2, 24,
                  next ? UI_ICON_CHEVRON_RIGHT : UI_ICON_CHEVRON_LEFT, 0x30);
     ui_text_box(fb, (EpdRect){rect.x + (next ? 8 : 45), rect.y + 5, rect.width - 53, rect.height - 10}, 20,
-                next ? "下一页" : "上一页", EPD_DRAW_ALIGN_CENTER, false);
+                next ? "下一頁" : "上一頁", EPD_DRAW_ALIGN_CENTER, false);
 }
 
 static EpdRect cloud_history_clear_button(void) { return (EpdRect){520, 220, 128, 58}; }
@@ -766,13 +766,13 @@ static bool cloud_history_can_clear(void) {
 
 static void draw_cloud_history_confirmation(uint8_t *fb) {
     ui_fill_round_rect_raw(fb, (EpdRect){36, 412, 612, 380}, 16, 0xe0);
-    ui_text_box(fb, (EpdRect){56, 444, 572, 78}, 32, "清除全部记录？", EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_box(fb, (EpdRect){56, 540, 572, 54}, 22, "仅清除当前 TF 卡的接收记录", EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_box(fb, (EpdRect){56, 602, 572, 54}, 22, "不会删除文件或影响云端推送", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, 444, 572, 78}, 32, "清除全部記錄？", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, 540, 572, 54}, 22, "僅清除當前 TF 卡的接收記錄", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){56, 602, 572, 54}, 22, "不會刪除檔案或影響雲端推送", EPD_DRAW_ALIGN_CENTER, false);
     for (int confirm = 0; confirm <= 1; ++confirm) {
         const EpdRect rect = cloud_history_confirm_button(confirm);
         ui_fill_round_rect_raw(fb, rect, 12, confirm ? 0x20 : 0xf0);
-        ui_text_box(fb, rect, 24, confirm ? "确认清除" : "取消", EPD_DRAW_ALIGN_CENTER, confirm);
+        ui_text_box(fb, rect, 24, confirm ? "確認清除" : "取消", EPD_DRAW_ALIGN_CENTER, confirm);
     }
 }
 
@@ -781,14 +781,14 @@ static void draw_cloud_history(uint8_t *fb) {
     const bool busy = s_cloud_history.busy;
     const cz_error_t error = s_cloud_history.error;
     const bool show_actions = cloud_history_can_clear() && !s_cloud_history_confirm;
-    const char *detail = s_cloud_history_clear_failed ? "清除失败，可重试" : "";
+    const char *detail = s_cloud_history_clear_failed ? "清除失敗，可重試" : "";
     char text[80];
-    ui_text_box(fb, (EpdRect){36, 217, 460, 65}, 39, "接收记录", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 217, 460, 65}, 39, "接收記錄", EPD_DRAW_ALIGN_LEFT, false);
     if (show_actions) {
         const EpdRect clear = cloud_history_clear_button();
         ui_draw_round_rect(fb, clear, 10, 0xc0);
         ui_text_box(fb, clear, 20, "清除", EPD_DRAW_ALIGN_CENTER, false);
-        snprintf(text, sizeof(text), "%u 条%s%s", count, *detail ? " · " : "", detail);
+        snprintf(text, sizeof(text), "%u 條%s%s", count, *detail ? " · " : "", detail);
         detail = text;
     }
     ui_text_box(fb, (EpdRect){36, 279, 612, 47}, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
@@ -798,10 +798,10 @@ static void draw_cloud_history(uint8_t *fb) {
     }
     if (!count || busy || error) {
         const ui_icon_t icon = busy ? UI_ICON_CLOCK : error ? UI_ICON_FOLDER_OPEN : UI_ICON_LIST;
-        const char *title = busy ? (s_cloud_history_clearing ? "正在清除记录" : "正在读取记录") :
-            error ? "无法读取记录" : "还没有接收记录";
-        const char *empty_detail = busy ? "" : error == CZ_STORAGE ? "请检查 TF 卡，再重新打开历史记录" :
-            error ? cloud_error(error) : "接收文件后，结果会显示在这里";
+        const char *title = busy ? (s_cloud_history_clearing ? "正在清除記錄" : "正在讀取記錄") :
+            error ? "無法讀取記錄" : "還沒有接收記錄";
+        const char *empty_detail = busy ? "" : error == CZ_STORAGE ? "請檢查 TF 卡，再重新開啟歷史記錄" :
+            error ? cloud_error(error) : "接收檔案後，結果會顯示在這裡";
         ui_draw_icon(fb, 342, 522, 56, icon, UI_GRAY_BLACK);
         ui_text_box(fb, (EpdRect){36, 602, 612, 57}, 31, title, EPD_DRAW_ALIGN_CENTER, false);
         ui_text_box(fb, (EpdRect){36, 666, 612, 42}, 20, empty_detail, EPD_DRAW_ALIGN_CENTER, false);
@@ -833,12 +833,12 @@ static EpdRect cloud_result_area(void) { return (EpdRect){36, 374, 612, 260}; }
 static void draw_cloud_result(uint8_t *fb) {
     const bool busy = s_cloud_status.busy;
     ui_draw_round_rect(fb, cloud_result_area(), 22, 0x90);
-    ui_text_box(fb, (EpdRect){56, 385, 572, 31}, 17, "传输状态", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){56, 385, 572, 31}, 17, "傳輸狀態", EPD_DRAW_ALIGN_LEFT, false);
     ui_text_box(fb, (EpdRect){56, 416, 572, 44}, 29, cloud_result_title(), EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_rect_fast((EpdRect){56, 466, 572, 2}, 0xc0, fb);
     if (busy && s_cloud_transfer.active) cloud_live_progress(fb);
     else {
-        static const char *const labels[] = {"已保存", "待确认", "跳过", "失败"};
+        static const char *const labels[] = {"已儲存", "待確認", "跳過", "失敗"};
         const unsigned counts[] = {s_cloud_status.saved, s_cloud_status.pending, s_cloud_status.skipped, s_cloud_status.failed};
         const bool counts_known = s_cloud_requested && (s_cloud_status.total || (!busy && !s_cloud_status.error));
         for (int i = 0; i < 4; ++i) {
@@ -920,10 +920,10 @@ static const char *cloud_offer_format(cz_kind_t kind) {
 
 static const char *cloud_offer_kind(cz_kind_t kind) {
     switch (kind) {
-        case CZ_KIND_EPUB: case CZ_KIND_TXT: return "书籍";
-        case CZ_KIND_TTF: return "字体";
-        case CZ_KIND_PNG: return "图片";
-        default: return "不可下载";
+        case CZ_KIND_EPUB: case CZ_KIND_TXT: return "書籍";
+        case CZ_KIND_TTF: return "字型";
+        case CZ_KIND_PNG: return "圖片";
+        default: return "不可下載";
     }
 }
 
@@ -938,11 +938,11 @@ static void draw_cloud_offer_mark(uint8_t *fb, int cy, bool checked) {
 static void draw_cloud_offer_list(uint8_t *fb, unsigned count) {
     const bool binding = s_cloud_bind_status.busy;
     const EpdRect rect = cloud_offer_all();
-    ui_text_box(fb, (EpdRect){36, rect.y, 276, rect.height}, 20, "文件", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, rect.y, 276, rect.height}, 20, "檔案", EPD_DRAW_ALIGN_LEFT, false);
     if (s_cloud_selectable && !binding) {
         const bool all = s_cloud_checked == s_cloud_selectable;
         ui_text_box(fb, (EpdRect){rect.x, rect.y, 124, rect.height}, 21,
-                    all ? "取消全选" : "全选", EPD_DRAW_ALIGN_RIGHT, false);
+                    all ? "取消全選" : "全選", EPD_DRAW_ALIGN_RIGHT, false);
         draw_cloud_offer_mark(fb, rect.y + rect.height / 2, all);
     }
     ui_fill_rect_fast((EpdRect){36, CLOUD_OFFER_Y - 2, 612, 2}, 0xb0, fb);
@@ -976,19 +976,19 @@ static void draw_cloud_offer_list(uint8_t *fb, unsigned count) {
     const EpdRect pager = cloud_offer_pager(false);
     if (s_cloud_offer_page) {
         ui_draw_icon(fb, 48, pager.y + pager.height / 2, 22, UI_ICON_CHEVRON_LEFT, UI_GRAY_BLACK);
-        ui_text_box(fb, (EpdRect){66, pager.y, pager.width - 30, pager.height}, 20, "上一页", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_box(fb, (EpdRect){66, pager.y, pager.width - 30, pager.height}, 20, "上一頁", EPD_DRAW_ALIGN_LEFT, false);
     }
     if (s_cloud_offer_page + 1 < pages) {
         const EpdRect next = cloud_offer_pager(true);
         ui_draw_icon(fb, 636, next.y + next.height / 2, 22, UI_ICON_CHEVRON_RIGHT, UI_GRAY_BLACK);
-        ui_text_box(fb, (EpdRect){next.x, next.y, next.width - 30, next.height}, 20, "下一页", EPD_DRAW_ALIGN_RIGHT, false);
+        ui_text_box(fb, (EpdRect){next.x, next.y, next.width - 30, next.height}, 20, "下一頁", EPD_DRAW_ALIGN_RIGHT, false);
     }
     if (pages > 1) {
         snprintf(text, sizeof(text), "%u / %u", s_cloud_offer_page + 1, pages);
         ui_text_box(fb, (EpdRect){218, pager.y, 248, pager.height}, 20, text, EPD_DRAW_ALIGN_CENTER, false);
     }
     if (s_cloud_action_error || s_cloud_status.total > count) {
-        snprintf(text, sizeof(text), "仅显示前 %u 项，其余推送保留在云端", count);
+        snprintf(text, sizeof(text), "僅顯示前 %u 項，其餘推送保留在雲端", count);
         ui_text_box(fb, cloud_offer_notice(), 20,
                     s_cloud_action_error ? cloud_error(s_cloud_action_error) : text, EPD_DRAW_ALIGN_LEFT, false);
     }
@@ -996,19 +996,19 @@ static void draw_cloud_offer_list(uint8_t *fb, unsigned count) {
 
 static void draw_cloud_offer_empty(uint8_t *fb) {
     const bool busy = s_cloud_status.busy;
-    const char *title = busy ? (s_cloud_cancelling ? "正在取消" : "正在获取推送列表") :
-        s_cloud_status.error == CZ_CANCELLED ? "已取消" : s_cloud_status.error ? "获取列表失败" :
-        s_cloud_requested ? "暂无待下载推送" : "先查看推送";
+    const char *title = busy ? (s_cloud_cancelling ? "正在取消" : "正在獲取推送列表") :
+        s_cloud_status.error == CZ_CANCELLED ? "已取消" : s_cloud_status.error ? "獲取列表失敗" :
+        s_cloud_requested ? "暫無待下載推送" : "先檢視推送";
     char http_error[48];
-    const char *detail = s_cloud_status.error == CZ_CANCELLED ? "可以重新获取列表" :
-        s_cloud_status.error == CZ_TIMEOUT ? "获取列表超时，可重试" :
+    const char *detail = s_cloud_status.error == CZ_CANCELLED ? "可以重新獲取列表" :
+        s_cloud_status.error == CZ_TIMEOUT ? "獲取列表超時，可重試" :
         s_cloud_status.error ? cloud_error(s_cloud_status.error) : busy ? "" :
-        s_cloud_requested ? "在云造推送文件后，再获取列表" : "查看CloudZao推送的书籍、字体和图片";
+        s_cloud_requested ? "在雲造推送檔案後，再獲取列表" : "檢視CloudZao推送的書籍、字型和圖片";
     if (s_cloud_status.error == CZ_SERVER) {
         if (s_cloud_status.preview_http_error) {
-            snprintf(http_error, sizeof(http_error), "云造服务返回 HTTP %u", (unsigned)s_cloud_status.preview_http_error);
+            snprintf(http_error, sizeof(http_error), "雲造服務返回 HTTP %u", (unsigned)s_cloud_status.preview_http_error);
             detail = http_error;
-        } else detail = "连接或传输失败，可重试";
+        } else detail = "連線或傳輸失敗，可重試";
     }
     ui_draw_icon(fb, 342, 526, 72, UI_ICON_FOLDER_INPUT, UI_GRAY_BLACK);
     ui_text_box(fb, (EpdRect){36, 613, 612, 56}, 32, title, EPD_DRAW_ALIGN_CENTER, false);
@@ -1018,29 +1018,29 @@ static void draw_cloud_offer_empty(uint8_t *fb) {
 static void draw_cloud_offer_footer(uint8_t *fb, unsigned count) {
     const bool busy = s_cloud_status.busy, binding = s_cloud_bind_status.busy;
     if (!count) {
-        cloud_action_button(fb, cloud_offer_fetch(), busy ? (s_cloud_cancelling ? "正在取消…" : "取消获取") :
-                            "获取推送列表", !busy, !binding && !s_cloud_cancelling);
+        cloud_action_button(fb, cloud_offer_fetch(), busy ? (s_cloud_cancelling ? "正在取消…" : "取消獲取") :
+                            "獲取推送列表", !busy, !binding && !s_cloud_cancelling);
         return;
     }
     const EpdRect rect = cloud_offer_submit();
     char text[28];
-    snprintf(text, sizeof(text), "%u 项", s_cloud_checked);
-    ui_text_box(fb, (EpdRect){36, CLOUD_OFFER_SELECTION_Y, 306, 29}, 17, "已选文件", EPD_DRAW_ALIGN_LEFT, false);
+    snprintf(text, sizeof(text), "%u 項", s_cloud_checked);
+    ui_text_box(fb, (EpdRect){36, CLOUD_OFFER_SELECTION_Y, 306, 29}, 17, "已選檔案", EPD_DRAW_ALIGN_LEFT, false);
     ui_text_box(fb, (EpdRect){36, 1044, 306, 51}, 39, text, EPD_DRAW_ALIGN_LEFT, false);
     const bool enabled = s_cloud_checked && !binding;
     ui_fill_round_rect_raw(fb, rect, 18, enabled ? UI_GRAY_BLACK : 0xe0);
-    cloud_offer_icon_label(fb, rect, "下载所选", UI_ICON_DOWNLOAD, false, enabled, enabled ? UI_GRAY_WHITE : 0x90);
+    cloud_offer_icon_label(fb, rect, "下載所選", UI_ICON_DOWNLOAD, false, enabled, enabled ? UI_GRAY_WHITE : 0x90);
 }
 
 static void draw_cloud_inbox(uint8_t *fb) {
     const unsigned count = cloud_offer_count();
-    ui_text_box(fb, (EpdRect){36, 217, 412, 56}, 39, "推送清单", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 217, 412, 56}, 39, "推送清單", EPD_DRAW_ALIGN_LEFT, false);
     if (count) {
         char sub[32];
-        snprintf(sub, sizeof(sub), "%u 项可下载", s_cloud_selectable);
+        snprintf(sub, sizeof(sub), "%u 項可下載", s_cloud_selectable);
         ui_text_box(fb, (EpdRect){36, 273, 412, 36}, 23, sub, EPD_DRAW_ALIGN_LEFT, false);
         if (!s_cloud_bind_status.busy) {
-            cloud_offer_icon_label(fb, cloud_offer_fetch(), "刷新列表", UI_ICON_REFRESH_CW, true, false, UI_GRAY_BLACK);
+            cloud_offer_icon_label(fb, cloud_offer_fetch(), "重新整理列表", UI_ICON_REFRESH_CW, true, false, UI_GRAY_BLACK);
         }
         draw_cloud_offer_list(fb, count);
     } else draw_cloud_offer_empty(fb);
@@ -1049,37 +1049,37 @@ static void draw_cloud_inbox(uint8_t *fb) {
 
 static void draw_cloud_receiver(uint8_t *fb) {
     if (!s_cloud_batch) { draw_cloud_inbox(fb); return; }
-    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "下载推送", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "下載推送", EPD_DRAW_ALIGN_LEFT, false);
     const bool busy = s_cloud_status.busy, binding = s_cloud_bind_status.busy;
-    cloud_action_button(fb, cloud_button(CLOUD_RECEIVE), busy ? (s_cloud_cancelling ? "正在取消…" : "取消下载") :
-                        "重新获取推送列表", !busy, !binding && !s_cloud_cancelling);
+    cloud_action_button(fb, cloud_button(CLOUD_RECEIVE), busy ? (s_cloud_cancelling ? "正在取消…" : "取消下載") :
+                        "重新獲取推送列表", !busy, !binding && !s_cloud_cancelling);
     draw_cloud_result(fb);
     draw_cloud_batch(fb);
 }
 
 static const char *cloud_bind_title(void) {
     const cz_status_t *status = &s_cloud_bind_status;
-    if (s_cloud_cancelling) return "正在暂停";
-    if (status->busy) return "正在连接 CloudZao";
-    if (status->code[0]) return "绑定码";
-    if (status->authorized) return "授权可用";
-    if (status->error == CZ_CANCELLED) return "绑定已暂停";
-    if (status->error == CZ_AUTH || status->error == CZ_REFRESH_REUSED) return "需要重新授权";
+    if (s_cloud_cancelling) return "正在暫停";
+    if (status->busy) return "正在連線 CloudZao";
+    if (status->code[0]) return "繫結碼";
+    if (status->authorized) return "授權可用";
+    if (status->error == CZ_CANCELLED) return "繫結已暫停";
+    if (status->error == CZ_AUTH || status->error == CZ_REFRESH_REUSED) return "需要重新授權";
     if (status->error == CZ_ACTIVATION_UNAVAILABLE) return cloud_error(status->error);
-    if (status->error) return "暂时无法绑定";
-    return "绑定 CloudZao";
+    if (status->error) return "暫時無法繫結";
+    return "繫結 CloudZao";
 }
 
 static const char *cloud_bind_detail(void) {
     const cz_status_t *status = &s_cloud_bind_status;
-    if (s_cloud_cancelling || status->busy) return "请稍候";
-    if (status->code[0]) return status->error == CZ_TIMEOUT ? "领取授权超时，正在重试" : "请在 CloudZao App 或 CloudZao 小程序输入此验证码";
-    if (status->authorized) return "可以接收推送，无需重新绑定";
-    if (status->error == CZ_CANCELLED) return "可继续使用未过期的绑定码";
-    if (status->error == CZ_TIMEOUT) return "绑定请求超时，可重试";
-    if (status->error == CZ_PAIR_EXPIRED) return "绑定会话已失效，请检查 App 绑定";
+    if (s_cloud_cancelling || status->busy) return "請稍候";
+    if (status->code[0]) return status->error == CZ_TIMEOUT ? "領取授權超時，正在重試" : "請在 CloudZao App 或 CloudZao 小程式輸入此驗證碼";
+    if (status->authorized) return "可以接收推送，無需重新繫結";
+    if (status->error == CZ_CANCELLED) return "可繼續使用未過期的繫結碼";
+    if (status->error == CZ_TIMEOUT) return "繫結請求超時，可重試";
+    if (status->error == CZ_PAIR_EXPIRED) return "繫結會話已失效，請檢查 App 繫結";
     if (status->error) return cloud_error(status->error);
-    return "在CloudZao App或小程序中添加这台设备";
+    return "在CloudZao App或小程式中新增這臺裝置";
 }
 
 static bool cloud_bind_action_enabled(void) {
@@ -1096,32 +1096,32 @@ static void draw_cloud_notice(uint8_t *fb) {
     ui_nav_status(fb);
     ui_fill_round_rect(fb, card, 22, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, card, 22, 0x90);
-    ui_text_box(fb, (EpdRect){76, 270, 532, 56}, 36, "注意事项", EPD_DRAW_ALIGN_CENTER, false);
-    ui_text_box(fb, (EpdRect){76, 330, 532, 42}, 22, "截至 2026 年 11 月 21 日实测",
+    ui_text_box(fb, (EpdRect){76, 270, 532, 56}, 36, "注意事項", EPD_DRAW_ALIGN_CENTER, false);
+    ui_text_box(fb, (EpdRect){76, 330, 532, 42}, 22, "截至 2026 年 11 月 21 日實測",
                 EPD_DRAW_ALIGN_CENTER, false);
     static const char *const books[] = {
-        "CloudZao App 仅能上传并推送 TXT、EPUB 原文件。",
-        "AZW3、MOBI 会被强制转换为 .ebook。",
-        "mogo 暂不支持 .ebook，请使用 TXT 或 EPUB。",
+        "CloudZao App 僅能上傳並推送 TXT、EPUB 原檔案。",
+        "AZW3、MOBI 會被強制轉換為 .ebook。",
+        "FAN 暫不支援 .ebook，請使用 TXT 或 EPUB。",
     };
     static const char *const wallpapers[] = {
-        "CloudZao App 暂时无法推送壁纸。",
-        "请通过 CloudZao 网页端上传并推送。",
+        "CloudZao App 暫時無法推送桌布。",
+        "請透過 CloudZao 網頁端上傳並推送。",
     };
-    ui_text_box(fb, (EpdRect){76, 398, 532, 42}, 28, "书籍", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){76, 398, 532, 42}, 28, "書籍", EPD_DRAW_ALIGN_LEFT, false);
     for (unsigned i = 0; i < sizeof(books) / sizeof(books[0]); ++i)
         ui_text_box(fb, (EpdRect){76, 445 + 37 * (int)i, 532, 37}, 24,
                     books[i], EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){76, 580, 532, 42}, 28, "壁纸", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){76, 580, 532, 42}, 28, "桌布", EPD_DRAW_ALIGN_LEFT, false);
     for (unsigned i = 0; i < sizeof(wallpapers) / sizeof(wallpapers[0]); ++i)
         ui_text_box(fb, (EpdRect){76, 627 + 37 * (int)i, 532, 37}, 24,
                     wallpapers[i], EPD_DRAW_ALIGN_LEFT, false);
     if (s_cloud_notice_save_failed)
-        ui_text_box(fb, (EpdRect){76, 711, 532, 40}, 22, "未能保存确认，请再试一次",
+        ui_text_box(fb, (EpdRect){76, 711, 532, 40}, 22, "未能儲存確認，請再試一次",
                     EPD_DRAW_ALIGN_CENTER, false);
     const EpdRect action = cloud_notice_button();
     ui_fill_round_rect(fb, action, 18, UI_GRAY_BLACK);
-    ui_text_box(fb, action, 27, s_cloud_notice == CLOUD_NOTICE_FIRST_READ ? "我已了解" : "关闭",
+    ui_text_box(fb, action, 27, s_cloud_notice == CLOUD_NOTICE_FIRST_READ ? "我已瞭解" : "關閉",
                 EPD_DRAW_ALIGN_CENTER, true);
 }
 
@@ -1131,9 +1131,9 @@ static void draw_cloud_app_download(uint8_t *fb) {
     const int side = pitch * (CLOUDZAO_DOWNLOAD_QR_SIDE + 2 * quiet);
     const EpdRect qr = {396, card.y + (card.height - side) / 2, side, side};
     ui_draw_round_rect(fb, card, 18, 0x90);
-    ui_text_box(fb, (EpdRect){62, 773, 312, 58}, 29, "下载 CloudZao App", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){62, 838, 312, 38}, 22, "用手机扫描右侧二维码", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){62, 878, 312, 38}, 22, "打开官方下载页", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){62, 773, 312, 58}, 29, "下載 CloudZao App", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){62, 838, 312, 38}, 22, "用手機掃描右側二維碼", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){62, 878, 312, 38}, 22, "開啟官方下載頁", EPD_DRAW_ALIGN_LEFT, false);
     ui_fill_rect_fast(qr, UI_GRAY_WHITE, fb);
     for (int y = 0; y < CLOUDZAO_DOWNLOAD_QR_SIDE; ++y)
         for (int x = 0; x < CLOUDZAO_DOWNLOAD_QR_SIDE; ++x)
@@ -1149,16 +1149,16 @@ static void draw_cloud_settings(uint8_t *fb) {
     const bool show_unbind_hint = !s_cloud_cancelling && !bind->busy && !show_code && !bind->authorized &&
                                   bind->error == CZ_ACTIVATION_UNAVAILABLE;
     const EpdRect card = {36, 282, 612, 290};
-    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "设备绑定", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){36, 220, 612, 52}, 32, "裝置繫結", EPD_DRAW_ALIGN_LEFT, false);
     ui_draw_round_rect(fb, card, 22, 0x90);
     ui_text_box(fb, (EpdRect){56, show_code ? 297 : 329, 572, 47}, 28,
                 cloud_bind_title(), EPD_DRAW_ALIGN_CENTER, false);
     if (show_code) ui_text_box(fb, (EpdRect){56, 344, 572, 78}, 58, bind->code, EPD_DRAW_ALIGN_CENTER, false);
     if (show_unbind_hint) {
         ui_text_box(fb, (EpdRect){56, 378, 572, 40}, 21,
-                    "若此设备已绑定，请先在", EPD_DRAW_ALIGN_CENTER, false);
+                    "若此裝置已繫結，請先在", EPD_DRAW_ALIGN_CENTER, false);
         ui_text_box(fb, (EpdRect){56, 418, 572, 40}, 21,
-                    "CloudZao App 或小程序解绑后重试", EPD_DRAW_ALIGN_CENTER, false);
+                    "CloudZao App 或小程式解綁後重試", EPD_DRAW_ALIGN_CENTER, false);
     } else {
         ui_text_box(fb, (EpdRect){56, show_code ? 422 : 383, 572, 44}, 21,
                     cloud_bind_detail(), EPD_DRAW_ALIGN_CENTER, false);
@@ -1166,9 +1166,9 @@ static void draw_cloud_settings(uint8_t *fb) {
 
     const EpdRect action = cloud_button(CLOUD_BIND);
     const bool enabled = cloud_bind_action_enabled(), primary = enabled && !bind->busy && !show_code;
-    const char *label = receiving ? "接收结束后可操作" : s_cloud_cancelling ? "正在暂停…" :
-        bind->busy || show_code ? "暂停绑定" : bind->authorized ? "检查授权" :
-        bind->error == CZ_CANCELLED ? "继续绑定" : "绑定 / 查看授权";
+    const char *label = receiving ? "接收結束後可操作" : s_cloud_cancelling ? "正在暫停…" :
+        bind->busy || show_code ? "暫停繫結" : bind->authorized ? "檢查授權" :
+        bind->error == CZ_CANCELLED ? "繼續繫結" : "繫結 / 檢視授權";
     ui_fill_round_rect(fb, action, 18, primary ? UI_GRAY_BLACK : UI_GRAY_WHITE);
     if (!primary) ui_draw_round_rect(fb, action, 18, 0x50);
     ui_text_box(fb, (EpdRect){action.x + 18, action.y + 8, action.width - 36, action.height - 16}, 25,
@@ -1176,8 +1176,8 @@ static void draw_cloud_settings(uint8_t *fb) {
 
     const EpdRect notice = cloud_notice_entry();
     ui_draw_round_rect(fb, notice, 18, 0x90);
-    ui_text_box(fb, (EpdRect){56, notice.y, 480, notice.height}, 27, "注意事项", EPD_DRAW_ALIGN_LEFT, false);
-    ui_text_box(fb, (EpdRect){536, notice.y, 92, notice.height}, 21, "查看", EPD_DRAW_ALIGN_RIGHT, false);
+    ui_text_box(fb, (EpdRect){56, notice.y, 480, notice.height}, 27, "注意事項", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text_box(fb, (EpdRect){536, notice.y, 92, notice.height}, 21, "檢視", EPD_DRAW_ALIGN_RIGHT, false);
     draw_cloud_app_download(fb);
 }
 
@@ -1437,7 +1437,7 @@ static void queue_network_start(wifi_transfer_mode_t mode) {
     refresh_saved_networks();
     if (s_wifi_settings_only) {
         s_network_connect_pending = true;
-        snprintf(s_network_message, sizeof(s_network_message), "正在连接 %s…", s_status.wifi_ssid);
+        snprintf(s_network_message, sizeof(s_network_message), "正在連線 %s…", s_status.wifi_ssid);
     } else s_start_pending = true;
 }
 
@@ -1494,7 +1494,7 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
         esp_err_t err = start_owned_session(&cfg);
         if (err != ESP_OK) {
             const char *hint = memory_peak_hint(err);
-            snprintf(s_network_message, sizeof(s_network_message), "%s", hint ? hint : "连接启动失败，请重试");
+            snprintf(s_network_message, sizeof(s_network_message), "%s", hint ? hint : "連線啟動失敗，請重試");
         }
         return APP_REDRAW_PAGE;
     }
@@ -1505,8 +1505,8 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
         bool changed = next.state != s_status.state || next.network_ready != s_status.network_ready ||
                        next.last_error != s_status.last_error;
         s_status = next;
-        if (s_status.network_ready) snprintf(s_network_message, sizeof(s_network_message), "连接成功");
-        else if (s_status.state == WIFI_TRANSFER_ERROR) snprintf(s_network_message, sizeof(s_network_message), "连接失败，请检查密码或信号");
+        if (s_status.network_ready) snprintf(s_network_message, sizeof(s_network_message), "連線成功");
+        else if (s_status.state == WIFI_TRANSFER_ERROR) snprintf(s_network_message, sizeof(s_network_message), "連線失敗，請檢查密碼或訊號");
         return changed ? APP_REDRAW_PAGE : APP_REDRAW_NONE;
     }
     if (!s_scan_pending || s_show_saved || s_saved_detail) return APP_REDRAW_NONE;
@@ -1522,9 +1522,9 @@ static app_redraw_t network_ui_tick(app_ctx_t* ctx) {
         s_network_count = 0;
         const char *hint = memory_peak_hint(err);
         snprintf(s_network_message, sizeof(s_network_message), "%s",
-                 hint ? hint : err == ESP_ERR_NO_MEM ? "内存已清理，请点下方按钮重试" : "扫描失败，请点下方按钮重试");
+                 hint ? hint : err == ESP_ERR_NO_MEM ? "記憶體已清理，請點下方按鈕重試" : "掃描失敗，請點下方按鈕重試");
     }
-    else if (!s_network_count) snprintf(s_network_message, sizeof(s_network_message), "未发现网络，请靠近路由器后重扫");
+    else if (!s_network_count) snprintf(s_network_message, sizeof(s_network_message), "未發現網路，請靠近路由器後重掃");
     else s_network_message[0] = 0;
     s_pressed = -1;
     return APP_REDRAW_PAGE;
@@ -1556,13 +1556,13 @@ static int provisioning_hit(uint16_t x, uint16_t y) {
 
 static app_redraw_t connect_saved_network(const char *ssid) {
     if (!stop_wifi_for_provisioning()) {
-        snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
+        snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再連線");
         return APP_REDRAW_PAGE;
     }
     s_network_connect_pending = false;
     esp_err_t err = wifi_transfer_select_saved_wifi(ssid);
     if (err == ESP_OK) queue_network_start(WIFI_TRANSFER_MODE_STA);
-    else snprintf(s_network_message, sizeof(s_network_message), "读取网络失败，请重试");
+    else snprintf(s_network_message, sizeof(s_network_message), "讀取網路失敗，請重試");
     return APP_REDRAW_PAGE;
 }
 
@@ -1573,7 +1573,7 @@ static app_redraw_t provisioning_action(int id) {
             // 断联后页面标记可能已丢失；以组件的真实会话为准，上传中不能清配置。
             // A failed reconnect may lose the page flag; stop the actual component session, never an active upload.
             if (!stop_wifi_for_provisioning()) {
-                snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再遗忘");
+                snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再遺忘");
                 return APP_REDRAW_PAGE;
             }
             s_network_connect_pending = s_scan_pending = false;
@@ -1583,8 +1583,8 @@ static app_redraw_t provisioning_action(int id) {
                 s_forget_confirm = false;
                 s_saved_detail = false;
                 refresh_saved_networks();
-                snprintf(s_network_message, sizeof(s_network_message), "已遗忘网络");
-            } else snprintf(s_network_message, sizeof(s_network_message), "遗忘失败，请重试或取消");
+                snprintf(s_network_message, sizeof(s_network_message), "已遺忘網路");
+            } else snprintf(s_network_message, sizeof(s_network_message), "遺忘失敗，請重試或取消");
         }
         return APP_REDRAW_PAGE;
     }
@@ -1593,7 +1593,7 @@ static app_redraw_t provisioning_action(int id) {
             if (id == 13) return connect_saved_network(s_selected.ssid);
             if (id == 14) {
                 if (!stop_wifi_for_provisioning()) {
-                    snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再修改");
+                    snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再修改");
                     return APP_REDRAW_PAGE;
                 }
                 s_network_connect_pending = s_scan_pending = false;
@@ -1619,17 +1619,17 @@ static app_redraw_t provisioning_action(int id) {
             }
             s_selected = s_networks[s_network_page * NETWORK_ROWS + id];
             if (!s_selected.supported) {
-                snprintf(s_network_message, sizeof(s_network_message), "此网络认证暂不支持，请选择其他网络");
+                snprintf(s_network_message, sizeof(s_network_message), "此網路認證暫不支援，請選擇其他網路");
                 return APP_REDRAW_PAGE;
             }
             if (saved_network_index(s_selected.ssid) >= 0) return connect_saved_network(s_selected.ssid);
             if (!stop_wifi_for_provisioning()) {
-                snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
+                snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再連線");
                 return APP_REDRAW_PAGE;
             }
             s_network_connect_pending = false;
             if (s_saved_count == WIFI_TRANSFER_SAVED_MAX) {
-                snprintf(s_network_message, sizeof(s_network_message), "已保存 8 个网络，请先遗忘不用的网络");
+                snprintf(s_network_message, sizeof(s_network_message), "已儲存 8 個網路，請先遺忘不用的網路");
                 return APP_REDRAW_PAGE;
             }
             if (!s_selected.requires_password) {
@@ -1638,7 +1638,7 @@ static app_redraw_t provisioning_action(int id) {
                     queue_network_start(WIFI_TRANSFER_MODE_STA);
                     return APP_REDRAW_PAGE;
                 }
-                snprintf(s_network_message, sizeof(s_network_message), "开放网络保存失败，请重试");
+                snprintf(s_network_message, sizeof(s_network_message), "開放網路儲存失敗，請重試");
                 return APP_REDRAW_PAGE;
             }
             clear_password();
@@ -1648,16 +1648,16 @@ static app_redraw_t provisioning_action(int id) {
         } else if (id == 6) {
             if (s_status.network_ready) {
                 if (!stop_wifi_for_provisioning()) {
-                    snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再断开");
+                    snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再斷開");
                     return APP_REDRAW_PAGE;
                 }
                 s_network_connect_pending = false;
-                snprintf(s_network_message, sizeof(s_network_message), "已断开，连接信息保留");
+                snprintf(s_network_message, sizeof(s_network_message), "已斷開，連線資訊保留");
             } else {
                 // 未连上不等于驱动已停止；重试前先释放仍在等待或超时的旧 STA。
                 // Disconnected does not mean stopped; release the pending or timed-out STA before retrying.
                 if (!stop_wifi_for_provisioning()) {
-                    snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再连接");
+                    snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再連線");
                     return APP_REDRAW_PAGE;
                 }
                 s_network_connect_pending = false;
@@ -1667,7 +1667,7 @@ static app_redraw_t provisioning_action(int id) {
         else if (id == 7 && s_network_page) --s_network_page;
         else if (id == 8) {
             if (!stop_wifi_for_provisioning()) {
-                snprintf(s_network_message, sizeof(s_network_message), "正在传输，请完成后再扫描");
+                snprintf(s_network_message, sizeof(s_network_message), "正在傳輸，請完成後再掃描");
                 return APP_REDRAW_PAGE;
             }
             s_network_connect_pending = false;
@@ -1690,14 +1690,14 @@ static app_redraw_t provisioning_action(int id) {
     else if (id == 45) s_password_visible = !s_password_visible;
     else if (id == 46) {
         if (s_selected.requires_password && len < 8) {
-            snprintf(s_network_message, sizeof(s_network_message), "加密网络密码至少 8 个字符");
+            snprintf(s_network_message, sizeof(s_network_message), "加密網路密碼至少 8 個字元");
         } else {
             esp_err_t err = wifi_transfer_save_wifi(s_selected.ssid,
                 s_selected.requires_password ? s_password : "");
             if (err == ESP_OK) { queue_network_start(WIFI_TRANSFER_MODE_STA); return APP_REDRAW_PAGE; }
             snprintf(s_network_message, sizeof(s_network_message), "%s", err == ESP_ERR_INVALID_ARG ?
-                     "密码须 8–63 字符或 64 位十六进制" : err == ESP_ERR_NO_MEM ?
-                     "已保存 8 个网络，请先遗忘不用的网络" : "保存失败，输入已保留，请重试");
+                     "密碼須 8–63 字元或 64 位十六進位制" : err == ESP_ERR_NO_MEM ?
+                     "已儲存 8 個網路，請先遺忘不用的網路" : "儲存失敗，輸入已保留，請重試");
         }
     }
     return APP_REDRAW_AREA;
@@ -1709,10 +1709,10 @@ static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
         UI_PX_BODY, !s_password_visible, NULL, field);
     if (controls) {
         ui_clear_rect_fast(ctx->fb, (EpdRect){36, 377, 612, 36});
-        ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支援英文、數字、符號和空格", EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 44; i <= 46; ++i) {
             EpdRect button = password_control_rect(i); ui_clear_rect_fast(ctx->fb, button);
-            provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示" : "连接并保存", i);
+            provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隱藏" : "顯示" : "連線並儲存", i);
         }
         EpdRect extra = {UI_MARGIN, 215, ui_content_width(), 287};
         update.area = update.area.width ? ui_rect_union(update.area, extra) : extra;
@@ -1782,23 +1782,23 @@ static void draw_status(uint8_t* fb) {
     ui_clear_rect_fast(fb, area);
     ui_fill_round_rect(fb, area, 24, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, area, 24, UI_GRAY_BLACK);
-    const char* state = "网络已停止";
-    if (s_start_pending || s_status.state == WIFI_TRANSFER_STARTING) state = "正在准备传书…";
-    else if (s_status.state == WIFI_TRANSFER_READY) state = "等待上传";
+    const char* state = "網路已停止";
+    if (s_start_pending || s_status.state == WIFI_TRANSFER_STARTING) state = "正在準備傳書…";
+    else if (s_status.state == WIFI_TRANSFER_READY) state = "等待上傳";
     else if (s_status.state == WIFI_TRANSFER_UPLOADING) state = "正在接收";
-    else if (s_status.state == WIFI_TRANSFER_ERROR) state = s_status.network_ready ? "上传失败，请重试" :
-        s_mode == WIFI_TRANSFER_MODE_AP ? "热点传书未启动" : "WiFi 传书未启动";
-    if (s_media_lost) state = "存储已移除，传书已停止";
+    else if (s_status.state == WIFI_TRANSFER_ERROR) state = s_status.network_ready ? "上傳失敗，請重試" :
+        s_mode == WIFI_TRANSFER_MODE_AP ? "熱點傳書未啟動" : "WiFi 傳書未啟動";
+    if (s_media_lost) state = "儲存已移除，傳書已停止";
     ui_text(fb, area.x + 28, area.y + 24, 26, state, EPD_DRAW_ALIGN_LEFT, false);
     char line[256];
-    if (s_media_lost) snprintf(line, sizeof(line), "重新进入传书可使用内置存储");
+    if (s_media_lost) snprintf(line, sizeof(line), "重新進入傳書可使用內建儲存");
     else if (s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready) {
         const char *hint = memory_peak_hint(s_status.last_error);
         snprintf(line, sizeof(line), "原因：%s", hint ? hint : esp_err_to_name(s_status.last_error));
     }
     else if (s_mode == WIFI_TRANSFER_MODE_AP)
-        snprintf(line, sizeof(line), "已连接 %u 台 · 已完成 %u 本", s_status.sta_count, s_status.done_count);
-    else snprintf(line, sizeof(line), "同网浏览器上传 · 已完成 %u 本", s_status.done_count);
+        snprintf(line, sizeof(line), "已連線 %u 臺 · 已完成 %u 本", s_status.sta_count, s_status.done_count);
+    else snprintf(line, sizeof(line), "同網瀏覽器上傳 · 已完成 %u 本", s_status.done_count);
     ui_text(fb, area.x + 28, area.y + 68, 19, line, EPD_DRAW_ALIGN_LEFT, false);
     snprintf(line, sizeof(line), "%s", s_status.cur_name);
     while (*line && ttf_text_width_px(ui_text_effective_px(19), line) > area.width - 280) {
@@ -1806,7 +1806,7 @@ static void draw_status(uint8_t* fb) {
         while (n && ((unsigned char)line[n] & 0xc0) == 0x80) --n;
         line[n] = 0;
     }
-    ui_text(fb, area.x + 28, area.y + 108, 19, line[0] ? line : "尚无正在传输的文件", EPD_DRAW_ALIGN_LEFT, false);
+    ui_text(fb, area.x + 28, area.y + 108, 19, line[0] ? line : "尚無正在傳輸的檔案", EPD_DRAW_ALIGN_LEFT, false);
     snprintf(line, sizeof(line), "%.1f / %.1f MB", s_status.cur_bytes / 1048576.0, s_status.cur_total / 1048576.0);
     ui_text(fb, area.x + area.width - 28, area.y + 108, 19, line, EPD_DRAW_ALIGN_RIGHT, false);
     EpdRect track = {area.x + 28, area.y + 150, area.width - 56, 10};
@@ -1817,12 +1817,12 @@ static void draw_status(uint8_t* fb) {
         ui_fill_round_rect(fb, track, 5, UI_GRAY_BLACK);
     }
     char capacity[112];
-    if (s_media_lost) snprintf(capacity, sizeof(capacity), "TF 卡已移除，原存储已停用");
-    else snprintf(capacity, sizeof(capacity), "%s · 剩余 %.1f MB%s", s_root.is_flash ? "内置" : "TF 卡",
-                  s_free / 1048576.0, s_root.is_flash ? " · 单文件 ≤ 1 MB" : "");
+    if (s_media_lost) snprintf(capacity, sizeof(capacity), "TF 卡已移除，原儲存已停用");
+    else snprintf(capacity, sizeof(capacity), "%s · 剩餘 %.1f MB · 單檔案 ≤ %s", s_root.is_flash ? "內建" : "TF 卡",
+                  s_free / 1048576.0, s_root.is_flash ? "1 MB" : "50 MB");
     ui_text(fb, area.x + 28, area.y + 190, 18, capacity, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, area.x + 28, area.y + 228, 18,
-            s_status.last_error != ESP_OK ? "传输未完成，请检查网络后重试" : "同名文件会覆盖；完成后自动更新书架",
+            s_status.last_error != ESP_OK ? "傳輸未完成，請檢查網路後重試" : "同名檔案會覆蓋；完成後自動更新書架",
             EPD_DRAW_ALIGN_LEFT, false);
 }
 
@@ -1838,36 +1838,38 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_usb_entry) {
         ui_clear_page(fb);
         bool active = usb_storage_active();
-        transfer_header(fb, "USB 读卡", NULL);
-        ui_text(fb, 42, 181, 20, "连接状态", EPD_DRAW_ALIGN_LEFT, false);
+        transfer_header(fb, "USB 讀卡", NULL);
+        ui_text(fb, 42, 181, 20, "連線狀態", EPD_DRAW_ALIGN_LEFT, false);
         EpdRect status = {36, 211, 612, 190};
         ui_fill_round_rect(fb, status, 24, UI_GRAY_WHITE);
         ui_draw_round_rect(fb, status, 24, 0x90);
-        const char *state = s_usb_start_pending ? "正在准备 TF 卡" :
-            !active ? "USB 读卡未开启" :
-            s_usb_host_connected ? "电脑已连接" : "等待电脑连接";
+        const char *state = s_usb_start_pending ? "正在準備 TF 卡" :
+            !active ? "USB 讀卡未開啟" :
+            s_usb_host_connected ? "電腦已連線" : "等待電腦連線";
         ui_text(fb, 64, 241, 31, state, EPD_DRAW_ALIGN_LEFT, false);
         if (active) {
-            ui_text(fb, 64, 296, 20, "磁盘名称  SD_CARD", EPD_DRAW_ALIGN_LEFT, false);
+            ui_text(fb, 64, 296, 20, "磁碟名稱  SD_CARD", EPD_DRAW_ALIGN_LEFT, false);
             char size[64];
             snprintf(size, sizeof(size), "TF 卡容量  %.1f GB", s_usb_capacity_bytes / 1073741824.0);
             ui_text(fb, 64, 337, 20, size, EPD_DRAW_ALIGN_LEFT, false);
+            if (!s_usb_host_connected)
+                ui_text(fb, 64, 372, 16, "請使用可傳資料的 USB-C 線並檢查電腦連接埠", EPD_DRAW_ALIGN_LEFT, false);
         } else ui_text(fb, 64, 309, 20, s_usb_message, EPD_DRAW_ALIGN_LEFT, false);
 
-        ui_text(fb, 42, 450, 20, "文件存放位置", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 42, 450, 20, "檔案存放位置", EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){36, 478, 612, 206}, 24, UI_GRAY_WHITE);
         ui_text(fb, 64, 510, 27, "books", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 64, 553, 19, "EPUB、TXT 书籍", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 553, 19, "EPUB、TXT 書籍", EPD_DRAW_ALIGN_LEFT, false);
         ui_hairline(fb, 580, 64, 556, 0xb0);
         ui_text(fb, 64, 597, 27, "fonts", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 64, 640, 19, "TTF、OTF 字体", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 640, 19, "TTF、OTF 字型", EPD_DRAW_ALIGN_LEFT, false);
 
-        ui_text(fb, 42, 740, 20, "完成传输", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 42, 740, 20, "完成傳輸", EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){36, 766, 612, 147}, 24, UI_GRAY_WHITE);
-        ui_text(fb, 64, 802, 21, "1  在电脑上等待复制完成", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 64, 855, 21, "2  安全弹出 SD_CARD，再结束读卡", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 802, 21, "1  在電腦上等待複製完成", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 64, 855, 21, "2  安全彈出 SD_CARD，再結束讀卡", EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, control_rect(2), 22, s_pressed == 2 ? 0x60 : 0x38);
-        ui_text_vc(fb, 342, 1014, 24, active ? "结束 USB 读卡" : "返回文件管理",
+        ui_text_vc(fb, 342, 1014, 24, active ? "結束 USB 讀卡" : "返回檔案管理",
                    EPD_DRAW_ALIGN_CENTER, true);
         return;
     }
@@ -1877,23 +1879,23 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_view == TRANSFER_NETWORKS) { draw_networks(fb); return; }
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
     ui_clear_page(fb);
-    transfer_header(fb, s_mode == WIFI_TRANSFER_MODE_AP ? "热点传书" : "WiFi 传书", NULL);
+    transfer_header(fb, s_mode == WIFI_TRANSFER_MODE_AP ? "熱點傳書" : "WiFi 傳書", NULL);
     EpdRect connection = {36, 168, 612, 132};
     ui_fill_round_rect(fb, connection, 24, UI_GRAY_WHITE);
     ui_draw_round_rect(fb, connection, 24, UI_GRAY_BLACK);
     char name[64];
     snprintf(name, sizeof(name), "%s", s_mode == WIFI_TRANSFER_MODE_AP ? s_status.ssid : s_status.wifi_ssid);
-    if (!name[0]) snprintf(name, sizeof(name), "%s", s_mode == WIFI_TRANSFER_MODE_AP ? "mogo 热点" : "已保存的 WiFi");
+    if (!name[0]) snprintf(name, sizeof(name), "%s", s_mode == WIFI_TRANSFER_MODE_AP ? "FAN 熱點" : "已儲存的 WiFi");
     fit_label(name, 26, 420);
     ui_text(fb, 66, 190, 26, name, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 66, 236, 19,
             s_mode == WIFI_TRANSFER_MODE_AP ? "口令：" WIFI_TRANSFER_PASSWORD :
-            s_status.network_ready ? "设备已连接；手机需同网" :
-            s_start_pending || s_status.state == WIFI_TRANSFER_STARTING ? "正在连接已保存网络…" :
-            s_status.wifi_configured ? "已保存，尚未连接" : "尚未选择 WiFi",
+            s_status.network_ready ? "裝置已連線；手機需同網" :
+            s_start_pending || s_status.state == WIFI_TRANSFER_STARTING ? "正在連線已儲存網路…" :
+            s_status.wifi_configured ? "已儲存，尚未連線" : "尚未選擇 WiFi",
             EPD_DRAW_ALIGN_LEFT, false);
     const bool stopped = !s_start_pending && s_status.state == WIFI_TRANSFER_STOPPED;
-    ui_text_vc(fb, 605, 234, 20, s_status.network_ready ? "服务已开启" : stopped ? "已停止" : "准备中",
+    ui_text_vc(fb, 605, 234, 20, s_status.network_ready ? "服務已開啟" : stopped ? "已停止" : "準備中",
                EPD_DRAW_ALIGN_RIGHT, false);
     int url_px = UI_PX_CAPTION;
     while (url_px > 14 && ttf_text_width_px(url_px, s_status.url) > 560) --url_px;
@@ -1902,31 +1904,31 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     else {
         ui_draw_round_rect(fb, (EpdRect){222, 330, 240, 240}, 8, 0xa0);
         ui_text_vc(fb, 342, 450, 22,
-                   stopped ? "网络已停止" : s_start_pending ? "正在生成二维码…" : "等待网络地址…",
+                   stopped ? "網路已停止" : s_start_pending ? "正在生成二維碼…" : "等待網路地址…",
                    EPD_DRAW_ALIGN_CENTER, false);
     }
     if (s_mode == WIFI_TRANSFER_MODE_AP) {
         ui_text_vc(fb, 342, 583, 20,
-                   s_status.network_ready ? s_status.url : "热点就绪后显示访问地址",
+                   s_status.network_ready ? s_status.url : "熱點就緒後顯示訪問地址",
                    EPD_DRAW_ALIGN_CENTER, false);
         for (int i = 0; i < 2; ++i) {
             EpdRect tab = control_rect(i);
             ui_fill_round_rect(fb, tab, 18, (s_qr_url == (i == 1)) ? 0x42 : UI_GRAY_WHITE);
             ui_draw_round_rect(fb, tab, 18, 0x92);
             ui_text_vc(fb, tab.x + tab.width / 2, tab.y + tab.height / 2, 21,
-                       i ? "打开传书网页" : "连接 mogo 热点", EPD_DRAW_ALIGN_CENTER, s_qr_url == (i == 1));
+                       i ? "開啟傳書網頁" : "連線 FAN 熱點", EPD_DRAW_ALIGN_CENTER, s_qr_url == (i == 1));
         }
     } else {
         ui_text_vc(fb, 342, 602, url_px,
-                   s_status.network_ready ? s_status.url : "服务启动后显示访问地址", EPD_DRAW_ALIGN_CENTER, false);
-        ui_text_vc(fb, 342, 642, 18, "手机或电脑扫码后，即可在浏览器上传内容", EPD_DRAW_ALIGN_CENTER, false);
+                   s_status.network_ready ? s_status.url : "服務啟動後顯示訪問地址", EPD_DRAW_ALIGN_CENTER, false);
+        ui_text_vc(fb, 342, 642, 18, "手機或電腦掃碼後，即可在瀏覽器上傳內容", EPD_DRAW_ALIGN_CENTER, false);
     }
     draw_status(fb);
     EpdRect back = control_rect(2);
     if (s_pressed == 2) ui_draw_pressed_round_rect(fb, back, UI_BTN_RADIUS);
     ui_draw_button(fb, back,
                    s_mode == WIFI_TRANSFER_MODE_AP && s_status.state == WIFI_TRANSFER_ERROR && !s_status.network_ready
-                       ? "重试热点传书" : stopped ? "返回" : "停止传输服务", false);
+                       ? "重試熱點傳書" : stopped ? "返回" : "停止傳輸服務", false);
     ui_nav_draw(fb, 2);
 }
 
@@ -1985,7 +1987,7 @@ static void on_enter(app_ctx_t* ctx) {
             board_sd_info_t usb_sd = {0};
             if (board_sd_get_info(&usb_sd) == ESP_OK) s_usb_capacity_bytes = usb_sd.capacity_bytes;
             s_usb_start_pending = true;
-            snprintf(s_usb_message, sizeof(s_usb_message), "正在卸载本机 TF 卡并启动 USB…");
+            snprintf(s_usb_message, sizeof(s_usb_message), "正在解除安裝本機 TF 卡並啟動 USB…");
         }
         return;
     }
@@ -2010,12 +2012,12 @@ static void on_enter(app_ctx_t* ctx) {
             s_saved_configured = s_status.wifi_configured;
             snprintf(s_saved_ssid, sizeof(s_saved_ssid), "%s", s_status.wifi_ssid);
             refresh_saved_networks();
-            snprintf(s_network_message, sizeof(s_network_message), "连接成功");
+            snprintf(s_network_message, sizeof(s_network_message), "連線成功");
             return;
         }
     }
     if (!enter_networks()) {
-        snprintf(s_network_message, sizeof(s_network_message), "网络正在结束，请稍后再试");
+        snprintf(s_network_message, sizeof(s_network_message), "網路正在結束，請稍後再試");
     }
 }
 
@@ -2247,8 +2249,14 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
         if (err == ESP_ERR_NOT_FINISHED) return APP_REDRAW_NONE;
         s_usb_start_pending = false;
         s_usb_host_connected = usb_storage_connected();
-        if (err != ESP_OK)
-            snprintf(s_usb_message, sizeof(s_usb_message), "USB 模式启动失败：%s", esp_err_to_name(err));
+        if (err == ESP_ERR_NOT_FOUND)
+            snprintf(s_usb_message, sizeof(s_usb_message), "找不到 TF 卡，請重新插入後再試");
+        else if (err == ESP_ERR_INVALID_STATE)
+            snprintf(s_usb_message, sizeof(s_usb_message), "TF 卡尚未掛載，請返回檔案管理後重試");
+        else if (err == ESP_ERR_TIMEOUT)
+            snprintf(s_usb_message, sizeof(s_usb_message), "TF 卡忙碌逾時，請返回檔案管理後重試");
+        else if (err != ESP_OK)
+            snprintf(s_usb_message, sizeof(s_usb_message), "USB 啟動失敗：%s", esp_err_to_name(err));
         return APP_REDRAW_PAGE;
     }
     if (usb_storage_active()) return APP_REDRAW_NONE;
@@ -2330,7 +2338,7 @@ static app_redraw_t stop_usb_for_navigation(app_ctx_t *ctx, bool home) {
     if (usb_storage_active()) {
         esp_err_t err = usb_storage_stop();
         if (err != ESP_OK) {
-            snprintf(s_usb_message, sizeof(s_usb_message), "USB 写入未完成：%s，请在电脑弹出后重试", esp_err_to_name(err));
+            snprintf(s_usb_message, sizeof(s_usb_message), "USB 寫入未完成：%s，請在電腦彈出後重試", esp_err_to_name(err));
             return APP_REDRAW_PAGE;
         }
         s_any_changed = true;
@@ -2465,7 +2473,7 @@ const app_desc_t app_transfer = {
     .modal_input_owned = cloud_notice_input_owned,
 #endif
     .on_media_lost = transfer_on_media_lost,
-    .title = "传书 Transfer", .detail = "热点或已有 WiFi，浏览器上传", .enter_full = false,
+    .title = "傳書 Transfer", .detail = "熱點或已有 WiFi，瀏覽器上傳", .enter_full = false,
     .on_enter = on_enter, .on_exit = transfer_on_exit, .render = render, .present = present,
     .on_tick = on_tick, .on_gesture = on_gesture, .on_key = on_key, .owns_keys = true,
     .menu_handle_enabled = transfer_menu_handle_enabled,
