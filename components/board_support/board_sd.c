@@ -502,16 +502,13 @@ esp_err_t board_sd_get_info(board_sd_info_t* info) {
     return err;
 }
 
-esp_err_t board_sd_get_usb_export_config(sdmmc_host_t* host, sdmmc_slot_config_t* slot) {
-    if (host == NULL || slot == NULL) return ESP_ERR_INVALID_ARG;
-    portENTER_CRITICAL(&state_lock);
-    const bool ready = cached_info.mounted && health_host_valid && sd_dma_relay != NULL;
-    if (ready) {
-        *host = health_host;
-        *slot = health_slot;
-    }
-    portEXIT_CRITICAL(&state_lock);
-    return ready ? ESP_OK : ESP_ERR_INVALID_STATE;
+esp_err_t board_sd_apply_usb_dma_relay(sdmmc_host_t* host) {
+    if (host == NULL) return ESP_ERR_INVALID_ARG;
+    if (sd_dma_relay == NULL) return ESP_ERR_INVALID_STATE;
+    host->dma_aligned_buffer = sd_dma_relay;
+    host->check_buffer_alignment = sd_dma_relay_check;
+    host->unaligned_multi_block_rw_max_chunk_size = 4096 / 512;
+    return ESP_OK;
 }
 
 bool board_sd_is_mounted(void) {

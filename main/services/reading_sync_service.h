@@ -5,6 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define APP_READING_SYNC_ACCESS_MAX 2048
+#define APP_READING_SYNC_REFRESH_MAX 1024
+
 typedef enum {
     APP_READING_SYNC_READEST = 1,
     APP_READING_SYNC_KOSYNC = 2,
@@ -47,6 +50,17 @@ typedef struct {
     char kosync_server[256];
 } app_reading_sync_status_t;
 
+typedef struct {
+    char readest_access[APP_READING_SYNC_ACCESS_MAX];
+    char readest_refresh[APP_READING_SYNC_REFRESH_MAX];
+    char readest_user[96];
+    uint64_t readest_expires;
+    char kosync_username[64];
+    char kosync_key[33];
+    char kosync_server[256];
+    char kosync_device_id[33];
+} app_reading_sync_backup_t;
+
 void app_reading_sync_init(void);
 void app_reading_sync_poll(void);
 void app_reading_sync_get_status(app_reading_sync_status_t *out);
@@ -59,4 +73,7 @@ bool app_reading_sync_configure_kosync(const char *username, const char *passwor
                                        const char *server);
 bool app_reading_sync_request_kosync_register(void);
 bool app_reading_sync_take_remote(const char *path, float *percent, bool *force);
+bool app_reading_sync_backup_export(app_reading_sync_backup_t *out);
+bool app_reading_sync_backup_valid(const app_reading_sync_backup_t *backup);
+bool app_reading_sync_backup_restore(const app_reading_sync_backup_t *backup);
 

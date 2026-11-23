@@ -30,8 +30,8 @@
 
 #define SYNC_HTTP_BODY_MAX 8192
 #define SYNC_PENDING_MAX 6
-#define SYNC_ACCESS_MAX 2048
-#define SYNC_REFRESH_MAX 1024
+#define SYNC_ACCESS_MAX APP_READING_SYNC_ACCESS_MAX
+#define SYNC_REFRESH_MAX APP_READING_SYNC_REFRESH_MAX
 #define SYNC_KOSYNC_DEFAULT "https://sync.koreader.rocks"
 #define SYNC_READST_API "https://web.readest.com/api"
 #define SYNC_SUPABASE_URL "https://vbsyxfusjjqdxkjqlysc.supabase.co"
@@ -75,6 +75,7 @@ static size_t s_pending_count;
 static queued_job_t s_active_job;
 static TaskHandle_t s_task;
 static bool s_initialized;
+static bool s_backup_restore_busy;
 static int64_t s_retry_after_us;
 
 static bool copy_cstr(char *dst, size_t capacity, const char *src) {
@@ -833,7 +834,7 @@ static bool queue_job(const queued_job_t *job) {
     if (!job) return false;
     app_reading_sync_init();
     portENTER_CRITICAL(&s_lock);
-    bool queued = pending_insert_locked(job, false);
+    bool queued = !s_backup_restore_busy && pending_insert_locked(job, false);
     s_status.pending = s_pending_count != 0;
     if (!queued) {
         snprintf(s_status.message, sizeof(s_status.message), "同步佇列已滿，請稍後重試");
@@ -895,6 +896,125 @@ static bool url_valid_https(const char *url) {
     return strchr(host, '.') != NULL || !strncmp(host, "localhost", 9);
 }
 
+static bool sync_backup_string_valid(const char *value, size_t capacity) {
+    return value && memchr(value, 0, capacity) != NULL;
+}
+
+static bool sync_backup_hex_valid(const char *value, size_t expected) {
+    if (!value || strnlen(value, expected + 1) != expected) return false;
+    for (size_t i = 0; i < expected; ++i) {
+        const char c = value[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+    }
+    return true;
+}
+
+bool app_reading_sync_backup_valid(const app_reading_sync_backup_t *backup) {
+    if (!backup ||
+        !sync_backup_string_valid(backup->readest_access, sizeof(backup->readest_access)) ||
+        !sync_backup_string_valid(backup->readest_refresh, sizeof(backup->readest_refresh)) ||
+        !sync_backup_string_valid(backup->readest_user, sizeof(backup->readest_user)) ||
+        !sync_backup_string_valid(backup->kosync_username, sizeof(backup->kosync_username)) ||
+        !sync_backup_string_valid(backup->kosync_key, sizeof(backup->kosync_key)) ||
+        !sync_backup_string_valid(backup->kosync_server, sizeof(backup->kosync_server)) ||
+        !sync_backup_string_valid(backup->kosync_device_id, sizeof(backup->kosync_device_id)) ||
+        !url_valid_https(backup->kosync_server)) return false;
+
+    const bool access = backup->readest_access[0] != 0;
+    const bool refresh = backup->readest_refresh[0] != 0;
+    if (access != refresh) return false;
+    if (access) {
+        if (!backup->readest_expires) return false;
+    } else if (backup->readest_user[0] || backup->readest_expires) return false;
+
+    const bool username = backup->kosync_username[0] != 0;
+    const size_t key_len = strnlen(backup->kosync_key, sizeof(backup->kosync_key));
+    if (username != (key_len == 32)) return false;
+    if (key_len && !sync_backup_hex_valid(backup->kosync_key, 32)) return false;
+    const size_t device_len = strnlen(backup->kosync_device_id, sizeof(backup->kosync_device_id));
+    if (device_len != 32 || !sync_backup_hex_valid(backup->kosync_device_id, 32)) return false;
+    return true;
+}
+
+bool app_reading_sync_backup_export(app_reading_sync_backup_t *out) {
+    if (!out) return false;
+    app_reading_sync_init();
+    memset(out, 0, sizeof(*out));
+    portENTER_CRITICAL(&s_lock);
+    memcpy(out->readest_access, s_config.access, sizeof(out->readest_access));
+    memcpy(out->readest_refresh, s_config.refresh, sizeof(out->readest_refresh));
+    memcpy(out->readest_user, s_config.user, sizeof(out->readest_user));
+    out->readest_expires = s_config.expires;
+    memcpy(out->kosync_username, s_config.ko_user, sizeof(out->kosync_username));
+    memcpy(out->kosync_key, s_config.ko_key, sizeof(out->kosync_key));
+    memcpy(out->kosync_server, s_config.ko_url, sizeof(out->kosync_server));
+    memcpy(out->kosync_device_id, s_config.ko_device, sizeof(out->kosync_device_id));
+    portEXIT_CRITICAL(&s_lock);
+    return app_reading_sync_backup_valid(out);
+}
+
+static esp_err_t sync_backup_set_or_erase_string(nvs_handle_t handle, const char *key, const char *value) {
+    if (value[0]) return nvs_set_str(handle, key, value);
+    esp_err_t err = nvs_erase_key(handle, key);
+    return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
+}
+
+bool app_reading_sync_backup_restore(const app_reading_sync_backup_t *backup) {
+    app_reading_sync_init();
+    if (!app_reading_sync_backup_valid(backup)) return false;
+    portENTER_CRITICAL(&s_lock);
+    const bool idle = s_task == NULL && s_pending_count == 0 && !s_backup_restore_busy;
+    if (idle) s_backup_restore_busy = true;
+    portEXIT_CRITICAL(&s_lock);
+    if (!idle) return false;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open("rd_sync", NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        err = sync_backup_set_or_erase_string(handle, "rd_access", backup->readest_access);
+        if (err == ESP_OK) err = sync_backup_set_or_erase_string(handle, "rd_refresh", backup->readest_refresh);
+        if (err == ESP_OK) err = sync_backup_set_or_erase_string(handle, "rd_user", backup->readest_user);
+        if (err == ESP_OK && backup->readest_access[0]) err = nvs_set_u64(handle, "rd_expiry", backup->readest_expires);
+        else if (err == ESP_OK) {
+            err = nvs_erase_key(handle, "rd_expiry");
+            if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
+        }
+        if (err == ESP_OK) err = sync_backup_set_or_erase_string(handle, "ko_user", backup->kosync_username);
+        if (err == ESP_OK) err = sync_backup_set_or_erase_string(handle, "ko_key", backup->kosync_key);
+        if (err == ESP_OK) err = nvs_set_str(handle, "ko_url", backup->kosync_server);
+        if (err == ESP_OK) err = sync_backup_set_or_erase_string(handle, "ko_device", backup->kosync_device_id);
+        if (err == ESP_OK) err = nvs_commit(handle);
+        nvs_close(handle);
+    }
+
+    portENTER_CRITICAL(&s_lock);
+    if (err == ESP_OK) {
+        mbedtls_platform_zeroize(&s_config, sizeof(s_config));
+        memcpy(s_config.access, backup->readest_access, sizeof(s_config.access));
+        memcpy(s_config.refresh, backup->readest_refresh, sizeof(s_config.refresh));
+        memcpy(s_config.user, backup->readest_user, sizeof(s_config.user));
+        s_config.expires = backup->readest_expires;
+        memcpy(s_config.ko_user, backup->kosync_username, sizeof(s_config.ko_user));
+        memcpy(s_config.ko_key, backup->kosync_key, sizeof(s_config.ko_key));
+        memcpy(s_config.ko_url, backup->kosync_server, sizeof(s_config.ko_url));
+        memcpy(s_config.ko_device, backup->kosync_device_id, sizeof(s_config.ko_device));
+        s_status.readest_logged_in = s_config.access[0] && s_config.refresh[0];
+        s_status.kosync_configured = s_config.ko_user[0] && strlen(s_config.ko_key) == 32;
+        snprintf(s_status.readest_state, sizeof(s_status.readest_state), "%s",
+                 s_status.readest_logged_in ? "已登入" : "尚未登入");
+        snprintf(s_status.kosync_state, sizeof(s_status.kosync_state), "%s",
+                 s_status.kosync_configured ? "已設定" : "尚未設定");
+        snprintf(s_status.kosync_username, sizeof(s_status.kosync_username), "%s", s_config.ko_user);
+        snprintf(s_status.kosync_server, sizeof(s_status.kosync_server), "%s", s_config.ko_url);
+        s_status.remote_ready = false;
+        s_status.remote_path[0] = 0;
+        s_initialized = true;
+    }
+    s_backup_restore_busy = false;
+    portEXIT_CRITICAL(&s_lock);
+    return err == ESP_OK;
+}
+
 bool app_reading_sync_configure_kosync(const char *username, const char *password,
                                        const char *server) {
     app_reading_sync_init();
@@ -903,8 +1023,10 @@ bool app_reading_sync_configure_kosync(const char *username, const char *passwor
         return false;
     sync_config_t config;
     portENTER_CRITICAL(&s_lock);
+    const bool restore_busy = s_backup_restore_busy;
     config = s_config;
     portEXIT_CRITICAL(&s_lock);
+    if (restore_busy) return false;
     if (password[0] && !md5_hex(password, strlen(password), config.ko_key)) return false;
     if (strlen(config.ko_key) != 32 || !copy_cstr(config.ko_user, sizeof(config.ko_user), username) ||
         !copy_cstr(config.ko_url, sizeof(config.ko_url), server)) return false;

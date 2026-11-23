@@ -8,8 +8,8 @@
 
 | 檔案 | CPU 設定 | 大小 | SHA-256 |
 |---|---|---:|---|
-| [`outputs/fan.bin`](outputs/fan.bin) | 啟用 DFS，CPU 上限 320 MHz | 4,957,456 bytes | `784e1eba50a38ff4e06562be763a84f772f9c0d1879ad7189cf75168560d6d18` |
-| [`outputs/fan-no-dfs.bin`](outputs/fan-no-dfs.bin) | 關閉 DFS，固定 320 MHz | 4,952,208 bytes | `0a92046a2b36392173e7cb57a0dc2b610b4d219ef444311139295a29f0c1b566` |
+| [`outputs/fan.bin`](outputs/fan.bin) | 啟用 DFS，CPU 上限 320 MHz | 4,962,048 bytes | `912eeb94fd9ced408837cfbdff860b5f898fb1f40b9c37e71c12e9e79179ab86` |
+| [`outputs/fan-no-dfs.bin`](outputs/fan-no-dfs.bin) | 關閉 DFS，固定 320 MHz | 4,956,800 bytes | `84d7d4051b604fe39a83c59f159ec064f759a1b7201e52a5e31798a056bc24e3` |
 
 SHA-256 也列於 [`outputs/sha256.txt`](outputs/sha256.txt)，建置資訊、輸入資產雜湊、分區檢查與 app 餘量記錄在 [`outputs/build-info.txt`](outputs/build-info.txt)。
 
@@ -36,8 +36,18 @@ python tools/merge_fan_images.py
 - **鍵盤**：英文／注音模式保留候選列下方的數字列；數字模式改用單一數字列並移除「重輸」鍵。鍵帽文字加粗加黑，密碼輸入可切換顯示／隱藏；每輸入五個字元執行一次局部整理，注音與英文可用「中 / En」切換，並保留倒退鍵。
 - **閱讀同步設定**：KOReader 帳號、密碼與伺服器欄位採 Wi‑Fi 輸入格樣式，鍵入後立即顯示，密碼可切換顯示／隱藏；KOSync 書籍識別使用 KOReader 相容的 partial MD5；Readest 雲端登入使用一次性代碼與網頁授權。
 - **WebDAV**：檔案頁的 USB 傳輸旁提供「WebDAV 傳輸／連結 WebDAV」。首次使用輸入 HTTPS 伺服器網址、使用者名稱和密碼，欄位格式及即時文字刷新與 Wi‑Fi 輸入一致；密碼可切換顯示／隱藏。設定保存在裝置 NVS；之後點選直接連線。可瀏覽目錄、上傳、下載至 TF 卡 `/WebDAV` 資料夾，並對遠端項目重新命名、下載、刪除。匯入圖書也可直接瀏覽 WebDAV；EPUB、TXT、MOBI 可匯入書籍目錄並在下載完成後開啟。伺服器網址可自行設定，不預設綁定單一服務。
+- **登入資料與自動載入**：下表列出裝置目前會保存的登入資訊。登入後資料留在裝置 NVS，開機或開啟服務時自動讀取；「儲存與恢復配置」會把這些欄位納入 TF 卡備份，還原時寫回各服務設定並立即更新執行中的設定。
+
+| 服務 | 保存的登入／連線欄位 | 自動讀取方式 |
+|---|---|---|
+| Wi‑Fi | 已儲存網路的 SSID、密碼及連線設定 | Wi‑Fi 連線流程讀取已儲存設定；備份還原會合併網路清單，之後可依既有設定連線 |
+| WebDAV | 自訂 HTTPS 伺服器網址、使用者名稱、密碼 | 開啟 WebDAV 時從 NVS 讀取；還原備份後可直接連線 |
+| Readest Cloud | Access token、Refresh token、帳號識別、到期時間（不保存 Readest 帳號密碼） | 閱讀同步服務自動讀取並在需要時更新 token；權杖撤銷或失效時才需重新授權 |
+| KOReader KOSync | 伺服器網址、使用者名稱、密碼雜湊、裝置 ID | 閱讀同步服務自動讀取；備份還原後可直接同步 |
+
+備份檔包含 Wi‑Fi／WebDAV 密碼、Readest 權杖及 KOSync 驗證資料，未加密；請妥善保管 TF 卡上的備份。
 - **鍵盤**：底列空格鍵與「中 / En」鍵使用互不重疊的繪製、觸控和局部刷新範圍。
-- **USB 傳輸**：主機辨識名稱設為 Fan E4P SD。TF 卡背景探測尚未完成時會保留待啟動狀態並重試；錯誤畫面區分找不到卡、尚未掛載和逾時。USB MSC 沿用 SDMMC 的 DMA 安全中轉緩衝，並使用 8 KiB 高速 USB 工作堆疊。等待電腦連線時提示檢查資料線與 USB 連接埠。
+- **USB 傳輸**：主機辨識名稱設為 Fan E4P SD。TF 卡背景探測尚未完成時會保留待啟動狀態並重試；錯誤畫面區分找不到卡、尚未掛載和逾時。USB MSC 使用與 mogo-e4p 原版一致的 SDMMC 主機與腳位初始化，同時保留 S31 DMA 安全中轉緩衝和 8 KiB USB 工作堆疊。等待電腦連線時提示檢查資料線與 USB 連接埠。
 - **Wi-Fi 傳書**：TF 卡目的地的單本書籍上限為 50 MB，裝置端上傳介面與韌體檢查共用此限制；內建快閃空間仍受 1 MB 單檔容量限制。可用空間不足時會先拒絕上傳。
 - **檔案操作面板**：本機與 WebDAV 項目採一致的按鍵樣式，按選項數量調整按鍵排列與尺寸；WebDAV 項目使用獨立的確認刪除流程。WebDAV 資料夾可長按管理，點按進入瀏覽。
 - **個人資料**：個人名稱預設為「凡繁煩」，可自訂並顯示在頭像旁；預設頭像素材來自 `fan.png`。狀態列簽名維持空白。
@@ -47,6 +57,6 @@ python tools/merge_fan_images.py
 
 ## 驗收狀態
 
-DFS 與固定頻率兩種映像均已建置成功。`ota_0` 與 `ota_1` 各為 5 MiB；本次 app 分區分別剩餘 `0x55cd0` 與 `0x57150` bytes。分區表與 `Fan.zip`、`Fan-usb-full.bin` 的參考配置一致。WebDAV 列目錄暫存資料已移至 PSRAM，避免超過 8 KiB 工作堆疊。簡轉繁目前暫停，未編入韌體。
+DFS 與固定頻率兩種映像均已建置成功。`ota_0` 與 `ota_1` 各為 5 MiB；本次 app 分區分別剩餘 `0x54900` 與 `0x55d80` bytes。分區表與 `Fan.zip`、`Fan-usb-full.bin` 的參考配置一致。WebDAV 列目錄暫存資料已移至 PSRAM，避免超過 8 KiB 工作堆疊。簡轉繁目前暫停，未編入韌體。
 
 本次工作沒有刷寫 E4P。USB MSC 的 DMA／堆疊修正已編譯，但電腦枚舉與實際讀寫仍需實機驗收；WebDAV 閃退修正、遠端伺服器相容性、鍵盤刷新、同步帳號流程與氣候顯示也仍待實機驗證。完整建置記錄見 [`outputs/build-info.txt`](outputs/build-info.txt)。

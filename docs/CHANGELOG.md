@@ -7,6 +7,7 @@ User-visible changes by release; see [README](../README.md) for usage.
 
 ### Fan 本地整合 / Fan local integration · 2026-11-22
 
+- 設定備份升為 v50，保存並還原 WebDAV、Readest、KOSync 登入資料及完整排版方向；服務初始化時自動讀取，並保留 v48/v49 舊備份相容。USB MSC 改用 mogo-e4p 原版 SDMMC 主機／腳位初始化，同時保留 S31 DMA 中轉緩衝；背景探測忙碌時仍認可已掛載 TF 卡。/ Raise settings backups to v50 with WebDAV, Readest, KOSync credentials and complete reading direction; services load restored values automatically and v48/v49 backups remain readable. Use mogo-e4p's original SDMMC host/pin setup with the S31 DMA relay retained, and preserve mounted-card state during background probes.
 - 新增 Fan E4P 整合建置，保留 E4P／ESP32-S31 硬體目標與 OTA 分區相容資料；更新開機圖、裝置個人資料、繁體中文介面及 `wght=500` 內建字型。/ Add a Fan E4P build profile while retaining E4P/ESP32-S31 hardware identity and OTA partition compatibility; update the startup image, profile, Traditional Chinese UI and built-in `wght=500` font.
 - 閱讀設定新增跟隨書籍、橫排及直排；改善直排標點、字距、EPUB/TXT 排版位置保存，並調整 QWERTY／注音／數字鍵盤。/ Add book-default, horizontal and vertical layout choices; improve vertical punctuation, spacing and EPUB/TXT position preservation, and revise QWERTY/Zhuyin/numeric keyboards.
 - 新增 BeaconDB Wi-Fi 定位、Nominatim 地名反查、Open-Meteo 天氣與本地時區顯示；新增自訂伺服器 WebDAV 瀏覽、傳輸與檔案管理。/ Add BeaconDB Wi-Fi location, Nominatim place lookup, Open-Meteo weather and local-time display, plus custom-server WebDAV browsing, transfer and file management.

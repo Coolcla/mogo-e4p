@@ -28,9 +28,12 @@ typedef struct {
 
 bool app_webdav_set_credentials(const char *username, const char *password);
 bool app_webdav_configure(const char *server_url, const char *username, const char *password);
+bool app_webdav_config_valid(const char *server_url, const char *username, const char *password);
 bool app_webdav_get_config(char *server_url, size_t server_capacity,
                            char *username, size_t username_capacity,
                            char *password, size_t password_capacity);
+bool app_webdav_restore_config(bool configured, const char *server_url,
+                               const char *username, const char *password);
 bool app_webdav_configured(void);
 void app_webdav_clear_credentials(void);
 bool app_webdav_has_credentials(void);

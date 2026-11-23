@@ -134,9 +134,7 @@ bool app_webdav_set_credentials(const char *username, const char *password) {
 
 bool app_webdav_configure(const char *server_url, const char *username, const char *password) {
     load_config();
-    if (!server_url_valid(server_url) ||
-        !credential_text(username, sizeof(s_username) - 1, true) ||
-        !credential_text(password, sizeof(s_password) - 1, false)) return false;
+    if (!app_webdav_config_valid(server_url, username, password)) return false;
     portENTER_CRITICAL(&s_lock);
     if (s_task) { portEXIT_CRITICAL(&s_lock); return false; }
     portEXIT_CRITICAL(&s_lock);
@@ -157,6 +155,72 @@ bool app_webdav_configure(const char *server_url, const char *username, const ch
     snprintf(s_username, sizeof(s_username), "%s", username);
     snprintf(s_password, sizeof(s_password), "%s", password);
     s_credentials = s_config_loaded = true;
+    portEXIT_CRITICAL(&s_lock);
+    return true;
+}
+
+bool app_webdav_config_valid(const char *server_url, const char *username, const char *password) {
+    return server_url_valid(server_url) &&
+        credential_text(username, sizeof(s_username) - 1, true) &&
+        credential_text(password, sizeof(s_password) - 1, false);
+}
+
+static esp_err_t webdav_erase_key(nvs_handle_t handle, const char *key) {
+    esp_err_t err = nvs_erase_key(handle, key);
+    return err == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : err;
+}
+
+bool app_webdav_restore_config(bool configured, const char *server_url,
+                               const char *username, const char *password) {
+    load_config();
+    if (!server_url || !username || !password) return false;
+    if (configured) {
+        if (!app_webdav_config_valid(server_url, username, password)) return false;
+    } else if (server_url[0] || username[0] || password[0]) {
+        return false;
+    }
+    portENTER_CRITICAL(&s_lock);
+    const bool idle = s_task == NULL;
+    portEXIT_CRITICAL(&s_lock);
+    if (!idle) return false;
+
+    nvs_handle_t handle;
+    esp_err_t open_err = nvs_open(WEBDAV_NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (open_err == ESP_ERR_NVS_NOT_FOUND && !configured) {
+        portENTER_CRITICAL(&s_lock);
+        mbedtls_platform_zeroize(s_server_url, sizeof(s_server_url));
+        mbedtls_platform_zeroize(s_username, sizeof(s_username));
+        mbedtls_platform_zeroize(s_password, sizeof(s_password));
+        s_credentials = s_config_loaded = false;
+        portEXIT_CRITICAL(&s_lock);
+        return true;
+    }
+    if (open_err != ESP_OK) return false;
+    esp_err_t err;
+    if (configured) {
+        err = nvs_set_str(handle, WEBDAV_KEY_SERVER, server_url);
+        if (err == ESP_OK) err = nvs_set_str(handle, WEBDAV_KEY_USER, username);
+        if (err == ESP_OK) err = nvs_set_str(handle, WEBDAV_KEY_PASSWORD, password);
+    } else {
+        err = webdav_erase_key(handle, WEBDAV_KEY_SERVER);
+        if (err == ESP_OK) err = webdav_erase_key(handle, WEBDAV_KEY_USER);
+        if (err == ESP_OK) err = webdav_erase_key(handle, WEBDAV_KEY_PASSWORD);
+    }
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    if (err != ESP_OK) return false;
+
+    portENTER_CRITICAL(&s_lock);
+    mbedtls_platform_zeroize(s_server_url, sizeof(s_server_url));
+    mbedtls_platform_zeroize(s_username, sizeof(s_username));
+    mbedtls_platform_zeroize(s_password, sizeof(s_password));
+    if (configured) {
+        snprintf(s_server_url, sizeof(s_server_url), "%s", server_url);
+        snprintf(s_username, sizeof(s_username), "%s", username);
+        snprintf(s_password, sizeof(s_password), "%s", password);
+    }
+    s_credentials = configured;
+    s_config_loaded = true;
     portEXIT_CRITICAL(&s_lock);
     return true;
 }
@@ -186,13 +250,7 @@ bool app_webdav_configured(void) {
 }
 
 void app_webdav_clear_credentials(void) {
-    portENTER_CRITICAL(&s_lock);
-    mbedtls_platform_zeroize(s_server_url, sizeof(s_server_url));
-    mbedtls_platform_zeroize(s_username, sizeof(s_username));
-    mbedtls_platform_zeroize(s_password, sizeof(s_password));
-    s_credentials = false;
-    s_config_loaded = false;
-    portEXIT_CRITICAL(&s_lock);
+    (void)app_webdav_restore_config(false, "", "", "");
 }
 
 bool app_webdav_has_credentials(void) {

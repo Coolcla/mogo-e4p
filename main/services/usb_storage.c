@@ -27,8 +27,22 @@
 #include "ttf_font.h"
 
 #if defined(CONFIG_IDF_TARGET_ESP32S31)
+#define USB_SD_CLK GPIO_NUM_24
+#define USB_SD_CMD GPIO_NUM_25
+#define USB_SD_D0 GPIO_NUM_20
+#define USB_SD_D1 GPIO_NUM_21
+#define USB_SD_D2 GPIO_NUM_22
+#define USB_SD_D3 GPIO_NUM_23
+#define USB_SD_WIDTH 4
 #define USB_ANA_SW_GPIO GPIO_NUM_36
 #else
+#define USB_SD_CLK GPIO_NUM_38
+#define USB_SD_CMD GPIO_NUM_42
+#define USB_SD_D0 GPIO_NUM_44
+#define USB_SD_D1 GPIO_NUM_NC
+#define USB_SD_D2 GPIO_NUM_NC
+#define USB_SD_D3 GPIO_NUM_NC
+#define USB_SD_WIDTH 1
 #define USB_ANA_SW_GPIO GPIO_NUM_NC
 #endif
 
@@ -111,13 +125,18 @@ esp_err_t usb_storage_start(void) {
     esp_err_t info_err = board_sd_get_info(&info);
     if (info_err != ESP_OK) return info_err;
     if (!info.mounted) return ESP_ERR_INVALID_STATE;
-    // Reuse the board's cache-safe internal DMA relay; MSC reads can target TinyUSB buffers
-    // that are not safe for the S31 SDMMC engine to access directly.
-    sdmmc_host_t host;
-    sdmmc_slot_config_t slot;
-    esp_err_t err = board_sd_get_usb_export_config(&host, &slot);
-    if (err != ESP_OK) return err;
+    // Match mogo-e4p's independent USB SDMMC host initialization after the local FAT is
+    // unmounted. The cached health-probe host is for short probes, not USB MSC ownership.
+    sdmmc_host_t host = SDMMC_HOST_DEFAULT();
     host.max_freq_khz = SDMMC_FREQ_DEFAULT;
+    esp_err_t err = board_sd_apply_usb_dma_relay(&host);
+    if (err != ESP_OK) return err;
+    sdmmc_slot_config_t slot = SDMMC_SLOT_CONFIG_DEFAULT();
+    slot.width = USB_SD_WIDTH;
+    slot.clk = USB_SD_CLK; slot.cmd = USB_SD_CMD; slot.d0 = USB_SD_D0;
+    slot.d1 = USB_SD_D1; slot.d2 = USB_SD_D2; slot.d3 = USB_SD_D3;
+    slot.cd = slot.wp = GPIO_NUM_NC;
+    slot.flags |= SDMMC_SLOT_FLAG_INTERNAL_PULLUP;
     // 字体文件在 SD 上，先关闭句柄再卸载。/ Close the SD-backed font before unmounting.
     if (!ttf_font_is_builtin()) ttf_font_open_builtin();
     err = board_sd_sync();

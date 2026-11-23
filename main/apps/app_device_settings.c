@@ -1590,14 +1590,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         settings_card(fb, (EpdRect){36, 299, 612, 197}, 22, UI_GRAY_WHITE, 0x70);
         ui_text(fb, 60, 326, 26, "TF 卡根目錄", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 60, 377, 23, "配置備份檔案", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 60, 435, 19, "文字排版、裝置資料、閱讀記錄與書籤", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 60, 435, 19, "系統設定、閱讀記錄、登入資料與書籤", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, (EpdRect){36, 561, 612, 83}, "儲存當前配置到 TF 卡", false);
         ui_draw_button(fb, (EpdRect){36, 681, 612, 83},
                        s_config_confirm ? "再次點按，確認恢復配置" : "從 TF 卡恢復配置", false);
         if (s_notice[0]) ui_text(fb, 48, 819, 21, s_notice, EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 899, 19, "包含閱讀記錄、使用者偏好和全部已存 WiFi。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 899, 19, "包含系統設定、閱讀記錄、WiFi 和登入資料。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 939, 19, "書籍、字型和圖片仍需留在 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, 48, 979, 19, "備份含明文 WiFi 密碼，請妥善保管。", EPD_DRAW_ALIGN_LEFT, false);
+        ui_text(fb, 48, 979, 19, "備份含明文密碼與登入權杖，請妥善保管。", EPD_DRAW_ALIGN_LEFT, false);
         ui_nav_draw(fb, 3);
         return;
     }
@@ -2468,7 +2468,7 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         if (y >= 681 && y < 764) {
             if (!s_config_confirm) {
                 s_config_confirm = true;
-                snprintf(s_notice, sizeof(s_notice), "恢復將覆蓋設定、合併 WiFi，請再次確認");
+                snprintf(s_notice, sizeof(s_notice), "恢復系統設定、登入資料並合併 WiFi，請再次確認");
                 return APP_REDRAW_PAGE;
             }
             s_config_confirm = false;
@@ -2489,8 +2489,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             if (err == ESP_OK)
                 (void)wifi_transfer_get_saved_wifi(saved_ssid, &wifi_saved);
             snprintf(s_notice, sizeof(s_notice), "%s",
-                     err == ESP_OK ? (wifi_saved ? "配置與閱讀記錄已恢復；WiFi 請重新連線" :
-                                                   "配置與閱讀記錄已恢復") :
+                     err == ESP_OK ? (wifi_saved ? "設定、閱讀記錄及登入資料已恢復；WiFi 請重新連線" :
+                                                   "設定、閱讀記錄及登入資料已恢復") :
                      err == ESP_ERR_INVALID_STATE ? "未識別到 TF 卡，請插卡後重試" :
                      err == ESP_ERR_NOT_FOUND ? "未找到配置備份檔案" :
                      err == ESP_ERR_INVALID_RESPONSE ? "配置檔案損壞或版本不相容" :

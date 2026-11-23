@@ -50,6 +50,8 @@
 #include "book/book_collection.h"
 #include "book/book_store.h"
 #include "reading_journal.h"
+#include "reading_sync_service.h"
+#include "webdav_service.h"
 
 #define TAG "settings"
 #define NVS_NS "read_pico"
@@ -2219,8 +2221,8 @@ static unsigned backup_version(const settings_backup_v1_t *backup) {
     // j appends v45 quick-bar ordering. A-F are legacy; G/H are rc9x; K is upstream rc96/97; L is the old local layout; M/N/O/P/Q are this merge; R appends v27; S appends v28; T appends v29; U appends v30; V appends v31; g appends v42 network settings; h appends v43 chrome visibility; i marks v44 independent visibility semantics.
     // k追加v46关机配置；l扩展v47票根/日历，复用取景字节的位，图片像素不备份。
     // k adds v46 shutdown config; l extends v47 ticket/calendar options in the framing byte, excluding pixels.
-    // m adds portable preferences; n widens timezone storage for IANA zones.
-    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : c == 'm' ? 48 : c == 'n' ? 49 : 0;
+    // m adds portable preferences; n widens timezone storage for IANA zones; o adds login credentials.
+    return c >= '1' && c <= '9' ? c - '0' : c == 'A' ? 10 : c == 'B' ? 11 : c == 'C' ? 12 : c == 'D' ? 13 : c == 'E' ? 14 : c == 'F' ? 15 : c == 'G' ? 16 : c == 'H' ? 17 : c == 'I' ? 18 : c == 'J' ? 19 : c == 'K' ? 20 : c == 'L' ? 21 : c == 'M' ? 22 : c == 'N' ? 23 : c == 'O' ? 24 : c == 'P' ? 25 : c == 'Q' ? 26 : c == 'R' ? 27 : c == 'S' ? 28 : c == 'T' ? 29 : c == 'U' ? 30 : c == 'V' ? 31 : c == 'W' ? 32 : c == 'X' ? 33 : c == 'Y' ? 34 : c == 'Z' ? 35 : c == 'a' ? 36 : c == 'b' ? 37 : c == 'c' ? 38 : c == 'd' ? 39 : c == 'e' ? 40 : c == 'f' ? 41 : c == 'g' ? 42 : c == 'h' ? 43 : c == 'i' ? 44 : c == 'j' ? 45 : c == 'k' ? 46 : c == 'l' ? 47 : c == 'm' ? 48 : c == 'n' ? 49 : c == 'o' ? 50 : 0;
 }
 
 typedef struct { char encoded[OFF_CONFIG_BYTES]; uint8_t checksum[4]; } settings_backup_off_art_t;
@@ -2324,7 +2326,8 @@ static void backup_seal(settings_backup_v1_t *backup) {
 
 static bool backup_card_ready(board_sd_info_t *info) {
     memset(info, 0, sizeof(*info));
-    return board_sd_get_info(info) == ESP_OK && info->mounted;
+    esp_err_t err = board_sd_get_info(info);
+    return info->mounted && (err == ESP_OK || err == ESP_ERR_NOT_FINISHED);
 }
 
 typedef struct {
@@ -2359,6 +2362,59 @@ _Static_assert(sizeof(weather_location_v48_t) == 408 && BACKUP_PORTABLE_V48_BYTE
                "v48 portable layout");
 _Static_assert(sizeof(weather_location_t) == 440 && BACKUP_PORTABLE_BYTES == 1294,
                "v49 portable layout");
+
+typedef struct {
+    app_reading_sync_backup_t sync;
+    char webdav_server[APP_WEBDAV_SERVER_MAX];
+    char webdav_username[64];
+    char webdav_password[128];
+    uint8_t book_direction;
+    uint8_t webdav_configured;
+    uint8_t checksum[4];
+} settings_backup_services_v50_t;
+#define BACKUP_SERVICES_V50_BYTES (offsetof(settings_backup_services_v50_t, checksum) + 4u)
+
+static uint32_t backup_services_v50_checksum(const settings_backup_services_v50_t *value) {
+    const uint8_t *bytes = (const uint8_t *)value;
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < offsetof(settings_backup_services_v50_t, checksum); ++i)
+        hash = (hash ^ bytes[i]) * 16777619u;
+    return hash;
+}
+
+static bool backup_services_v50_valid(const settings_backup_services_v50_t *value) {
+    if (!value || value->book_direction > APP_BOOK_LAYOUT_VERTICAL || value->webdav_configured > 1 ||
+        !memchr(value->webdav_server, 0, sizeof(value->webdav_server)) ||
+        !memchr(value->webdav_username, 0, sizeof(value->webdav_username)) ||
+        !memchr(value->webdav_password, 0, sizeof(value->webdav_password))) return false;
+    uint32_t stored = 0;
+    for (unsigned i = 0; i < 4; ++i) stored |= (uint32_t)value->checksum[i] << (8u * i);
+    if (stored != backup_services_v50_checksum(value) || !app_reading_sync_backup_valid(&value->sync)) return false;
+    if (value->webdav_configured)
+        return app_webdav_config_valid(value->webdav_server, value->webdav_username, value->webdav_password);
+    return !value->webdav_server[0] && !value->webdav_username[0] && !value->webdav_password[0];
+}
+
+static bool backup_services_v50_capture(settings_backup_services_v50_t *value) {
+    if (!value) return false;
+    memset(value, 0, sizeof(*value));
+    value->book_direction = (uint8_t)app_settings_book_direction();
+    value->webdav_configured = app_webdav_get_config(value->webdav_server, sizeof(value->webdav_server),
+        value->webdav_username, sizeof(value->webdav_username),
+        value->webdav_password, sizeof(value->webdav_password)) ? 1 : 0;
+    if (!value->webdav_configured &&
+        (value->webdav_server[0] || value->webdav_username[0] || value->webdav_password[0])) return false;
+    if (!app_reading_sync_backup_export(&value->sync)) return false;
+    uint32_t checksum = backup_services_v50_checksum(value);
+    for (unsigned i = 0; i < 4; ++i) value->checksum[i] = (uint8_t)(checksum >> (8u * i));
+    return backup_services_v50_valid(value);
+}
+
+static void backup_services_v50_release(settings_backup_services_v50_t *value) {
+    if (!value) return;
+    backup_erase_secret(value, sizeof(*value));
+    free(value);
+}
 
 static uint32_t backup_portable_v48_checksum(const settings_backup_portable_v48_t *value) {
     const uint8_t *bytes = (const uint8_t *)value;
@@ -2485,7 +2541,7 @@ static esp_err_t settings_backup_save_file(bool portable_format) {
     // v40：主样式增加时钟5，沿用v39尾块布局。/ V40 accepts clock style 5 with the v39 tail layout.
     // v42：追加移动网络开关及业务路由；v43 追加页眉页脚独立显隐。
     // V42 appends cellular and business-route settings; V43 appends independent chrome visibility.
-    memcpy(backup.magic, portable_format ? "PICOSETn" : "PICOSETl", sizeof(backup.magic));
+    memcpy(backup.magic, portable_format ? "PICOSETo" : "PICOSETl", sizeof(backup.magic));
     uint8_t *f = backup.flags;
     f[BK_SLEEP] = s_sleep;
     f[BK_PICKUP] = s_pickup_wake;
@@ -2704,6 +2760,12 @@ static esp_err_t settings_backup_save_file(bool portable_format) {
             fwrite(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES;
         backup_erase_secret(&portable, sizeof(portable));
     }
+    if (ok && portable_format) {
+        settings_backup_services_v50_t *services = calloc(1, sizeof(*services));
+        ok = services && backup_services_v50_capture(services) &&
+            fwrite(services, 1, BACKUP_SERVICES_V50_BYTES, file) == BACKUP_SERVICES_V50_BYTES;
+        backup_services_v50_release(services);
+    }
     if (ok && portable_format) ok = book_store_prepare_data() == ESP_OK &&
         app_reading_journal_backup_write(file) == ESP_OK &&
         book_collection_backup_write(file, card.identity) == ESP_OK;
@@ -2836,6 +2898,7 @@ esp_err_t app_settings_backup_restore(void) {
     settings_backup_wifi_t wifi = {0};
     bool has_wifi = false;
     settings_backup_portable_t portable = {0};
+    settings_backup_services_v50_t *services = NULL;
     settings_backup_background_t background = {0}, bookmark = {0};
     settings_backup_home_t home = {.component=APP_HOME_FOLDER, .minutes=30};
     app_main_refresh_mode_t main_refresh = APP_MAIN_REFRESH_WATER;
@@ -2951,6 +3014,11 @@ esp_err_t app_settings_backup_restore(void) {
         backup_erase_secret(&portable_v48, sizeof(portable_v48));
     } else if (ok && version >= 49) ok = fread(&portable, 1, BACKUP_PORTABLE_BYTES, file) == BACKUP_PORTABLE_BYTES &&
         backup_portable_valid(&portable);
+    if (ok && version >= 50) {
+        services = calloc(1, sizeof(*services));
+        ok = services && fread(services, 1, BACKUP_SERVICES_V50_BYTES, file) == BACKUP_SERVICES_V50_BYTES &&
+            backup_services_v50_valid(services);
+    }
     long user_data_position = -1;
     if (ok && version >= 48) {
         user_data_position = ftell(file);
@@ -2968,12 +3036,14 @@ esp_err_t app_settings_backup_restore(void) {
     if (fclose(file) != 0) ok = false;
     if (!ok || !backup_valid(&backup)) {
         backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable));
+        backup_services_v50_release(services);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
     if (version >= 48 && book_store_prepare_data() != ESP_OK) {
         backup_erase_secret(&wifi, sizeof(wifi));
         backup_erase_secret(&portable, sizeof(portable));
+        backup_services_v50_release(services);
         return ESP_FAIL;
     }
     if (version < 48 && has_wifi && wifi.credentials.configured) {
@@ -2984,6 +3054,7 @@ esp_err_t app_settings_backup_restore(void) {
     esp_err_t wifi_preflight = wifi_transfer_merge_profiles_backup(&portable.wifi, false);
     if (wifi_preflight != ESP_OK) {
         backup_erase_secret(&portable, sizeof(portable));
+        backup_services_v50_release(services);
         return wifi_preflight;
     }
 
@@ -3048,7 +3119,11 @@ esp_err_t app_settings_backup_restore(void) {
 
     nvs_handle_t h;
     esp_err_t err = settings_write_open(&h);
-    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable)); return err; }
+    if (err != ESP_OK) {
+        backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable));
+        backup_services_v50_release(services);
+        return err;
+    }
     bool touch_disabled = touch_lock.on && reader_touch_binding(keys.actions, hold.action,
         double_action.action, up_action.action);
     err = nvs_set_u8(h, NVS_KEY_TOUCH_DISABLED, touch_disabled ? 1 : 0);
@@ -3080,6 +3155,9 @@ esp_err_t app_settings_backup_restore(void) {
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_UP_ACTION, up_action.action);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_FONTS, book_fonts.on);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_VERTICAL, book_vertical.on);
+    if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_DIRECTION,
+        version >= 50 ? services->book_direction :
+        (book_vertical.on ? APP_BOOK_LAYOUT_VERTICAL : APP_BOOK_LAYOUT_FOLLOW));
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_BOOK_STYLES, book_styles.on);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_TICKET_BACKGROUND, ticket_background.on);
     if (err == ESP_OK) err = nvs_set_u8(h, NVS_KEY_TOUCH_HAPTIC, haptic.on);
@@ -3171,7 +3249,11 @@ esp_err_t app_settings_backup_restore(void) {
     }
     if (err == ESP_OK) err = nvs_commit(h);
     settings_write_close(h);
-    if (err != ESP_OK) { backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable)); return err; }
+    if (err != ESP_OK) {
+        backup_erase_secret(&wifi, sizeof(wifi)); backup_erase_secret(&portable, sizeof(portable));
+        backup_services_v50_release(services);
+        return err;
+    }
 
     if (version >= 48) {
         s_bookmark_mode = (app_bookmark_mode_t)portable.bookmark_mode;
@@ -3200,6 +3282,8 @@ esp_err_t app_settings_backup_restore(void) {
     s_shutdown_style = shutdown_mode;
     s_book_fonts = book_fonts.on != 0;
     s_book_vertical = book_vertical.on != 0;
+    s_book_direction = version >= 50 ? (app_book_layout_direction_t)services->book_direction :
+        (book_vertical.on ? APP_BOOK_LAYOUT_VERTICAL : APP_BOOK_LAYOUT_FOLLOW);
     s_book_styles = book_styles.on != 0;
     s_touch_haptics = haptic.on != 0;
     s_haptic_intensity = haptic.level;
@@ -3291,6 +3375,13 @@ esp_err_t app_settings_backup_restore(void) {
     if (result == ESP_OK && version >= 48 &&
         !app_weather_restore_preferences(portable.weather_auto_refresh, portable.weather_has_city, &portable.city))
         result = ESP_FAIL;
+    if (result == ESP_OK && version >= 50 &&
+        !app_webdav_restore_config(services->webdav_configured != 0, services->webdav_server,
+                                  services->webdav_username, services->webdav_password))
+        result = ESP_FAIL;
+    if (result == ESP_OK && version >= 50 && !app_reading_sync_backup_restore(&services->sync))
+        result = ESP_FAIL;
     backup_erase_secret(&portable, sizeof(portable));
+    backup_services_v50_release(services);
     return result;
 }
